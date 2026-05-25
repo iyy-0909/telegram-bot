@@ -1,0 +1,7 @@
+telethon
+python-socks[asyncio]
+fastapi
+uvicorn
+jinja2
+python-multipart
+requests

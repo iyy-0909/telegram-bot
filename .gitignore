@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Node / frontend
+node_modules/
+admin/node_modules/
+admin/dist/
+dist/
+
+# Local runtime data
+data/
+logs/
+accounts/
+session/
+sessions/
+token/
+tokens/
+backend/data/
+backend/logs/
+backend/accounts/
+backend/session/
+backend/sessions/
+backend/token/
+backend/tokens/
+
+# Databases and backups
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+*.session
+*.session-journal
+
+# Telegram downloads / media
+downloads/
+backend/downloads/
+backend/data/downloads/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wmv
+*.flv
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.svg
+*.bmp
+*.tiff
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# IDE / OS
+.idea/
+.vscode/
+*.log
+Thumbs.db
+.DS_Store
+
+# Nested repositories accidentally copied into the workspace
+admin/.git/
+admin/.git.bak_before_root_push_*/
+backend/.git/
+backend/.git.bak_before_root_push_*/
