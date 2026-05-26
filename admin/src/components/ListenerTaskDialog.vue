@@ -51,37 +51,15 @@
         <template #label>
           <div class="field-label">
             <span>目标频道</span>
-            <el-tooltip content="添加目标频道" placement="top">
-              <el-button
-                class="add-channel-button"
-                type="primary"
-                circle
-                @click="addTargetChannel"
-              >
-                <el-icon><Plus /></el-icon>
-              </el-button>
-            </el-tooltip>
           </div>
         </template>
-        <div class="channel-list">
-          <div
-            v-for="(_, index) in targetChannels"
-            :key="`target-${index}`"
-            class="channel-row"
-          >
-            <el-input
-              v-model="targetChannels[index]"
-              placeholder="例如 @target_channel"
-              clearable
-            />
-            <el-button
-              :disabled="targetChannels.length <= 1"
-              @click="removeTargetChannel(index)"
-            >
-              删除
-            </el-button>
-          </div>
-        </div>
+        <ChannelSelect
+          v-model="targetChannels"
+          multiple
+          include-disabled
+          :bot-id="localForm.bot_id"
+          placeholder="请选择目标频道"
+        />
       </el-form-item>
 
       <el-form-item label="监听账号">
@@ -253,6 +231,7 @@
 <script setup>
 import { reactive, ref, watch } from "vue"
 import { Plus } from "@element-plus/icons-vue"
+import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
 
 const props = defineProps({

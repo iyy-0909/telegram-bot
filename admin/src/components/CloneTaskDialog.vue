@@ -29,11 +29,12 @@
       </el-form-item>
 
       <el-form-item label="目标频道">
-        <el-input
-          v-model="localForm.target_channels"
-          type="textarea"
-          :rows="3"
-          placeholder='例如 ["@target1","@target2"]'
+        <ChannelSelect
+          v-model="targetChannelValues"
+          multiple
+          include-disabled
+          :bot-id="localForm.bot_id"
+          placeholder="请选择目标频道"
         />
       </el-form-item>
 
@@ -216,7 +217,8 @@
 </template>
 
 <script setup>
-import { reactive, watch } from "vue"
+import { computed, reactive, watch } from "vue"
+import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
 
 const props = defineProps({
@@ -234,6 +236,15 @@ const props = defineProps({
 })
 
 const emit = defineEmits(["update:visible", "submit"])
+
+const targetChannelValues = computed({
+  get() {
+    return parseChannels(localForm.target_channels)
+  },
+  set(value) {
+    localForm.target_channels = JSON.stringify(uniqueChannels(value))
+  },
+})
 
 const localForm = reactive({
   id: null,
@@ -367,6 +378,43 @@ function toPositiveNumber(value, fallback) {
   }
 
   return Math.floor(numberValue)
+}
+
+function parseChannels(value) {
+  if (Array.isArray(value)) {
+    return uniqueChannels(value)
+  }
+
+  const text = String(value || "").trim()
+
+  if (!text) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? uniqueChannels(parsed) : []
+  } catch {
+    return uniqueChannels(text.split(/[\n,，]/))
+  }
+}
+
+function uniqueChannels(items) {
+  const seen = new Set()
+  const result = []
+
+  for (const item of items || []) {
+    const channel = String(item || "").trim()
+
+    if (!channel || seen.has(channel)) {
+      continue
+    }
+
+    seen.add(channel)
+    result.push(channel)
+  }
+
+  return result
 }
 </script>
 

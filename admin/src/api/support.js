@@ -65,6 +65,26 @@ export function updateSupportSettings(data) {
   return axios.put(`${API}/api/support/settings`, data)
 }
 
+export function getSupportBots() {
+  return axios.get(`${API}/api/support/bots`)
+}
+
+export function createSupportBot(data) {
+  return axios.post(`${API}/api/support/bots`, data)
+}
+
+export function updateSupportBot(id, data) {
+  return axios.put(`${API}/api/support/bots/${id}`, data)
+}
+
+export function deleteSupportBot(id) {
+  return axios.delete(`${API}/api/support/bots/${id}`)
+}
+
+export function testSupportBotItem(id) {
+  return axios.post(`${API}/api/support/bots/${id}/test`)
+}
+
 export function testSupportBot() {
   return axios.post(`${API}/api/support/bot/test`)
 }

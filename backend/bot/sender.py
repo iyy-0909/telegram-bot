@@ -60,6 +60,13 @@ def format_size(size) -> str:
 async def download_media_with_timeout(message: Message, download_dir=None):
     """下载单个媒体，带超时。每个任务使用独立目录，避免文件名冲突。"""
     try:
+        client = getattr(message, "_client", None)
+        if client and hasattr(client, "is_connected") and not client.is_connected():
+            logger.warning(
+                f"媒体下载前检测到 Telethon 已断开，尝试重连 | message_id={message.id}"
+            )
+            await client.connect()
+
         target_dir = Path(download_dir) if download_dir else DOWNLOAD_DIR
         target_dir.mkdir(parents=True, exist_ok=True)
 

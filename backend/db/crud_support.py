@@ -12,6 +12,7 @@ from db.models import (
     SupportQuickReply,
     SupportSetting,
     SupportTag,
+    SupportBot,
 )
 
 
@@ -89,6 +90,180 @@ def ensure_support_defaults():
     finally:
         db.close()
 
+    ensure_default_support_bot()
+
+
+def support_bot_to_dict(bot):
+    return {
+        "id": bot.id,
+        "name": bot.name or "",
+        "bot_id": bot.bot_id,
+        "bot_token": bot.bot_token or "",
+        "support_group_chat_id": bot.support_group_chat_id or "",
+        "polling_enabled": bool(bot.polling_enabled),
+        "welcome_message": bot.welcome_message or "",
+        "welcome_media_type": bot.welcome_media_type or "text",
+        "welcome_media_file_id": bot.welcome_media_file_id or "",
+        "off_hours_message": bot.off_hours_message or "",
+        "business_hours_enabled": bool(bot.business_hours_enabled),
+        "business_start_hour": bot.business_start_hour or 9,
+        "business_end_hour": bot.business_end_hour or 22,
+        "backend_base_url": bot.backend_base_url or "",
+        "status": bot.status or "enabled",
+        "last_error": bot.last_error or "",
+        "created_at": str(bot.created_at) if bot.created_at else "",
+        "updated_at": str(bot.updated_at) if bot.updated_at else "",
+    }
+
+
+def legacy_settings_to_support_bot_data():
+    settings = {
+        key: get_support_setting(key, default)
+        for key, default in DEFAULT_SUPPORT_SETTINGS.items()
+    }
+    return {
+        "name": "默认客服 Bot",
+        "bot_id": int(settings["support_bot_id"]) if str(settings.get("support_bot_id") or "").isdigit() else None,
+        "bot_token": settings.get("support_bot_token") or "",
+        "support_group_chat_id": settings.get("support_group_chat_id") or "",
+        "polling_enabled": as_bool(settings.get("support_polling_enabled")),
+        "welcome_message": settings.get("welcome_message") or "",
+        "welcome_media_type": "text",
+        "welcome_media_file_id": "",
+        "off_hours_message": settings.get("off_hours_message") or "",
+        "business_hours_enabled": as_bool(settings.get("business_hours_enabled")),
+        "business_start_hour": int(settings.get("business_start_hour") or 9),
+        "business_end_hour": int(settings.get("business_end_hour") or 22),
+        "backend_base_url": settings.get("support_backend_base_url") or "",
+        "status": "enabled",
+    }
+
+
+def ensure_default_support_bot():
+    db = SessionLocal()
+    try:
+        exists = db.query(SupportBot).first()
+        if exists:
+            return exists
+
+        bot = SupportBot(
+            **legacy_settings_to_support_bot_data(),
+            created_at=now(),
+            updated_at=now(),
+        )
+        db.add(bot)
+        db.commit()
+        db.refresh(bot)
+        return bot
+    finally:
+        db.close()
+
+
+def list_support_bots(include_disabled=True):
+    ensure_support_defaults()
+    db = SessionLocal()
+    try:
+        query = db.query(SupportBot)
+        if not include_disabled:
+            query = query.filter(
+                SupportBot.status == "enabled",
+                SupportBot.polling_enabled == True,
+            )
+        return [
+            support_bot_to_dict(bot)
+            for bot in query.order_by(SupportBot.id.asc()).all()
+        ]
+    finally:
+        db.close()
+
+
+def get_support_bot_config(support_bot_id):
+    db = SessionLocal()
+    try:
+        bot = db.query(SupportBot).filter(SupportBot.id == int(support_bot_id)).first()
+        return support_bot_to_dict(bot) if bot else None
+    finally:
+        db.close()
+
+
+def create_support_bot(data):
+    db = SessionLocal()
+    try:
+        bot = SupportBot(
+            name=str(data.get("name") or "").strip() or "客服 Bot",
+            bot_id=data.get("bot_id"),
+            bot_token=str(data.get("bot_token") or "").strip(),
+            support_group_chat_id=str(data.get("support_group_chat_id") or "").strip(),
+            polling_enabled=bool(data.get("polling_enabled", False)),
+            welcome_message=data.get("welcome_message") or "",
+            welcome_media_type=data.get("welcome_media_type") or "text",
+            welcome_media_file_id=data.get("welcome_media_file_id") or "",
+            off_hours_message=data.get("off_hours_message") or "",
+            business_hours_enabled=bool(data.get("business_hours_enabled", False)),
+            business_start_hour=int(data.get("business_start_hour") or 9),
+            business_end_hour=int(data.get("business_end_hour") or 22),
+            backend_base_url=data.get("backend_base_url") or "",
+            status=data.get("status") or "enabled",
+            created_at=now(),
+            updated_at=now(),
+        )
+        db.add(bot)
+        db.commit()
+        db.refresh(bot)
+        return support_bot_to_dict(bot)
+    finally:
+        db.close()
+
+
+def update_support_bot(support_bot_id, data):
+    db = SessionLocal()
+    try:
+        bot = db.query(SupportBot).filter(SupportBot.id == int(support_bot_id)).first()
+        if not bot:
+            return None
+
+        bool_fields = {"polling_enabled", "business_hours_enabled"}
+        int_fields = {"bot_id", "business_start_hour", "business_end_hour"}
+        for key, value in (data or {}).items():
+            if not hasattr(bot, key) or value is None:
+                continue
+            if key in bool_fields:
+                value = bool(value)
+            elif key in int_fields and value != "":
+                value = int(value)
+            elif key in int_fields:
+                value = None
+            setattr(bot, key, value)
+        bot.updated_at = now()
+        db.commit()
+        db.refresh(bot)
+        return support_bot_to_dict(bot)
+    finally:
+        db.close()
+
+
+def delete_support_bot(support_bot_id):
+    db = SessionLocal()
+    try:
+        bot = db.query(SupportBot).filter(SupportBot.id == int(support_bot_id)).first()
+        if not bot:
+            return False
+        db.delete(bot)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def update_support_bot_error(support_bot_id, error):
+    return update_support_bot(
+        support_bot_id,
+        {
+            "last_error": error or "",
+            "status": "error" if error else "enabled",
+        },
+    )
+
 
 def get_support_settings():
     ensure_support_defaults()
@@ -125,6 +300,7 @@ def get_customer_tags(customer_id):
 def customer_to_dict(customer):
     return {
         "id": customer.id,
+        "support_bot_id": getattr(customer, "support_bot_id", None),
         "telegram_user_id": customer.telegram_user_id,
         "telegram_chat_id": customer.telegram_chat_id,
         "username": customer.username or "",
@@ -146,6 +322,7 @@ def conversation_to_dict(conversation, customer=None):
         customer = get_customer(conversation.customer_id)
     return {
         "id": conversation.id,
+        "support_bot_id": getattr(conversation, "support_bot_id", None),
         "customer_id": conversation.customer_id,
         "status": conversation.status or "",
         "assigned_admin_id": conversation.assigned_admin_id,
@@ -164,6 +341,7 @@ def conversation_to_dict(conversation, customer=None):
 def message_to_dict(message):
     return {
         "id": message.id,
+        "support_bot_id": getattr(message, "support_bot_id", None),
         "conversation_id": message.conversation_id,
         "customer_id": message.customer_id,
         "sender_type": message.sender_type,
@@ -215,7 +393,7 @@ def get_customer_by_telegram_user_id(telegram_user_id):
         db.close()
 
 
-def upsert_customer(user, chat_id, source=""):
+def upsert_customer(user, chat_id, source="", support_bot_id=None):
     db = SessionLocal()
     try:
         telegram_user_id = str(user.get("id") or "")
@@ -227,6 +405,7 @@ def upsert_customer(user, chat_id, source=""):
         created = False
         if not customer:
             customer = SupportCustomer(
+                support_bot_id=support_bot_id,
                 telegram_user_id=telegram_user_id,
                 telegram_chat_id=str(chat_id),
                 created_at=now(),
@@ -236,6 +415,8 @@ def upsert_customer(user, chat_id, source=""):
             db.add(customer)
             created = True
 
+        if support_bot_id:
+            customer.support_bot_id = support_bot_id
         customer.telegram_chat_id = str(chat_id)
         customer.username = user.get("username") or ""
         customer.first_name = user.get("first_name") or ""
@@ -252,18 +433,20 @@ def upsert_customer(user, chat_id, source=""):
         db.close()
 
 
-def get_or_create_conversation(customer_id):
+def get_or_create_conversation(customer_id, support_bot_id=None):
     db = SessionLocal()
     try:
         conversation = (
             db.query(SupportConversation)
             .filter(SupportConversation.customer_id == customer_id)
             .filter(SupportConversation.status == "open")
+            .filter(SupportConversation.support_bot_id == support_bot_id)
             .order_by(SupportConversation.id.desc())
             .first()
         )
         if not conversation:
             conversation = SupportConversation(
+                support_bot_id=support_bot_id,
                 customer_id=customer_id,
                 status="open",
                 created_at=now(),
@@ -280,6 +463,7 @@ def get_or_create_conversation(customer_id):
 
 def add_support_message(
     *,
+    support_bot_id=None,
     conversation_id,
     customer_id,
     sender_type,
@@ -307,6 +491,7 @@ def add_support_message(
     db = SessionLocal()
     try:
         message = SupportMessage(
+            support_bot_id=support_bot_id,
             conversation_id=conversation_id,
             customer_id=customer_id,
             sender_type=sender_type,
@@ -390,15 +575,15 @@ def update_conversation_topic(conversation_id, support_thread_id, support_topic_
         db.close()
 
 
-def get_conversation_by_thread_id(thread_id):
+def get_conversation_by_thread_id(thread_id, support_bot_id=None):
     db = SessionLocal()
     try:
-        conversation = (
-            db.query(SupportConversation)
-            .filter(SupportConversation.support_thread_id == int(thread_id))
-            .order_by(SupportConversation.id.desc())
-            .first()
+        query = db.query(SupportConversation).filter(
+            SupportConversation.support_thread_id == int(thread_id)
         )
+        if support_bot_id is not None:
+            query = query.filter(SupportConversation.support_bot_id == int(support_bot_id))
+        conversation = query.order_by(SupportConversation.id.desc()).first()
         if not conversation:
             return None
         customer = db.query(SupportCustomer).filter(
@@ -409,14 +594,15 @@ def get_conversation_by_thread_id(thread_id):
         db.close()
 
 
-def get_message_by_support_group_message_id(group_message_id):
+def get_message_by_support_group_message_id(group_message_id, support_bot_id=None):
     db = SessionLocal()
     try:
-        message = (
-            db.query(SupportMessage)
-            .filter(SupportMessage.support_group_message_id == int(group_message_id))
-            .first()
+        query = db.query(SupportMessage).filter(
+            SupportMessage.support_group_message_id == int(group_message_id)
         )
+        if support_bot_id is not None:
+            query = query.filter(SupportMessage.support_bot_id == int(support_bot_id))
+        message = query.first()
         return message_to_dict(message) if message else None
     finally:
         db.close()

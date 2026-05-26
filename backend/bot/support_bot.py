@@ -13,19 +13,25 @@ from db.crud_support import (
     get_conversation_detail,
     get_message_by_support_group_message_id,
     get_or_create_conversation,
+    get_support_bot_config,
     get_support_settings,
+    list_support_bots,
     set_customer_blocked,
     update_conversation_topic,
     update_conversation_status,
+    update_support_bot_error,
     update_support_message_group_message_id,
     upsert_customer,
 )
 
 
 _polling_task = None
+_polling_tasks = {}
 _offset = None
+_offsets = {}
 _deleted_webhook_tokens = set()
 _recent_group_chats = OrderedDict()
+_last_polling_conflict_log_at = 0
 
 
 class SupportBotConfigError(Exception):
@@ -71,6 +77,39 @@ def get_support_token_and_settings():
         return raw_token, settings
 
     return None, settings
+
+
+def get_token_for_support_bot(config):
+    bot_id = config.get("bot_id")
+    raw_token = (config.get("bot_token") or "").strip()
+
+    if bot_id:
+        try:
+            bot = get_bot(int(bot_id))
+        except Exception:
+            bot = None
+        if bot and bot.enabled and bot.token:
+            return bot.token
+
+    return raw_token or None
+
+
+def support_bot_settings(config):
+    return {
+        "support_bot_id": str(config.get("bot_id") or ""),
+        "support_bot_token": config.get("bot_token") or "",
+        "support_polling_enabled": "1" if config.get("polling_enabled") else "0",
+        "support_group_chat_id": config.get("support_group_chat_id") or "",
+        "support_backend_base_url": config.get("backend_base_url") or "",
+        "welcome_message": config.get("welcome_message") or "",
+        "welcome_media_type": config.get("welcome_media_type") or "text",
+        "welcome_media_file_id": config.get("welcome_media_file_id") or "",
+        "off_hours_message": config.get("off_hours_message") or "",
+        "business_hours_enabled": "1" if config.get("business_hours_enabled") else "0",
+        "business_start_hour": str(config.get("business_start_hour") or 9),
+        "business_end_hour": str(config.get("business_end_hour") or 22),
+        "_support_bot_id": config.get("id"),
+    }
 
 
 async def ensure_polling_mode(token):
@@ -532,15 +571,17 @@ async def ensure_conversation_topic(token, group_chat_id, customer, conversation
     return int(thread_id)
 
 
-async def send_support_message(chat_id, text):
-    token, _settings = get_support_token_and_settings()
+async def send_support_message(chat_id, text, token=None):
+    if not token:
+        token, _settings = get_support_token_and_settings()
     if not token:
         raise BotApiError("客服 Bot 未配置或未启用")
     return await send_text_to_chat(token, chat_id, text)
 
 
-async def send_group_notice(text):
-    token, settings = get_support_token_and_settings()
+async def send_group_notice(text, token=None, settings=None):
+    if not token or not settings:
+        token, settings = get_support_token_and_settings()
     group_chat_id = (settings.get("support_group_chat_id") or "").strip()
     if not token or not group_chat_id:
         return None
@@ -551,8 +592,7 @@ async def send_group_notice(text):
         return None
 
 
-async def forward_customer_message_to_group(customer, conversation, message, payload, support_message):
-    token, settings = get_support_token_and_settings()
+async def forward_customer_message_to_group(customer, conversation, message, payload, support_message, token, settings):
     group_chat_id = (settings.get("support_group_chat_id") or "").strip()
     if not token or not group_chat_id:
         logger.warning("客服群未配置，客户消息只入库不转发")
@@ -601,19 +641,40 @@ async def forward_customer_message_to_group(customer, conversation, message, pay
     return group_message_id
 
 
-async def maybe_send_auto_message(customer, conversation, text):
-    if not text.strip() or customer.blocked:
+async def maybe_send_auto_message(customer, conversation, text, token, settings):
+    media_type = settings.get("welcome_media_type") or "text"
+    media_file_id = settings.get("welcome_media_file_id") or ""
+
+    if not (text.strip() or media_file_id) or customer.blocked:
         return
     try:
-        result = await send_support_message(customer.telegram_chat_id, text)
+        if media_file_id:
+            payload = {
+                "file_id": media_file_id,
+                "caption": text,
+                "text": text,
+            }
+            result = await send_telegram_by_type(
+                token,
+                customer.telegram_chat_id,
+                media_type,
+                payload,
+            )
+            message_type = media_type
+        else:
+            result = await send_support_message(customer.telegram_chat_id, text, token=token)
+            message_type = "text"
         telegram_message_id = (result.get("result") or {}).get("message_id")
         add_support_message(
+            support_bot_id=settings.get("_support_bot_id"),
             conversation_id=conversation.id,
             customer_id=customer.id,
             sender_type="bot",
             sender_id="support_bot",
-            message_type="text",
+            message_type=message_type,
             text=text,
+            caption=text if media_file_id else "",
+            file_id=media_file_id,
             telegram_message_id=telegram_message_id,
             send_status="success",
         )
@@ -621,7 +682,7 @@ async def maybe_send_auto_message(customer, conversation, text):
         logger.warning(f"客服自动回复失败，已忽略 | customer_id={customer.id} | {e}")
 
 
-async def handle_private_customer_message(message, settings):
+async def handle_private_customer_message(message, settings, token):
     user = message.get("from") or {}
     if user.get("is_bot"):
         return
@@ -631,8 +692,14 @@ async def handle_private_customer_message(message, settings):
     text = payload.get("text") or ""
     is_start = message_type == "text" and (text or "").strip().startswith("/start")
     source = parse_start_source(text) if message_type == "text" else ""
-    customer, created = upsert_customer(user, message.get("chat", {}).get("id"), source=source)
-    conversation = get_or_create_conversation(customer.id)
+    support_bot_id = settings.get("_support_bot_id")
+    customer, created = upsert_customer(
+        user,
+        message.get("chat", {}).get("id"),
+        source=source,
+        support_bot_id=support_bot_id,
+    )
+    conversation = get_or_create_conversation(customer.id, support_bot_id=support_bot_id)
 
     if is_start and customer.blocked:
         set_customer_blocked(customer.id, False)
@@ -641,6 +708,7 @@ async def handle_private_customer_message(message, settings):
         logger.info(f"客户重新 /start，已恢复 blocked 状态 | customer_id={customer.id}")
 
     support_message = add_support_message(
+        support_bot_id=support_bot_id,
         conversation_id=conversation.id,
         customer_id=customer.id,
         sender_type="customer",
@@ -673,25 +741,27 @@ async def handle_private_customer_message(message, settings):
             message,
             payload,
             support_message,
+            token,
+            settings,
         )
     except Exception as e:
         logger.warning(f"客户消息转发客服群失败 | customer_id={customer.id} | {e}")
 
     if is_start:
-        await maybe_send_auto_message(customer, conversation, settings.get("welcome_message") or "")
+        await maybe_send_auto_message(customer, conversation, settings.get("welcome_message") or "", token, settings)
         return
 
     if is_outside_business_hours(settings):
-        await maybe_send_auto_message(customer, conversation, settings.get("off_hours_message") or "")
+        await maybe_send_auto_message(customer, conversation, settings.get("off_hours_message") or "", token, settings)
 
 
-def get_replied_customer_context(reply_to_message):
+def get_replied_customer_context(reply_to_message, support_bot_id=None):
     if not reply_to_message:
         return None
     group_message_id = reply_to_message.get("message_id")
     if not group_message_id:
         return None
-    source_message = get_message_by_support_group_message_id(group_message_id)
+    source_message = get_message_by_support_group_message_id(group_message_id, support_bot_id=support_bot_id)
     if not source_message:
         return None
     if source_message.get("sender_type") != "customer":
@@ -702,11 +772,11 @@ def get_replied_customer_context(reply_to_message):
     return source_message, detail
 
 
-def get_thread_customer_context(message):
+def get_thread_customer_context(message, support_bot_id=None):
     thread_id = message.get("message_thread_id")
     if not thread_id:
         return None
-    conversation = get_conversation_by_thread_id(thread_id)
+    conversation = get_conversation_by_thread_id(thread_id, support_bot_id=support_bot_id)
     if not conversation:
         return None
     detail = get_conversation_detail(conversation["id"])
@@ -715,7 +785,7 @@ def get_thread_customer_context(message):
     return None, detail
 
 
-async def handle_support_group_command(command, context):
+async def handle_support_group_command(command, context, token, settings):
     source_message, detail = context
     conversation = detail["conversation"]
     customer = conversation.get("customer") or {}
@@ -724,17 +794,17 @@ async def handle_support_group_command(command, context):
 
     if command == "/close":
         update_conversation_status(conversation_id, "closed")
-        await send_group_notice(f"会话已关闭：conversation_id={conversation_id}")
+        await send_group_notice(f"会话已关闭：conversation_id={conversation_id}", token=token, settings=settings)
         return
 
     if command == "/block":
         set_customer_blocked(customer_id, True)
-        await send_group_notice(f"客户已拉黑：{customer.get('telegram_user_id')}")
+        await send_group_notice(f"客户已拉黑：{customer.get('telegram_user_id')}", token=token, settings=settings)
         return
 
     if command == "/unblock":
         set_customer_blocked(customer_id, False)
-        await send_group_notice(f"客户已取消拉黑：{customer.get('telegram_user_id')}")
+        await send_group_notice(f"客户已取消拉黑：{customer.get('telegram_user_id')}", token=token, settings=settings)
         return
 
     if command == "/info":
@@ -746,11 +816,13 @@ async def handle_support_group_command(command, context):
             f"昵称：{customer.get('first_name') or ''} {customer.get('last_name') or ''}\n"
             f"来源：{customer.get('source') or '-'}\n"
             f"状态：{conversation.get('status')}\n"
-            f"拉黑：{'是' if customer.get('blocked') else '否'}"
+            f"拉黑：{'是' if customer.get('blocked') else '否'}",
+            token=token,
+            settings=settings,
         )
 
 
-async def reply_group_message_to_customer(message, context):
+async def reply_group_message_to_customer(message, context, token, settings):
     source_message, detail = context
     conversation = detail["conversation"]
     customer = conversation.get("customer") or {}
@@ -761,13 +833,12 @@ async def reply_group_message_to_customer(message, context):
         return
 
     if customer.get("blocked"):
-        await send_group_notice("该客户已被拉黑，不能回复。可回复客户消息发送 /unblock 取消拉黑。")
+        await send_group_notice("该客户已被拉黑，不能回复。可回复客户消息发送 /unblock 取消拉黑。", token=token, settings=settings)
         return
 
     sender = message.get("from") or {}
     sender_label = support_user_label(sender)
     try:
-        token, _settings = get_support_token_and_settings()
         if not token:
             raise BotApiError("客服 Bot 未配置或未启用")
         result = await send_telegram_by_type(
@@ -778,6 +849,7 @@ async def reply_group_message_to_customer(message, context):
         )
         telegram_message_id = (result.get("result") or {}).get("message_id")
         add_support_message(
+            support_bot_id=settings.get("_support_bot_id"),
             conversation_id=conversation["id"],
             customer_id=customer["id"],
             sender_type="support",
@@ -812,10 +884,11 @@ async def reply_group_message_to_customer(message, context):
         error_code = data.get("error_code")
         if error_code == 403 or "bot was blocked by the user" in description.lower():
             set_customer_blocked(customer["id"], True)
-            await send_group_notice("该客户已拉黑 Bot，无法继续回复。")
+            await send_group_notice("该客户已拉黑 Bot，无法继续回复。", token=token, settings=settings)
         else:
-            await send_group_notice(friendly_media_error(description))
+            await send_group_notice(friendly_media_error(description), token=token, settings=settings)
         add_support_message(
+            support_bot_id=settings.get("_support_bot_id"),
             conversation_id=conversation["id"],
             customer_id=customer["id"],
             sender_type="support",
@@ -844,55 +917,70 @@ async def reply_group_message_to_customer(message, context):
         )
 
 
-async def handle_support_group_message(message, settings):
+async def handle_support_group_message(message, settings, token):
     text = (message.get("text") or "").strip()
     reply_to_message = message.get("reply_to_message")
-    context = get_thread_customer_context(message)
+    support_bot_id = settings.get("_support_bot_id")
+    context = get_thread_customer_context(message, support_bot_id=support_bot_id)
     if not context:
-        context = get_replied_customer_context(reply_to_message)
+        context = get_replied_customer_context(reply_to_message, support_bot_id=support_bot_id)
 
     if text in {"/close", "/block", "/info", "/unblock"}:
         if not context:
-            await send_group_notice("请回复某条客户消息后再使用该命令。")
+            await send_group_notice("请回复某条客户消息后再使用该命令。", token=token, settings=settings)
             return
-        await handle_support_group_command(text, context)
+        await handle_support_group_command(text, context, token, settings)
         return
 
     if not context:
         if reply_to_message:
-            await send_group_notice("未找到对应客户会话，可能是历史消息或数据已失效。")
+            await send_group_notice("未找到对应客户会话，可能是历史消息或数据已失效。", token=token, settings=settings)
         elif text:
-            await send_group_notice("请在客户话题内发送消息，或回复某条客户消息后再发送内容。")
+            await send_group_notice("请在客户话题内发送消息，或回复某条客户消息后再发送内容。", token=token, settings=settings)
         return
 
-    await reply_group_message_to_customer(message, context)
+    await reply_group_message_to_customer(message, context, token, settings)
 
 
-async def handle_support_update(update):
+async def handle_support_update(update, token=None, settings=None):
     message = update.get("message") or update.get("edited_message")
     if not message:
         return
 
     chat = message.get("chat") or {}
-    settings = get_support_settings()
+    if settings is None:
+        settings = get_support_settings()
     remember_group_chat(chat)
 
     if chat.get("type") == "private":
-        await handle_private_customer_message(message, settings)
+        await handle_private_customer_message(message, settings, token)
         return
 
     if is_configured_support_group(chat.get("id"), settings):
-        await handle_support_group_message(message, settings)
+        await handle_support_group_message(message, settings, token)
 
 
-async def support_polling_worker():
-    global _offset
-    logger.info("客服 Bot polling worker started")
+async def support_polling_worker(config):
+    global _last_polling_conflict_log_at
+    support_bot_id = config.get("id")
+    settings = support_bot_settings(config)
+    token = get_token_for_support_bot(config)
+    logger.info(f"Support Bot polling worker started | support_bot_id={support_bot_id}")
 
     while True:
         try:
-            token, settings = get_support_token_and_settings()
-            if not token or not as_bool(settings.get("support_polling_enabled")):
+            latest_config = get_support_bot_config(support_bot_id)
+            if not latest_config:
+                logger.warning(f"Support Bot config removed, worker exit | support_bot_id={support_bot_id}")
+                return
+
+            settings = support_bot_settings(latest_config)
+            token = get_token_for_support_bot(latest_config)
+            if (
+                not token
+                or not latest_config.get("polling_enabled")
+                or latest_config.get("status") == "disabled"
+            ):
                 await asyncio.sleep(5)
                 continue
 
@@ -902,8 +990,8 @@ async def support_polling_worker():
                 "timeout": 30,
                 "allowed_updates": '["message","edited_message"]',
             }
-            if _offset is not None:
-                data["offset"] = _offset
+            if _offsets.get(support_bot_id) is not None:
+                data["offset"] = _offsets[support_bot_id]
 
             result = await asyncio.to_thread(
                 request_post,
@@ -914,20 +1002,73 @@ async def support_polling_worker():
             )
             updates = result.get("result") or []
             for update in updates:
-                _offset = int(update.get("update_id", 0)) + 1
+                _offsets[support_bot_id] = int(update.get("update_id", 0)) + 1
                 try:
-                    await handle_support_update(update)
+                    await handle_support_update(update, token=token, settings=settings)
                 except Exception as e:
-                    logger.exception(f"客服 Bot 处理 update 失败 | {e}")
+                    logger.exception(
+                        f"Support Bot update handling failed | "
+                        f"support_bot_id={support_bot_id} | {e}"
+                    )
+
+            update_support_bot_error(support_bot_id, "")
 
         except Exception as e:
-            logger.warning(f"客服 Bot polling 异常，稍后重试 | {e}")
+            error_data = parse_bot_api_error(e)
+            description = str(error_data.get("description") or e)
+
+            if error_data.get("error_code") == 409:
+                now_ts = datetime.now().timestamp()
+                if now_ts - _last_polling_conflict_log_at >= 60:
+                    _last_polling_conflict_log_at = now_ts
+                    logger.warning(
+                        "Support Bot polling conflict: another getUpdates instance is "
+                        "running with the same Bot token. Stop duplicate backend "
+                        "containers/local processes, or disable support polling in one "
+                        f"instance | support_bot_id={support_bot_id} | {description}"
+                    )
+                update_support_bot_error(support_bot_id, description)
+                await asyncio.sleep(60)
+                continue
+
+            update_support_bot_error(support_bot_id, str(e)[:1000])
+            logger.warning(
+                f"Support Bot polling error, retry later | "
+                f"support_bot_id={support_bot_id} | {e}"
+            )
             await asyncio.sleep(5)
+
+
+async def support_polling_manager():
+    logger.info("Support Bot polling manager started")
+    while True:
+        try:
+            configs = list_support_bots(include_disabled=False)
+            active_ids = {config["id"] for config in configs}
+
+            for support_bot_id, task in list(_polling_tasks.items()):
+                if support_bot_id not in active_ids and not task.done():
+                    task.cancel()
+                    _polling_tasks.pop(support_bot_id, None)
+
+            for config in configs:
+                support_bot_id = config["id"]
+                task = _polling_tasks.get(support_bot_id)
+                if task and not task.done():
+                    continue
+                _polling_tasks[support_bot_id] = asyncio.create_task(
+                    support_polling_worker(config)
+                )
+
+        except Exception as e:
+            logger.warning(f"Support Bot polling manager error | {e}")
+
+        await asyncio.sleep(10)
 
 
 def start_support_polling():
     global _polling_task
     if _polling_task and not _polling_task.done():
         return _polling_task
-    _polling_task = asyncio.create_task(support_polling_worker())
+    _polling_task = asyncio.create_task(support_polling_manager())
     return _polling_task

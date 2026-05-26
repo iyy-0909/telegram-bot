@@ -242,6 +242,36 @@ class TargetBotBinding(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MyChannel(Base):
+    """Managed target channel."""
+
+    __tablename__ = "my_channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, default="")
+    username = Column(String, default="", index=True)
+    chat_id = Column(String, default="", index=True)
+    channel_type = Column(String, default="")
+    group_name = Column(String, default="", index=True)
+    tags = Column(Text, default="[]")
+    bot_id = Column(Integer, nullable=True, index=True)
+    status = Column(String, default="enabled", index=True)
+    is_default = Column(Boolean, default=False)
+    remark = Column(Text, default="")
+
+    bot_is_member = Column(Boolean, default=False)
+    bot_is_admin = Column(Boolean, default=False)
+    can_post_messages = Column(Boolean, default=False)
+    can_edit_messages = Column(Boolean, default=False)
+    can_delete_messages = Column(Boolean, default=False)
+    can_manage_topics = Column(Boolean, default=False)
+
+    last_check_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SystemSetting(Base):
     """系统级配置"""
 
@@ -260,6 +290,7 @@ class SupportCustomer(Base):
     __tablename__ = "support_customers"
 
     id = Column(Integer, primary_key=True, index=True)
+    support_bot_id = Column(Integer, nullable=True, index=True)
     telegram_user_id = Column(String, nullable=False, unique=True, index=True)
     telegram_chat_id = Column(String, nullable=False, index=True)
     username = Column(String, default="", index=True)
@@ -280,6 +311,7 @@ class SupportConversation(Base):
     __tablename__ = "support_conversations"
 
     id = Column(Integer, primary_key=True, index=True)
+    support_bot_id = Column(Integer, nullable=True, index=True)
     customer_id = Column(Integer, nullable=False, index=True)
     status = Column(String, default="open", index=True)
     assigned_admin_id = Column(Integer, nullable=True, index=True)
@@ -299,6 +331,7 @@ class SupportMessage(Base):
     __tablename__ = "support_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    support_bot_id = Column(Integer, nullable=True, index=True)
     conversation_id = Column(Integer, nullable=False, index=True)
     customer_id = Column(Integer, nullable=False, index=True)
     sender_type = Column(String, nullable=False, index=True)
@@ -370,4 +403,29 @@ class SupportSetting(Base):
     key = Column(String, nullable=False, unique=True, index=True)
     value = Column(Text, default="")
     remark = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportBot(Base):
+    """Config for one support bot polling worker."""
+
+    __tablename__ = "support_bots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, default="")
+    bot_id = Column(Integer, nullable=True, index=True)
+    bot_token = Column(Text, default="")
+    support_group_chat_id = Column(String, default="", index=True)
+    polling_enabled = Column(Boolean, default=False, index=True)
+    welcome_message = Column(Text, default="")
+    welcome_media_type = Column(String, default="text")
+    welcome_media_file_id = Column(Text, default="")
+    off_hours_message = Column(Text, default="")
+    business_hours_enabled = Column(Boolean, default=False)
+    business_start_hour = Column(Integer, default=9)
+    business_end_hour = Column(Integer, default=22)
+    backend_base_url = Column(Text, default="")
+    status = Column(String, default="enabled", index=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)

@@ -16,6 +16,7 @@ from db.models import ContentTemplate
 from db.models import ListenerSendEvent
 from db.models import ListenerSentMessage
 from db.models import ListenerTask
+from db.models import MyChannel
 from db.models import SentMessage
 from db.models import SupportConversation
 from db.models import SupportCustomer
@@ -24,6 +25,7 @@ from db.models import SupportMessage
 from db.models import SupportQuickReply
 from db.models import SupportSetting
 from db.models import SupportTag
+from db.models import SupportBot
 from db.models import SystemSetting
 from db.models import TargetBotBinding
 
@@ -39,6 +41,7 @@ _REGISTERED_MODELS = (
     ListenerSendEvent,
     ListenerSentMessage,
     ListenerTask,
+    MyChannel,
     SentMessage,
     SupportConversation,
     SupportCustomer,
@@ -47,6 +50,7 @@ _REGISTERED_MODELS = (
     SupportQuickReply,
     SupportSetting,
     SupportTag,
+    SupportBot,
     SystemSetting,
     TargetBotBinding,
 )

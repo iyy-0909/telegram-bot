@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import List, Optional
 
@@ -9,14 +10,19 @@ from bot.handlers import reload_handlers
 from bot.clone_manager import clone_manager
 
 from db.crud_bot import get_bot
-from bot.bot_sender import bot_get_me, bot_send_text
+from bot.bot_sender import bot_get_me, bot_send_text, request_post
 
 from bot.notifier import notify_text
 from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
 from bot.listener_catchup import check_latest_content_consistency
-from bot.support_bot import get_recent_support_updates, test_support_bot_config
+from bot.support_bot import (
+    check_group_topic_permission,
+    get_recent_support_updates,
+    get_token_for_support_bot,
+    test_support_bot_config,
+)
 
 from db.crud import (
     get_all_rules,
@@ -59,12 +65,16 @@ from db.crud_settings import (
 
 from db.crud_support import (
     create_quick_reply,
+    create_support_bot,
     create_tag,
+    delete_support_bot,
     delete_quick_reply,
     ensure_support_defaults,
     get_conversation_detail,
     get_customer_detail,
     get_support_settings,
+    get_support_bot_config,
+    list_support_bots,
     list_customers,
     list_conversations,
     list_messages,
@@ -75,6 +85,7 @@ from db.crud_support import (
     set_customer_tags,
     update_conversation_status,
     update_quick_reply,
+    update_support_bot,
     update_support_settings,
 )
 
@@ -87,6 +98,17 @@ from db.crud_bot import (
     create_binding,
     update_binding,
     delete_binding,
+    get_enabled_bots,
+)
+
+from db.crud_my_channels import (
+    create_my_channel,
+    delete_my_channel,
+    get_my_channel,
+    list_my_channels,
+    my_channel_to_dict,
+    set_my_channel_check_result,
+    update_my_channel,
 )
 
 from db.crud_templates import (
@@ -332,6 +354,40 @@ class SupportSettingsUpdate(BaseModel):
     business_end_hour: Optional[str] = None
 
 
+class SupportBotCreate(BaseModel):
+    name: str = "客服 Bot"
+    bot_id: Optional[int] = None
+    bot_token: str = ""
+    support_group_chat_id: str = ""
+    polling_enabled: bool = False
+    welcome_message: str = ""
+    welcome_media_type: str = "text"
+    welcome_media_file_id: str = ""
+    off_hours_message: str = ""
+    business_hours_enabled: bool = False
+    business_start_hour: int = 9
+    business_end_hour: int = 22
+    backend_base_url: str = ""
+    status: str = "enabled"
+
+
+class SupportBotUpdate(BaseModel):
+    name: Optional[str] = None
+    bot_id: Optional[int] = None
+    bot_token: Optional[str] = None
+    support_group_chat_id: Optional[str] = None
+    polling_enabled: Optional[bool] = None
+    welcome_message: Optional[str] = None
+    welcome_media_type: Optional[str] = None
+    welcome_media_file_id: Optional[str] = None
+    off_hours_message: Optional[str] = None
+    business_hours_enabled: Optional[bool] = None
+    business_start_hour: Optional[int] = None
+    business_end_hour: Optional[int] = None
+    backend_base_url: Optional[str] = None
+    status: Optional[str] = None
+
+
 class SupportTagCreate(BaseModel):
     name: str
     color: str = ""
@@ -379,6 +435,32 @@ class SendSettingsUpdate(BaseModel):
 class BotSendTestRequest(BaseModel):
     chat_id: str
     text: str = "Bot 测试发送"
+
+
+class MyChannelCreate(BaseModel):
+    title: str = ""
+    username: str = ""
+    chat_id: str = ""
+    channel_type: str = ""
+    group_name: str = ""
+    tags: str = "[]"
+    bot_id: Optional[int] = None
+    status: str = "enabled"
+    is_default: bool = False
+    remark: str = ""
+
+
+class MyChannelUpdate(BaseModel):
+    title: Optional[str] = None
+    username: Optional[str] = None
+    chat_id: Optional[str] = None
+    channel_type: Optional[str] = None
+    group_name: Optional[str] = None
+    tags: Optional[str] = None
+    bot_id: Optional[int] = None
+    status: Optional[str] = None
+    is_default: Optional[bool] = None
+    remark: Optional[str] = None
 
 def clone_task_to_dict(task):
     return {
@@ -526,6 +608,119 @@ def bot_binding_to_dict(binding):
     }
 
 
+def resolve_default_bot(bot_id=None):
+    if bot_id:
+        bot = get_bot(bot_id)
+        if bot and bot.enabled:
+            return bot
+
+    bots = get_enabled_bots()
+    return bots[0] if bots else None
+
+
+def member_permissions(member):
+    status = member.get("status") or ""
+    is_member = status in {"creator", "administrator", "member"}
+    is_admin = status in {"creator", "administrator"}
+
+    return {
+        "bot_is_member": is_member,
+        "bot_is_admin": is_admin,
+        "can_post_messages": bool(
+            member.get("can_post_messages")
+            or member.get("can_send_messages")
+            or status == "creator"
+        ),
+        "can_edit_messages": bool(member.get("can_edit_messages") or status == "creator"),
+        "can_delete_messages": bool(member.get("can_delete_messages") or status == "creator"),
+        "can_manage_topics": bool(member.get("can_manage_topics") or status == "creator"),
+    }
+
+
+async def check_my_channel_permissions(channel):
+    bot = resolve_default_bot(getattr(channel, "bot_id", None))
+
+    if not bot:
+        updated = set_my_channel_check_result(
+            channel.id,
+            {
+                "status": "error",
+                "last_error": "没有可用 Bot，请先添加并启用 Bot",
+            },
+        )
+        return my_channel_to_dict(updated)
+
+    target = channel.chat_id or channel.username
+
+    if not target:
+        updated = set_my_channel_check_result(
+            channel.id,
+            {
+                "status": "error",
+                "last_error": "频道 username 和 chat_id 为空",
+            },
+        )
+        return my_channel_to_dict(updated)
+
+    try:
+        chat_result = await asyncio.to_thread(
+            request_post,
+            bot.token,
+            "getChat",
+            {"chat_id": target},
+            None,
+        )
+        chat = chat_result.get("result") or {}
+        bot_info = await bot_get_me(bot.token)
+        bot_user_id = (bot_info.get("result") or {}).get("id")
+        member_result = await asyncio.to_thread(
+            request_post,
+            bot.token,
+            "getChatMember",
+            {
+                "chat_id": chat.get("id") or target,
+                "user_id": bot_user_id,
+            },
+            None,
+        )
+        member = member_result.get("result") or {}
+        permissions = member_permissions(member)
+        status = "enabled" if permissions["bot_is_member"] else "error"
+        last_error = "" if permissions["bot_is_member"] else "Bot 不在频道或群内"
+
+        updated = set_my_channel_check_result(
+            channel.id,
+            {
+                "title": chat.get("title") or channel.title,
+                "username": f"@{chat.get('username')}".lower() if chat.get("username") else channel.username,
+                "chat_id": str(chat.get("id") or channel.chat_id or ""),
+                "channel_type": chat.get("type") or channel.channel_type,
+                "bot_id": bot.id,
+                "status": status,
+                "last_error": last_error,
+                **permissions,
+            },
+        )
+        return my_channel_to_dict(updated)
+
+    except Exception as e:
+        updated = set_my_channel_check_result(
+            channel.id,
+            {
+                "status": "error",
+                "last_error": str(e)[:1000],
+                "bot_id": bot.id,
+                "bot_is_member": False,
+                "bot_is_admin": False,
+                "can_post_messages": False,
+                "can_edit_messages": False,
+                "can_delete_messages": False,
+                "can_manage_topics": False,
+            },
+        )
+        return my_channel_to_dict(updated)
+
+
 @app.get("/api/status")
 def status():
     listener_tasks = get_all_listener_tasks()
@@ -533,6 +728,112 @@ def status():
     return {
         "status": "running",
         "rules_count": len(listener_tasks),
+    }
+
+
+@app.get("/api/my-channels")
+def api_get_my_channels(
+    keyword: str = "",
+    status: str = "",
+    group_name: str = "",
+    bot_id: Optional[int] = None,
+):
+    return {
+        "items": [
+            my_channel_to_dict(channel)
+            for channel in list_my_channels(
+                keyword=keyword,
+                status=status,
+                group_name=group_name,
+                bot_id=bot_id,
+            )
+        ],
+    }
+
+
+@app.post("/api/my-channels/batch-check")
+async def api_batch_check_my_channels():
+    result = []
+
+    for channel in list_my_channels():
+        result.append(await check_my_channel_permissions(channel))
+
+    return {
+        "ok": True,
+        "items": result,
+    }
+
+
+@app.get("/api/my-channels/{channel_id}")
+def api_get_my_channel(channel_id: int):
+    channel = get_my_channel(channel_id)
+
+    if not channel:
+        return {
+            "ok": False,
+            "message": "channel not found",
+        }
+
+    return {
+        "ok": True,
+        "item": my_channel_to_dict(channel),
+    }
+
+
+@app.post("/api/my-channels")
+def api_create_my_channel(data: MyChannelCreate):
+    try:
+        channel = create_my_channel(data.dict())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return my_channel_to_dict(channel)
+
+
+@app.put("/api/my-channels/{channel_id}")
+def api_update_my_channel(channel_id: int, data: MyChannelUpdate):
+    try:
+        channel = update_my_channel(
+            channel_id,
+            data.dict(exclude_unset=True),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not channel:
+        return {
+            "ok": False,
+            "message": "channel not found",
+        }
+
+    return my_channel_to_dict(channel)
+
+
+@app.delete("/api/my-channels/{channel_id}")
+def api_delete_my_channel(channel_id: int):
+    ok = delete_my_channel(channel_id)
+
+    return {
+        "ok": ok,
+        "message": "ok" if ok else "channel not found",
+    }
+
+
+@app.post("/api/my-channels/{channel_id}/check")
+async def api_check_my_channel(channel_id: int):
+    channel = get_my_channel(channel_id)
+
+    if not channel:
+        return {
+            "ok": False,
+            "message": "channel not found",
+        }
+
+    checked = await check_my_channel_permissions(channel)
+    return {
+        "ok": checked.get("status") != "error",
+        "item": checked,
+        "message": checked.get("last_error") or "ok",
     }
 
 
@@ -783,6 +1084,74 @@ def api_support_update_settings(data: SupportSettingsUpdate):
     return {
         "settings": update_support_settings(data.dict(exclude_unset=True)),
     }
+
+
+@app.get("/api/support/bots")
+def api_support_bots():
+    return {
+        "items": list_support_bots(include_disabled=True),
+    }
+
+
+@app.post("/api/support/bots")
+def api_create_support_bot(data: SupportBotCreate):
+    return create_support_bot(data.dict())
+
+
+@app.put("/api/support/bots/{support_bot_id}")
+def api_update_support_bot(support_bot_id: int, data: SupportBotUpdate):
+    item = update_support_bot(support_bot_id, data.dict(exclude_unset=True))
+    if not item:
+        return {
+            "ok": False,
+            "message": "support bot not found",
+        }
+    return item
+
+
+@app.delete("/api/support/bots/{support_bot_id}")
+def api_delete_support_bot(support_bot_id: int):
+    ok = delete_support_bot(support_bot_id)
+    return {
+        "ok": ok,
+        "message": "ok" if ok else "support bot not found",
+    }
+
+
+@app.post("/api/support/bots/{support_bot_id}/test")
+async def api_test_support_bot_item(support_bot_id: int):
+    config = get_support_bot_config(support_bot_id)
+    if not config:
+        return {
+            "ok": False,
+            "message": "support bot not found",
+        }
+    token = get_token_for_support_bot(config)
+    if not token:
+        return {
+            "ok": False,
+            "message": "support bot token empty",
+        }
+    try:
+        result = await bot_get_me(token)
+        group_chat_id = (config.get("support_group_chat_id") or "").strip()
+        permission = (
+            await check_group_topic_permission(token, group_chat_id)
+            if group_chat_id
+            else None
+        )
+        return {
+            "ok": True,
+            "mode": "polling",
+            "bot": result.get("result") or {},
+            "group_permission": permission,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "mode": "polling",
+            "message": str(e),
+        }
 
 
 @app.post("/api/support/bot/test")

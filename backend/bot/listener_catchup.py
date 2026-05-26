@@ -1,5 +1,6 @@
 from accounts.manager import account_manager
 from bot.content_processor import get_message_text, process_content
+from bot.logger import logger
 from db.crud_listener import parse_target_channels
 
 
@@ -21,6 +22,9 @@ def get_target_message_text(message):
 
 
 async def get_latest_message(client, channel):
+    if hasattr(client, "is_connected") and not client.is_connected():
+        await client.connect()
+
     async for message in client.iter_messages(channel, limit=1):
         return message
 
@@ -54,7 +58,19 @@ async def check_latest_content_consistency(task):
             "targets": [],
         }
 
-    source_message = await get_latest_message(client, task.source_channel)
+    try:
+        source_message = await get_latest_message(client, task.source_channel)
+    except Exception as e:
+        logger.warning(
+            f"监听补齐检测失败：读取源频道异常 | "
+            f"task_id={task.id} | source={task.source_channel} | {e}"
+        )
+        return {
+            "ok": False,
+            "consistent": False,
+            "message": f"读取源频道失败：{e}",
+            "targets": [],
+        }
 
     if not source_message:
         return {
@@ -72,7 +88,22 @@ async def check_latest_content_consistency(task):
     all_consistent = True
 
     for target in targets:
-        target_message = await get_latest_message(client, target)
+        try:
+            target_message = await get_latest_message(client, target)
+        except Exception as e:
+            logger.warning(
+                f"监听补齐检测失败：读取目标频道异常 | "
+                f"task_id={task.id} | target={target} | {e}"
+            )
+            target_results.append({
+                "target": target,
+                "consistent": False,
+                "message": f"读取目标频道失败：{e}",
+                "source_message_id": source_message.id,
+                "target_message_id": None,
+            })
+            all_consistent = False
+            continue
 
         if not target_message:
             target_results.append({

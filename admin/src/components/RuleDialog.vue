@@ -18,9 +18,10 @@
       </el-form-item>
 
       <el-form-item label="目标频道">
-        <el-input
+        <ChannelSelect
           v-model="localForm.target"
-          placeholder="例如：@target_channel"
+          include-disabled
+          placeholder="请选择目标频道"
         />
       </el-form-item>
 
@@ -78,6 +79,7 @@
 
 <script setup>
 import { reactive, watch } from "vue"
+import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
 
 const props = defineProps({
