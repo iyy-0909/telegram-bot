@@ -93,12 +93,14 @@ def ensure_support_defaults():
     ensure_default_support_bot()
 
 
-def support_bot_to_dict(bot):
+def support_bot_to_dict(bot, include_secret=False):
+    bot_token = bot.bot_token or ""
     return {
         "id": bot.id,
         "name": bot.name or "",
         "bot_id": bot.bot_id,
-        "bot_token": bot.bot_token or "",
+        "bot_token": bot_token if include_secret else mask_secret(bot_token),
+        "has_bot_token": bool(bot_token),
         "support_group_chat_id": bot.support_group_chat_id or "",
         "polling_enabled": bool(bot.polling_enabled),
         "welcome_message": bot.welcome_message or "",
@@ -114,6 +116,18 @@ def support_bot_to_dict(bot):
         "created_at": str(bot.created_at) if bot.created_at else "",
         "updated_at": str(bot.updated_at) if bot.updated_at else "",
     }
+
+
+def mask_secret(value):
+    text = str(value or "")
+
+    if not text:
+        return ""
+
+    if len(text) <= 12:
+        return "******"
+
+    return f"{text[:8]}...{text[-6:]}"
 
 
 def legacy_settings_to_support_bot_data():
@@ -159,7 +173,7 @@ def ensure_default_support_bot():
         db.close()
 
 
-def list_support_bots(include_disabled=True):
+def list_support_bots(include_disabled=True, include_secret=False):
     ensure_support_defaults()
     db = SessionLocal()
     try:
@@ -170,18 +184,18 @@ def list_support_bots(include_disabled=True):
                 SupportBot.polling_enabled == True,
             )
         return [
-            support_bot_to_dict(bot)
+            support_bot_to_dict(bot, include_secret=include_secret)
             for bot in query.order_by(SupportBot.id.asc()).all()
         ]
     finally:
         db.close()
 
 
-def get_support_bot_config(support_bot_id):
+def get_support_bot_config(support_bot_id, include_secret=True):
     db = SessionLocal()
     try:
         bot = db.query(SupportBot).filter(SupportBot.id == int(support_bot_id)).first()
-        return support_bot_to_dict(bot) if bot else None
+        return support_bot_to_dict(bot, include_secret=include_secret) if bot else None
     finally:
         db.close()
 
@@ -226,6 +240,8 @@ def update_support_bot(support_bot_id, data):
         int_fields = {"bot_id", "business_start_hour", "business_end_hour"}
         for key, value in (data or {}).items():
             if not hasattr(bot, key) or value is None:
+                continue
+            if key == "bot_token" and not str(value or "").strip():
                 continue
             if key in bool_fields:
                 value = bool(value)
@@ -400,8 +416,16 @@ def upsert_customer(user, chat_id, source="", support_bot_id=None):
         customer = (
             db.query(SupportCustomer)
             .filter(SupportCustomer.telegram_user_id == telegram_user_id)
+            .filter(SupportCustomer.support_bot_id == support_bot_id)
             .first()
         )
+        if not customer and support_bot_id is not None:
+            customer = (
+                db.query(SupportCustomer)
+                .filter(SupportCustomer.telegram_user_id == telegram_user_id)
+                .filter(SupportCustomer.support_bot_id == None)
+                .first()
+            )
         created = False
         if not customer:
             customer = SupportCustomer(

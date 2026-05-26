@@ -578,23 +578,57 @@ def account_to_dict(account):
     return {
         "id": account.id,
         "name": account.name,
+        "username": getattr(account, "username", "") or "",
+        "phone": getattr(account, "phone", "") or "",
         "session_path": account.session_path,
         "proxy": account.proxy,
         "enabled": account.enabled,
         "remark": account.remark,
+        "updated_at": str(account.updated_at) if getattr(account, "updated_at", None) else "",
     }
 
 def bot_to_dict(bot):
     return {
         "id": bot.id,
         "name": bot.name,
-        "token": bot.token,
+        "token": mask_secret(bot.token),
+        "has_token": bool(bot.token),
+        "username": getattr(bot, "username", "") or "",
+        "bot_link": getattr(bot, "bot_link", "") or "",
         "enabled": bot.enabled,
         "remark": bot.remark,
         "last_error": bot.last_error,
         "created_at": str(bot.created_at) if bot.created_at else "",
         "updated_at": str(bot.updated_at) if bot.updated_at else "",
     }
+
+
+def mask_secret(value):
+    text = str(value or "")
+
+    if not text:
+        return ""
+
+    if len(text) <= 12:
+        return "******"
+
+    return f"{text[:8]}...{text[-6:]}"
+
+
+async def refresh_bot_profile(bot):
+    try:
+        result = await bot_get_me(bot.token)
+        profile = result.get("result") or {}
+        username = profile.get("username") or ""
+        update_bot(bot.id, {
+            "username": username,
+            "bot_link": f"https://t.me/{username}" if username else "",
+            "last_error": "",
+        })
+        refreshed = get_bot(bot.id)
+        return refreshed or bot
+    except Exception:
+        return bot
 
 
 def bot_binding_to_dict(binding):
@@ -1581,15 +1615,16 @@ def api_get_bots():
 
 
 @app.post("/api/bots")
-def api_create_bot(data: BotCreate):
+async def api_create_bot(data: BotCreate):
     """添加 Bot"""
     bot = create_bot(data.dict())
+    bot = await refresh_bot_profile(bot)
 
     return bot_to_dict(bot)
 
 
 @app.put("/api/bots/{bot_id}")
-def api_update_bot(bot_id: int, data: BotUpdate):
+async def api_update_bot(bot_id: int, data: BotUpdate):
     """更新 Bot"""
     update_data = data.dict(exclude_unset=True)
 
@@ -1600,6 +1635,9 @@ def api_update_bot(bot_id: int, data: BotUpdate):
             "ok": False,
             "message": "bot not found",
         }
+
+    if "token" in update_data:
+        bot = await refresh_bot_profile(bot)
 
     return bot_to_dict(bot)
 
@@ -1677,6 +1715,13 @@ async def api_test_bot(bot_id: int):
 
     try:
         result = await bot_get_me(bot.token)
+        profile = result.get("result") or {}
+        username = profile.get("username") or ""
+        update_bot(bot.id, {
+            "username": username,
+            "bot_link": f"https://t.me/{username}" if username else "",
+            "last_error": "",
+        })
 
         return {
             "ok": True,

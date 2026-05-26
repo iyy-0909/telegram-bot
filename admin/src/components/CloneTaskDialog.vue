@@ -28,20 +28,6 @@
         />
       </el-form-item>
 
-      <el-form-item label="目标频道">
-        <ChannelSelect
-          v-model="targetChannelValues"
-          multiple
-          include-disabled
-          :bot-id="localForm.bot_id"
-          placeholder="请选择目标频道"
-        />
-      </el-form-item>
-
-      <el-form-item label="账号ID">
-        <el-input-number v-model="localForm.account_id" :min="1" />
-      </el-form-item>
-
       <el-form-item label="分发 Bot">
         <el-select
           v-model="localForm.bot_id"
@@ -56,6 +42,27 @@
             :value="bot.id"
           />
         </el-select>
+      </el-form-item>
+
+      <el-form-item label="目标频道">
+        <ChannelSelect
+          v-model="targetChannelValues"
+          multiple
+          include-disabled
+          allow-create
+          :bot-id="localForm.bot_id"
+          placeholder="请选择目标频道，也可以手动输入 @username 或 chat_id"
+        />
+        <div class="field-tip">
+          先选择分发 Bot，再选择目标频道；下拉没有时可直接输入并回车。
+        </div>
+      </el-form-item>
+
+      <el-form-item label="采集账号">
+        <el-input
+          :model-value="collectorAccountLabel"
+          disabled
+        />
       </el-form-item>
 
       <el-form-item label="内容间隔分钟">
@@ -229,6 +236,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  accounts: {
+    type: Array,
+    default: () => [],
+  },
   templates: {
     type: Array,
     default: () => [],
@@ -276,6 +287,20 @@ const localForm = reactive({
   remove_contact_lines: true,
 })
 
+const collectorAccount = computed(() => (
+  props.accounts.find((account) => account.enabled)
+  || props.accounts[0]
+  || null
+))
+
+const collectorAccountLabel = computed(() => {
+  if (!collectorAccount.value) {
+    return "暂无可用采集账号"
+  }
+
+  return `${collectorAccount.value.id} - ${collectorAccount.value.name || "采集账号"}`
+})
+
 watch(
   () => props.form,
   (val) => {
@@ -301,7 +326,7 @@ function submit() {
     ...localForm,
     start_message_url: (localForm.start_message_url || "").trim(),
     end_message_url: (localForm.end_message_url || "").trim(),
-    account_id: toPositiveNumber(localForm.account_id, 1),
+    account_id: collectorAccount.value?.id || toPositiveNumber(localForm.account_id, 1),
     bot_id: normalizeBotId(localForm.bot_id),
     single_delay: toPositiveNumber(localForm.single_delay, 3),
     target_delay: toPositiveNumber(localForm.target_delay, 2),
@@ -430,5 +455,12 @@ function uniqueChannels(items) {
 .template-select {
   max-width: 260px;
   width: 100%;
+}
+
+.field-tip {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>

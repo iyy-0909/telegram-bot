@@ -105,6 +105,32 @@ def get_existing_schema():
     return tables, columns
 
 
+def has_support_customer_telegram_unique_index():
+    inspector = inspect(engine)
+    if "support_customers" not in set(inspector.get_table_names()):
+        return False
+
+    with engine.connect() as conn:
+        indexes = conn.execute(text("PRAGMA index_list('support_customers')")).fetchall()
+
+        for index in indexes:
+            index_name = index[1]
+            is_unique = bool(index[2])
+
+            if not is_unique:
+                continue
+
+            columns = conn.execute(
+                text(f"PRAGMA index_info({quote_name(index_name)})")
+            ).fetchall()
+            column_names = [column[2] for column in columns]
+
+            if column_names == ["telegram_user_id"]:
+                return True
+
+    return False
+
+
 def schema_needs_migration():
     existing_tables, existing_columns = get_existing_schema()
 
@@ -116,6 +142,9 @@ def schema_needs_migration():
         for column in table.columns:
             if column.name not in current_columns:
                 return True
+
+    if has_support_customer_telegram_unique_index():
+        return True
 
     return False
 
@@ -175,6 +204,102 @@ def add_missing_columns():
                 print(f"added column: {table.name}.{column.name}")
 
 
+def drop_support_customer_telegram_unique_index():
+    inspector = inspect(engine)
+    if "support_customers" not in set(inspector.get_table_names()):
+        return
+
+    with engine.begin() as conn:
+        indexes = conn.execute(text("PRAGMA index_list('support_customers')")).fetchall()
+
+        for index in indexes:
+            index_name = index[1]
+            is_unique = bool(index[2])
+
+            if not is_unique:
+                continue
+
+            columns = conn.execute(
+                text(f"PRAGMA index_info({quote_name(index_name)})")
+            ).fetchall()
+            column_names = [column[2] for column in columns]
+
+            if column_names == ["telegram_user_id"]:
+                try:
+                    conn.execute(text(f"DROP INDEX {quote_name(index_name)}"))
+                    print(f"dropped unique index: support_customers.{index_name}")
+                except Exception:
+                    rebuild_support_customers_without_unique_index(conn)
+                    print("rebuilt table: support_customers without telegram_user_id unique index")
+                    return
+
+
+def rebuild_support_customers_without_unique_index(conn):
+    conn.execute(text("DROP TABLE IF EXISTS support_customers_new"))
+    conn.execute(text("""
+        CREATE TABLE support_customers_new (
+            id INTEGER NOT NULL PRIMARY KEY,
+            support_bot_id INTEGER,
+            telegram_user_id VARCHAR NOT NULL,
+            telegram_chat_id VARCHAR NOT NULL,
+            username VARCHAR,
+            first_name VARCHAR,
+            last_name VARCHAR,
+            language_code VARCHAR,
+            source VARCHAR,
+            status VARCHAR,
+            blocked BOOLEAN,
+            created_at DATETIME,
+            last_message_at DATETIME,
+            updated_at DATETIME
+        )
+    """))
+    conn.execute(text("""
+        INSERT INTO support_customers_new (
+            id,
+            support_bot_id,
+            telegram_user_id,
+            telegram_chat_id,
+            username,
+            first_name,
+            last_name,
+            language_code,
+            source,
+            status,
+            blocked,
+            created_at,
+            last_message_at,
+            updated_at
+        )
+        SELECT
+            id,
+            support_bot_id,
+            telegram_user_id,
+            telegram_chat_id,
+            username,
+            first_name,
+            last_name,
+            language_code,
+            source,
+            status,
+            blocked,
+            created_at,
+            last_message_at,
+            updated_at
+        FROM support_customers
+    """))
+    conn.execute(text("DROP TABLE support_customers"))
+    conn.execute(text("ALTER TABLE support_customers_new RENAME TO support_customers"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_support_bot_id ON support_customers (support_bot_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_telegram_user_id ON support_customers (telegram_user_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_telegram_chat_id ON support_customers (telegram_chat_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_username ON support_customers (username)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_source ON support_customers (source)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_status ON support_customers (status)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_blocked ON support_customers (blocked)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_last_message_at ON support_customers (last_message_at)"))
+
+
 def ensure_defaults():
     from db.crud_settings import ensure_default_settings
     from db.crud_support import ensure_support_defaults
@@ -194,6 +319,7 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
     add_missing_columns()
+    drop_support_customer_telegram_unique_index()
     ensure_defaults()
 
     if backup_path:

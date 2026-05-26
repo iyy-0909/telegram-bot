@@ -12,6 +12,9 @@ services:
       APP_PORT: ${APP_PORT:-8000}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/app.db}
       TELEGRAM_RECEIVER_MODE: ${TELEGRAM_RECEIVER_MODE:-polling}
+      CONTROL_BOT_TOKEN: ${CONTROL_BOT_TOKEN:-}
+      ALERT_CHAT_ID: ${ALERT_CHAT_ID:-}
+      TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:

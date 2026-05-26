@@ -6,6 +6,26 @@
     width="860px"
   >
     <el-form label-width="150px">
+      <el-form-item v-if="!isEdit" label="复制已有任务">
+        <el-select
+          v-model="copyTaskId"
+          clearable
+          filterable
+          placeholder="可选择一条已有监听任务作为模板"
+          @change="applyCopyTask"
+        >
+          <el-option
+            v-for="task in copyableTasks"
+            :key="task.id"
+            :label="copyTaskLabel(task)"
+            :value="task.id"
+          />
+        </el-select>
+        <div class="field-tip">
+          仅复制规则配置，不复制任务 ID 和运行状态。复制后可以继续修改。
+        </div>
+      </el-form-item>
+
       <el-form-item label="任务名称">
         <el-input v-model="localForm.name" placeholder="例如 上海频道实时监听" />
       </el-form-item>
@@ -229,7 +249,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from "vue"
+import { computed, reactive, ref, watch } from "vue"
 import { Plus } from "@element-plus/icons-vue"
 import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
@@ -238,6 +258,10 @@ const props = defineProps({
   visible: Boolean,
   form: Object,
   isEdit: Boolean,
+  existingTasks: {
+    type: Array,
+    default: () => [],
+  },
   accounts: {
     type: Array,
     default: () => [],
@@ -281,6 +305,8 @@ const localForm = reactive({
 
 const sourceChannels = ref([""])
 const targetChannels = ref([""])
+const copyTaskId = ref(null)
+const copyableTasks = computed(() => props.existingTasks.filter((task) => task?.id))
 
 watch(
   () => props.form,
@@ -302,9 +328,52 @@ watch(
       val.source_channels || val.source_channel || "",
     )
     targetChannels.value = normalizeChannelItems(val.target_channels || "[]")
+    copyTaskId.value = null
   },
   { immediate: true, deep: true },
 )
+
+function applyCopyTask(taskId) {
+  const task = props.existingTasks.find((item) => Number(item.id) === Number(taskId))
+
+  if (!task) {
+    return
+  }
+
+  Object.assign(localForm, {
+    id: null,
+    name: task.name ? `${task.name} 副本` : "",
+    source_channel: task.source_channel || "",
+    target_channels: task.target_channels || "[]",
+    account_id: toPositiveNumber(task.account_id, props.accounts[0]?.id || 1),
+    bot_id: normalizeBotId(task.bot_id),
+    enabled: true,
+    status: "running",
+    blocked_keywords: task.blocked_keywords || "[]",
+    replace_words: task.replace_words || "{}",
+    footer: "",
+    remove_contact_lines: task.remove_contact_lines ?? true,
+    use_random_head: task.use_random_head ?? false,
+    use_random_body: task.use_random_body ?? false,
+    use_random_footer: task.use_random_footer ?? false,
+    selected_head_template_group_id: normalizeTemplateId(task.selected_head_template_group_id),
+    selected_body_template_group_id: normalizeTemplateId(task.selected_body_template_group_id),
+    selected_footer_template_group_id: normalizeTemplateId(task.selected_footer_template_group_id),
+    selected_head_template_id: normalizeTemplateId(task.selected_head_template_id),
+    selected_body_template_id: normalizeTemplateId(task.selected_body_template_id),
+    selected_footer_template_id: normalizeTemplateId(task.selected_footer_template_id),
+    album_wait_seconds: toPositiveNumber(task.album_wait_seconds, 3),
+  })
+
+  sourceChannels.value = normalizeChannelItems(task.source_channel || "")
+  targetChannels.value = normalizeChannelItems(task.target_channels || "[]")
+}
+
+function copyTaskLabel(task) {
+  const source = task.source_channel || "-"
+  const targets = normalizeChannelItems(task.target_channels || "[]").join(", ") || "-"
+  return `#${task.id} ${task.name || "未命名"} | ${source} -> ${targets}`
+}
 
 function addSourceChannel() {
   sourceChannels.value.push("")
@@ -498,5 +567,12 @@ function toPositiveNumber(value, fallback) {
 .template-select {
   max-width: 260px;
   width: 100%;
+}
+
+.field-tip {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>

@@ -1,31 +1,82 @@
 <template>
   <div class="page">
-    <div class="toolbar">
+    <div class="page-hero">
       <div>
         <div class="title">我的频道</div>
-        <div class="subtitle">统一管理所有目标频道，并检测 Bot 权限</div>
+        <div class="subtitle">统一管理目标频道、分组和 Bot 发帖权限，创建任务时直接选择。</div>
       </div>
+      <div class="summary">
+        <div class="summary-item">
+          <span>全部</span>
+          <strong>{{ channelStats.total }}</strong>
+        </div>
+        <div class="summary-item success">
+          <span>可用</span>
+          <strong>{{ channelStats.enabled }}</strong>
+        </div>
+        <div class="summary-item danger">
+          <span>异常</span>
+          <strong>{{ channelStats.error }}</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
       <div class="actions">
-        <el-input v-model="filters.keyword" placeholder="搜索名称 / username / chat_id" clearable @keyup.enter="load" />
-        <el-select v-model="filters.status" clearable placeholder="状态">
+        <el-input
+          v-model="filters.keyword"
+          placeholder="搜索名称 / username / chat_id"
+          clearable
+          @keyup.enter="load"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-select v-model="filters.status" clearable placeholder="状态" class="status-filter">
           <el-option label="enabled" value="enabled" />
           <el-option label="disabled" value="disabled" />
           <el-option label="error" value="error" />
         </el-select>
-        <el-button @click="load">刷新</el-button>
-        <el-button @click="batchCheck">批量检测</el-button>
-        <el-button type="primary" @click="openCreate">新增频道</el-button>
+        <el-button @click="load">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+        <el-button @click="batchCheck">
+          <el-icon><Connection /></el-icon>
+          批量检测
+        </el-button>
+        <el-button type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon>
+          新增频道
+        </el-button>
       </div>
     </div>
 
-    <el-table :data="channels" border>
+    <el-card class="table-card">
+    <el-table :data="channels" border stripe empty-text="暂无频道">
       <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="username" label="username" min-width="140" />
+      <el-table-column label="username" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          <button
+            v-if="row.username"
+            class="copy-chip"
+            type="button"
+            @click="copyValue(row.username)"
+          >
+            <span>{{ row.username }}</span>
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="chat_id" label="chat_id" min-width="160" show-overflow-tooltip />
       <el-table-column prop="group_name" label="分组" min-width="120" />
       <el-table-column label="绑定 Bot" min-width="120">
         <template #default="{ row }">
-          {{ botName(row.bot_id) }}
+          <el-tag size="small" effect="plain">
+            {{ botName(row.bot_id) }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="100">
@@ -49,15 +100,27 @@
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" @click="check(row)">检测</el-button>
+          <div class="row-actions">
+          <el-button size="small" @click="openEdit(row)">
+            <el-icon><Edit /></el-icon>
+            编辑
+          </el-button>
+          <el-button size="small" @click="check(row)">
+            <el-icon><Connection /></el-icon>
+            检测
+          </el-button>
           <el-button size="small" @click="toggle(row)">
             {{ row.status === "disabled" ? "启用" : "禁用" }}
           </el-button>
-          <el-button size="small" type="danger" @click="remove(row)">删除</el-button>
+          <el-button size="small" type="danger" plain @click="remove(row)">
+            <el-icon><Delete /></el-icon>
+            删除
+          </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
+    </el-card>
 
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="620px">
       <el-form label-width="110px">
@@ -106,6 +169,15 @@
 import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
+  Connection,
+  CopyDocument,
+  Delete,
+  Edit,
+  Plus,
+  Refresh,
+  Search,
+} from "@element-plus/icons-vue"
+import {
   batchCheckMyChannels,
   checkMyChannel,
   createMyChannel,
@@ -130,6 +202,11 @@ const filters = reactive({
 })
 const form = reactive(emptyForm())
 const enabledBots = computed(() => props.bots.filter((bot) => bot.enabled))
+const channelStats = computed(() => ({
+  total: channels.value.length,
+  enabled: channels.value.filter((channel) => channel.status === "enabled").length,
+  error: channels.value.filter((channel) => channel.status === "error").length,
+}))
 
 onMounted(load)
 
@@ -230,6 +307,21 @@ function botName(botId) {
 function yesNo(value) {
   return value ? "是" : "否"
 }
+
+async function copyValue(value) {
+  const text = String(value || "").trim()
+
+  if (!text) {
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success("已复制")
+  } catch {
+    ElMessage.error("复制失败")
+  }
+}
 </script>
 
 <style scoped>
@@ -239,11 +331,19 @@ function yesNo(value) {
   gap: 14px;
 }
 
+.page-hero,
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.page-hero {
+  padding: 18px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .title {
@@ -261,15 +361,100 @@ function yesNo(value) {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .actions .el-input {
   width: 260px;
 }
 
+.status-filter {
+  width: 150px;
+}
+
+.summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-item {
+  min-width: 74px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  border: 1px solid #e5e7eb;
+}
+
+.summary-item span {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.summary-item strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 18px;
+  color: #303133;
+}
+
+.summary-item.success strong {
+  color: #67c23a;
+}
+
+.summary-item.danger strong {
+  color: #f56c6c;
+}
+
+.table-card {
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
 .perm {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+}
+
+.copy-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid #dcdfe6;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: #ffffff;
+  color: #409eff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.copy-chip:hover {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.copy-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.row-actions .el-button {
+  margin-left: 0;
 }
 </style>

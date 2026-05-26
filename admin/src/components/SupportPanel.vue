@@ -1,28 +1,55 @@
 <template>
   <div class="support-page">
-    <div class="toolbar">
+    <div class="page-hero">
       <div>
         <div class="title">客服机器人</div>
-        <div class="subtitle">每个客服 Bot 独立 polling、独立客服群和欢迎语</div>
+        <div class="subtitle">群内客服模式：每个 Bot 独立 polling、客服群、欢迎语和话题会话。</div>
       </div>
-      <el-button type="primary" @click="openCreate">新增客服 Bot</el-button>
+      <div class="summary">
+        <div class="summary-item">
+          <span>配置</span>
+          <strong>{{ stats.total }}</strong>
+        </div>
+        <div class="summary-item success">
+          <span>Polling</span>
+          <strong>{{ stats.polling }}</strong>
+        </div>
+        <div class="summary-item danger">
+          <span>异常</span>
+          <strong>{{ stats.error }}</strong>
+        </div>
+      </div>
     </div>
 
-    <el-alert
-      title="客户列表、会话记录和快捷回复第一版先隐藏。客服回复在 Telegram 客服群/话题内完成。"
-      type="info"
-      show-icon
-      :closable="false"
-    />
+    <div class="toolbar">
+      <el-alert
+        title="客服回复在 Telegram 客服群/话题内完成，后台只负责配置和只读管理。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="page-alert"
+      />
+      <el-button type="primary" @click="openCreate">
+        <el-icon><Plus /></el-icon>
+        新增客服 Bot
+      </el-button>
+    </div>
 
-    <el-table :data="items" border>
+    <el-card class="table-card">
+    <el-table :data="items" border stripe empty-text="暂无客服 Bot">
       <el-table-column prop="name" label="名称" min-width="150" />
       <el-table-column label="Bot" min-width="160">
         <template #default="{ row }">
-          {{ botLabel(row) }}
+          <el-tag size="small" effect="plain">
+            {{ botLabel(row) }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="support_group_chat_id" label="客服群 chat_id" min-width="170" />
+      <el-table-column label="客服群 chat_id" min-width="170">
+        <template #default="{ row }">
+          <span class="mono-text">{{ row.support_group_chat_id || "-" }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="polling" width="100">
         <template #default="{ row }">
           <el-tag :type="row.polling_enabled ? 'success' : 'info'">
@@ -45,15 +72,27 @@
       </el-table-column>
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" @click="testBot(row)">检测</el-button>
+          <div class="row-actions">
+          <el-button size="small" @click="openEdit(row)">
+            <el-icon><Edit /></el-icon>
+            编辑
+          </el-button>
+          <el-button size="small" @click="testBot(row)">
+            <el-icon><CircleCheck /></el-icon>
+            检测
+          </el-button>
           <el-button size="small" @click="togglePolling(row)">
             {{ row.polling_enabled ? "停用" : "启用" }}
           </el-button>
-          <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+          <el-button size="small" type="danger" plain @click="remove(row)">
+            <el-icon><Delete /></el-icon>
+            删除
+          </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
+    </el-card>
 
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑客服 Bot' : '新增客服 Bot'" width="760px">
       <el-form label-width="150px">
@@ -73,7 +112,16 @@
         </el-form-item>
 
         <el-form-item label="或填写 Bot Token">
-          <el-input v-model="form.bot_token" type="password" show-password />
+          <el-input
+            v-model="form.bot_token"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :placeholder="form.id ? '留空表示不修改 Token' : '填写独立客服 Bot Token'"
+          />
+          <div class="field-tip">
+            已保存的 Token 不会回显，避免在浏览器中泄露。需要更换时再填写新 Token。
+          </div>
         </el-form-item>
 
         <el-form-item label="客服群 chat_id">
@@ -148,6 +196,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import { CircleCheck, Delete, Edit, Plus } from "@element-plus/icons-vue"
 import {
   createSupportBot,
   deleteSupportBot,
@@ -167,6 +216,11 @@ const items = ref([])
 const dialogVisible = ref(false)
 const form = reactive(emptyForm())
 const enabledBots = computed(() => props.bots.filter((bot) => bot.enabled))
+const stats = computed(() => ({
+  total: items.value.length,
+  polling: items.value.filter((item) => item.polling_enabled).length,
+  error: items.value.filter((item) => item.status === "error").length,
+}))
 
 onMounted(load)
 
@@ -176,6 +230,7 @@ function emptyForm() {
     name: "",
     bot_id: null,
     bot_token: "",
+    has_bot_token: false,
     support_group_chat_id: "",
     polling_enabled: false,
     welcome_message: "您好，欢迎咨询，请直接发送您的问题，客服会尽快回复您。",
@@ -205,6 +260,7 @@ function openEdit(row) {
     ...emptyForm(),
     ...row,
     bot_id: row.bot_id || null,
+    bot_token: "",
     polling_enabled: Boolean(row.polling_enabled),
     business_hours_enabled: Boolean(row.business_hours_enabled),
     business_start_hour: Number(row.business_start_hour || 9),
@@ -218,7 +274,7 @@ async function save() {
     ElMessage.warning("请填写名称")
     return
   }
-  if (!form.bot_id && !form.bot_token.trim()) {
+  if (!form.bot_id && !form.has_bot_token && !form.bot_token.trim()) {
     ElMessage.warning("请选择已有 Bot 或填写 Bot Token")
     return
   }
@@ -226,8 +282,13 @@ async function save() {
   const payload = {
     ...form,
     name: form.name.trim(),
-    bot_token: form.bot_token.trim(),
     support_group_chat_id: form.support_group_chat_id.trim(),
+  }
+
+  if (form.bot_token.trim()) {
+    payload.bot_token = form.bot_token.trim()
+  } else {
+    delete payload.bot_token
   }
 
   if (form.id) {
@@ -280,7 +341,7 @@ async function remove(row) {
 function botLabel(row) {
   const bot = props.bots.find((item) => Number(item.id) === Number(row.bot_id))
   if (bot) return `${bot.name} (#${bot.id})`
-  return row.bot_token ? "自定义 Token" : "-"
+  return row.has_bot_token ? "自定义 Token" : "-"
 }
 </script>
 
@@ -291,11 +352,23 @@ function botLabel(row) {
   gap: 14px;
 }
 
+.page-hero,
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.page-hero {
+  padding: 18px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.toolbar {
+  align-items: stretch;
 }
 
 .title {
@@ -307,6 +380,73 @@ function botLabel(row) {
   margin-top: 4px;
   color: #6b7280;
   font-size: 13px;
+}
+
+.summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-item {
+  min-width: 78px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  border: 1px solid #e5e7eb;
+}
+
+.summary-item span {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.summary-item strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 18px;
+  color: #303133;
+}
+
+.summary-item.success strong {
+  color: #67c23a;
+}
+
+.summary-item.danger strong {
+  color: #f56c6c;
+}
+
+.page-alert {
+  flex: 1;
+}
+
+.table-card {
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.mono-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #606266;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.row-actions .el-button {
+  margin-left: 0;
+}
+
+.field-tip {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .row {

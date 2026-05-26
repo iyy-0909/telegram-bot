@@ -23,10 +23,30 @@
       >
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="name" label="任务名" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="source_channel" label="源频道" min-width="150" show-overflow-tooltip />
+        <el-table-column label="源频道" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <button
+              v-if="row.source_channel"
+              class="copy-text link-primary"
+              type="button"
+              @click="copyValue(row.source_channel)"
+            >
+              <span>{{ row.source_channel }}</span>
+              <el-icon class="copy-icon"><CopyDocument /></el-icon>
+            </button>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="目标频道" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ formatTargets(row.target_channels) }}
+            <button
+              class="copy-text link-success"
+              type="button"
+              @click="copyValue(formatTargets(row.target_channels))"
+            >
+              <span>{{ formatTargets(row.target_channels) }}</span>
+              <el-icon class="copy-icon"><CopyDocument /></el-icon>
+            </button>
           </template>
         </el-table-column>
         <el-table-column prop="account_id" label="账号" width="80" align="center" />

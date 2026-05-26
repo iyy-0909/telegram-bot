@@ -7,6 +7,8 @@
     clearable
     collapse-tags
     collapse-tags-tooltip
+    :allow-create="allowCreate"
+    :default-first-option="allowCreate"
     class="channel-select"
     @update:model-value="$emit('update:modelValue', $event)"
   >
@@ -57,6 +59,10 @@ const props = defineProps({
   botId: {
     type: [Number, String, null],
     default: null,
+  },
+  allowCreate: {
+    type: Boolean,
+    default: false,
   },
 })
 

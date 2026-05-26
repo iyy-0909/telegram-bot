@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from db.database import SessionLocal
 from db.models import ListenerSendEvent
 from bot.logger import logger
+from utils.time_utils import format_app_time
 
 
 MAX_EVENTS = 20
@@ -60,7 +59,7 @@ def add_listener_send_event(
 
     try:
         event = ListenerSendEvent(
-            time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            time=format_app_time(),
             task_id=task_id,
             task_name=task_name or "",
             target=target or "",
@@ -85,7 +84,7 @@ def add_listener_send_event(
         db.rollback()
         logger.warning(f"写入监听发送缓存失败，已忽略 | {e}")
         return {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": format_app_time(),
             "task_id": task_id,
             "task_name": task_name,
             "target": target,

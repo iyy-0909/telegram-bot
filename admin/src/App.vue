@@ -106,6 +106,7 @@
       :visible="listenerTaskDialogVisible"
       :form="currentListenerTask"
       :is-edit="isListenerTaskEdit"
+      :existing-tasks="listenerTasks"
       :accounts="accounts"
       :bots="bots"
       :templates="contentTemplates"
@@ -152,6 +153,7 @@
     :form="currentCloneTask"
     :is-edit="isCloneTaskEdit"
     :bots="bots"
+    :accounts="accounts"
     :templates="contentTemplates"
     @update:visible="cloneTaskDialogVisible = $event"
     @submit="submitCloneTask"
@@ -806,6 +808,8 @@ function resetCurrentListenerTask() {
 
 async function openAddListenerTaskDialog() {
   await loadBots()
+  await loadAccounts()
+  await loadListenerTasks()
   await loadContentTemplates()
   resetCurrentListenerTask()
   isListenerTaskEdit.value = false
@@ -1304,7 +1308,7 @@ function openEditBotDialog(row) {
   Object.assign(currentBot, {
     id: row.id,
     name: row.name || "",
-    token: row.token || "",
+    token: "",
     enabled: row.enabled ?? true,
     remark: row.remark || "",
     last_error: row.last_error || "",
@@ -1318,16 +1322,19 @@ function openEditBotDialog(row) {
 async function submitBot(formData) {
   Object.assign(currentBot, formData)
 
-  if (!currentBot.name || !currentBot.token) {
-    ElMessage.error("Bot 名称和 Token 不能为空")
+  if (!currentBot.name || (!isBotEdit.value && !currentBot.token)) {
+    ElMessage.error(isBotEdit.value ? "Bot 名称不能为空" : "Bot 名称和 Token 不能为空")
     return
   }
 
   const payload = {
     name: currentBot.name,
-    token: currentBot.token,
     enabled: currentBot.enabled,
     remark: currentBot.remark || "",
+  }
+
+  if (currentBot.token) {
+    payload.token = currentBot.token
   }
 
   if (isBotEdit.value) {
@@ -1526,6 +1533,7 @@ function resetCurrentCloneTask() {
 
 async function openAddCloneTaskDialog() {
   await loadBots()
+  await loadAccounts()
   await loadContentTemplates()
   resetCurrentCloneTask()
   isCloneTaskEdit.value = false
@@ -1535,6 +1543,7 @@ async function openAddCloneTaskDialog() {
 
 async function openEditCloneTaskDialog(row) {
   await loadBots()
+  await loadAccounts()
   await loadContentTemplates()
   Object.assign(currentCloneTask, {
     id: row.id,

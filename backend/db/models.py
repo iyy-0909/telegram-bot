@@ -34,10 +34,13 @@ class Account(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    username = Column(String, default="")
+    phone = Column(String, default="")
     session_path = Column(String, nullable=False)
     proxy = Column(String, default="")
     enabled = Column(Boolean, default=True)
     remark = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CloneTask(Base):
@@ -217,6 +220,8 @@ class BotAccount(Base):
 
     name = Column(String, nullable=False)
     token = Column(Text, nullable=False)
+    username = Column(String, default="")
+    bot_link = Column(String, default="")
 
     enabled = Column(Boolean, default=True)
     remark = Column(Text, default="")
@@ -291,7 +296,7 @@ class SupportCustomer(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     support_bot_id = Column(Integer, nullable=True, index=True)
-    telegram_user_id = Column(String, nullable=False, unique=True, index=True)
+    telegram_user_id = Column(String, nullable=False, index=True)
     telegram_chat_id = Column(String, nullable=False, index=True)
     username = Column(String, default="", index=True)
     first_name = Column(String, default="")

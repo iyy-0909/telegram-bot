@@ -45,3 +45,75 @@ BOT_API_PROXY=socks5://user:pass@host:port
 ```txt
 生产环境已忽略本地代理 | account_id=1 | account_name=采集账号 | proxy=127.0.0.1:7897
 ```
+
+## 告警通知配置
+
+系统错误告警继续使用 `.env` 配置，不需要数据库配置。
+
+需要在服务器 `/opt/telegram-bot/.env` 中配置：
+
+```env
+CONTROL_BOT_TOKEN=你的告警BotToken
+ALERT_CHAT_ID=你的告警频道chat_id或@频道username
+```
+
+说明：
+
+- `CONTROL_BOT_TOKEN` 是专门发送错误通知的 Telegram Bot Token。
+- `ALERT_CHAT_ID` 是接收告警的频道、群或用户，可以填写 `@username`，也可以填写 `-100` 开头的 chat_id。
+- 如果通知频道是私有频道，建议使用 `-100xxxxxxxxxx` 形式的 chat_id，并确保告警 Bot 已加入频道且有发消息权限。
+- 修改 `.env` 后需要重启后端容器才会生效。
+
+重启并测试：
+
+```bash
+cd /opt/telegram-bot
+docker compose restart backend
+curl http://127.0.0.1:8000/api/notify/test
+docker logs -f tg-backend
+```
+
+如果仍看到 `告警未发送：CONTROL_BOT_TOKEN 未配置`，说明容器没有读取到 `.env` 中的 `CONTROL_BOT_TOKEN`。
+
+## 线上重新登录采集账号
+
+当 Telegram 用户号 session 失效时，不要新建一个不相关的账号记录。监听任务、克隆任务通常绑定的是旧的 `account_id`，应优先选择“重新登录已有账号”，保持原 `account_id` 和 `session_path` 不变。
+
+推荐流程：
+
+```bash
+cd /opt/telegram-bot
+docker compose stop backend
+docker compose run --rm -it backend python login_account.py
+docker compose up -d
+docker logs -f tg-backend
+```
+
+注意必须带 `-it`，否则 Docker 里无法输入手机号、验证码和二步验证密码。
+
+脚本启动后会显示已有账号列表：
+
+```txt
+ID | 名称 | username | phone | session_path | enabled
+```
+
+如果要恢复旧监听任务绑定的账号，例如 `account_id=3`：
+
+1. 选择 `1. 重新登录已有账号`
+2. 输入 `account_id=3`
+3. Session 路径直接回车，使用原来的 `data/sessions/collector_1`
+4. 输入手机号、验证码、二步验证密码
+
+登录成功后，脚本会更新原账号记录，不会创建重复账号：
+
+```txt
+登录成功：
+id = 3
+name = ...
+username = ...
+phone = ...
+session = data/sessions/collector_1
+updated_existing = true
+```
+
+如果旧 `.session` 文件已被 Telegram 判定失效，脚本会把旧文件改名备份为 `.invalid_时间戳`，然后继续用相同 `session_path` 重新登录。这样任务里的 `account_id` 不需要修改。

@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from db.database import SessionLocal
 from db.models import CloneSendEvent
 from bot.logger import logger
+from utils.time_utils import format_app_time
 
 
 MAX_EVENTS = 20
@@ -48,7 +47,7 @@ def add_clone_send_event(
 
     try:
         event = CloneSendEvent(
-            time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            time=format_app_time(),
             task_id=task_id,
             target=target or "",
             source_message_id=source_message_id,
@@ -67,7 +66,7 @@ def add_clone_send_event(
         db.rollback()
         logger.warning(f"写入克隆发送缓存失败，已忽略 | {e}")
         return {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": format_app_time(),
             "task_id": task_id,
             "target": target or "",
             "source_message_id": source_message_id,

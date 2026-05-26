@@ -19,10 +19,14 @@
       <el-form-item label="Bot Token">
         <el-input
           v-model="localForm.token"
-          type="textarea"
-          :rows="3"
-          placeholder="从 BotFather 获取的 Token"
+          type="password"
+          show-password
+          autocomplete="new-password"
+          :placeholder="isEdit ? '留空表示不修改 Token' : '从 BotFather 获取的 Token'"
         />
+        <div class="field-tip">
+          {{ isEdit ? "为避免泄露，已保存的 Token 不会回显。需要更换时再填写新 Token。" : "Token 只会提交给后端保存，列表不会展示明文。" }}
+        </div>
       </el-form-item>
 
       <el-form-item label="启用">
@@ -96,7 +100,7 @@ watch(
       Object.assign(localForm, {
         id: props.form.id ?? null,
         name: props.form.name || "",
-        token: props.form.token || "",
+        token: "",
         enabled: props.form.enabled ?? true,
         remark: props.form.remark || "",
       })
@@ -121,3 +125,12 @@ const handleSubmit = () => {
   })
 }
 </script>
+
+<style scoped>
+.field-tip {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+}
+</style>

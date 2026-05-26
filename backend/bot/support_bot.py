@@ -31,6 +31,7 @@ _offset = None
 _offsets = {}
 _deleted_webhook_tokens = set()
 _recent_group_chats = OrderedDict()
+_group_join_notice_sent = set()
 _last_polling_conflict_log_at = 0
 
 
@@ -151,6 +152,48 @@ def get_recent_group_chats():
     return list(reversed(list(_recent_group_chats.values())))
 
 
+async def maybe_send_group_chat_id_notice(token, message):
+    chat = message.get("chat") or {}
+    chat_type = chat.get("type")
+
+    if chat_type not in {"group", "supergroup"}:
+        return
+
+    new_members = message.get("new_chat_members") or []
+    if not new_members:
+        return
+
+    bot = await get_bot_identity(token)
+    bot_id = str(bot.get("id") or "")
+
+    if not bot_id:
+        return
+
+    joined_self = any(str(member.get("id") or "") == bot_id for member in new_members)
+
+    if not joined_self:
+        return
+
+    chat_id = str(chat.get("id") or "")
+    if not chat_id:
+        return
+
+    dedupe_key = f"{bot_id}:{chat_id}"
+    if dedupe_key in _group_join_notice_sent:
+        return
+
+    _group_join_notice_sent.add(dedupe_key)
+    title = chat.get("title") or "-"
+    text = (
+        "客服 Bot 已加入当前群。\n\n"
+        f"群名称：{title}\n"
+        f"群类型：{chat_type}\n"
+        f"客服群 chat_id：{chat_id}\n\n"
+        "请把上面的 chat_id 填到后台「客服机器人」里的客服群 chat_id。"
+    )
+    await send_text_to_chat(token, chat_id, text)
+
+
 async def test_support_bot_config():
     token, settings = get_support_token_and_settings()
     if not token:
@@ -185,7 +228,7 @@ async def test_support_bot_config():
 def extract_group_chats_from_updates(updates):
     groups = OrderedDict()
     for update in updates or []:
-        message = update.get("message") or update.get("edited_message") or {}
+        message = update.get("message") or {}
         chat = message.get("chat") or {}
         if chat.get("type") not in {"group", "supergroup"}:
             continue
@@ -262,7 +305,7 @@ async def get_recent_support_updates(limit=30):
             {
                 "timeout": 0,
                 "limit": max(min(int(limit or 30), 100), 1),
-                "allowed_updates": '["message","edited_message"]',
+                "allowed_updates": '["message"]',
             },
             None,
         )
@@ -579,14 +622,19 @@ async def send_support_message(chat_id, text, token=None):
     return await send_text_to_chat(token, chat_id, text)
 
 
-async def send_group_notice(text, token=None, settings=None):
+async def send_group_notice(text, token=None, settings=None, message_thread_id=None):
     if not token or not settings:
         token, settings = get_support_token_and_settings()
     group_chat_id = (settings.get("support_group_chat_id") or "").strip()
     if not token or not group_chat_id:
         return None
     try:
-        return await send_text_to_chat(token, group_chat_id, text)
+        return await send_text_to_chat(
+            token,
+            group_chat_id,
+            text,
+            message_thread_id=message_thread_id,
+        )
     except Exception as e:
         logger.warning(f"客服群提示发送失败 | {e}")
         return None
@@ -791,20 +839,36 @@ async def handle_support_group_command(command, context, token, settings):
     customer = conversation.get("customer") or {}
     customer_id = customer.get("id")
     conversation_id = conversation.get("id")
+    thread_id = conversation.get("support_thread_id")
 
     if command == "/close":
         update_conversation_status(conversation_id, "closed")
-        await send_group_notice(f"会话已关闭：conversation_id={conversation_id}", token=token, settings=settings)
+        await send_group_notice(
+            f"会话已关闭：conversation_id={conversation_id}",
+            token=token,
+            settings=settings,
+            message_thread_id=thread_id,
+        )
         return
 
     if command == "/block":
         set_customer_blocked(customer_id, True)
-        await send_group_notice(f"客户已拉黑：{customer.get('telegram_user_id')}", token=token, settings=settings)
+        await send_group_notice(
+            f"客户已拉黑：{customer.get('telegram_user_id')}",
+            token=token,
+            settings=settings,
+            message_thread_id=thread_id,
+        )
         return
 
     if command == "/unblock":
         set_customer_blocked(customer_id, False)
-        await send_group_notice(f"客户已取消拉黑：{customer.get('telegram_user_id')}", token=token, settings=settings)
+        await send_group_notice(
+            f"客户已取消拉黑：{customer.get('telegram_user_id')}",
+            token=token,
+            settings=settings,
+            message_thread_id=thread_id,
+        )
         return
 
     if command == "/info":
@@ -819,6 +883,7 @@ async def handle_support_group_command(command, context, token, settings):
             f"拉黑：{'是' if customer.get('blocked') else '否'}",
             token=token,
             settings=settings,
+            message_thread_id=thread_id,
         )
 
 
@@ -826,6 +891,7 @@ async def reply_group_message_to_customer(message, context, token, settings):
     source_message, detail = context
     conversation = detail["conversation"]
     customer = conversation.get("customer") or {}
+    thread_id = conversation.get("support_thread_id")
     payload = extract_message_payload(message)
     message_type = payload.get("message_type") or "other"
     text = payload.get("text") or ""
@@ -833,7 +899,12 @@ async def reply_group_message_to_customer(message, context, token, settings):
         return
 
     if customer.get("blocked"):
-        await send_group_notice("该客户已被拉黑，不能回复。可回复客户消息发送 /unblock 取消拉黑。", token=token, settings=settings)
+        await send_group_notice(
+            "该客户已被拉黑，不能回复。可回复客户消息发送 /unblock 取消拉黑。",
+            token=token,
+            settings=settings,
+            message_thread_id=thread_id,
+        )
         return
 
     sender = message.get("from") or {}
@@ -884,9 +955,19 @@ async def reply_group_message_to_customer(message, context, token, settings):
         error_code = data.get("error_code")
         if error_code == 403 or "bot was blocked by the user" in description.lower():
             set_customer_blocked(customer["id"], True)
-            await send_group_notice("该客户已拉黑 Bot，无法继续回复。", token=token, settings=settings)
+            await send_group_notice(
+                "该客户已拉黑 Bot，无法继续回复。",
+                token=token,
+                settings=settings,
+                message_thread_id=thread_id,
+            )
         else:
-            await send_group_notice(friendly_media_error(description), token=token, settings=settings)
+            await send_group_notice(
+                friendly_media_error(description),
+                token=token,
+                settings=settings,
+                message_thread_id=thread_id,
+            )
         add_support_message(
             support_bot_id=settings.get("_support_bot_id"),
             conversation_id=conversation["id"],
@@ -920,6 +1001,7 @@ async def reply_group_message_to_customer(message, context, token, settings):
 async def handle_support_group_message(message, settings, token):
     text = (message.get("text") or "").strip()
     reply_to_message = message.get("reply_to_message")
+    current_thread_id = message.get("message_thread_id")
     support_bot_id = settings.get("_support_bot_id")
     context = get_thread_customer_context(message, support_bot_id=support_bot_id)
     if not context:
@@ -927,23 +1009,38 @@ async def handle_support_group_message(message, settings, token):
 
     if text in {"/close", "/block", "/info", "/unblock"}:
         if not context:
-            await send_group_notice("请回复某条客户消息后再使用该命令。", token=token, settings=settings)
+            await send_group_notice(
+                "请回复某条客户消息后再使用该命令。",
+                token=token,
+                settings=settings,
+                message_thread_id=current_thread_id,
+            )
             return
         await handle_support_group_command(text, context, token, settings)
         return
 
     if not context:
         if reply_to_message:
-            await send_group_notice("未找到对应客户会话，可能是历史消息或数据已失效。", token=token, settings=settings)
+            await send_group_notice(
+                "未找到对应客户会话，可能是历史消息或数据已失效。",
+                token=token,
+                settings=settings,
+                message_thread_id=current_thread_id,
+            )
         elif text:
-            await send_group_notice("请在客户话题内发送消息，或回复某条客户消息后再发送内容。", token=token, settings=settings)
+            await send_group_notice(
+                "请在客户话题内发送消息，或回复某条客户消息后再发送内容。",
+                token=token,
+                settings=settings,
+                message_thread_id=current_thread_id,
+            )
         return
 
     await reply_group_message_to_customer(message, context, token, settings)
 
 
 async def handle_support_update(update, token=None, settings=None):
-    message = update.get("message") or update.get("edited_message")
+    message = update.get("message")
     if not message:
         return
 
@@ -951,6 +1048,12 @@ async def handle_support_update(update, token=None, settings=None):
     if settings is None:
         settings = get_support_settings()
     remember_group_chat(chat)
+
+    if chat.get("type") in {"group", "supergroup"} and token:
+        try:
+            await maybe_send_group_chat_id_notice(token, message)
+        except Exception as e:
+            logger.warning(f"客服群 chat_id 自动提示发送失败 | {e}")
 
     if chat.get("type") == "private":
         await handle_private_customer_message(message, settings, token)
@@ -988,7 +1091,7 @@ async def support_polling_worker(config):
 
             data = {
                 "timeout": 30,
-                "allowed_updates": '["message","edited_message"]',
+                "allowed_updates": '["message"]',
             }
             if _offsets.get(support_bot_id) is not None:
                 data["offset"] = _offsets[support_bot_id]
@@ -1043,7 +1146,7 @@ async def support_polling_manager():
     logger.info("Support Bot polling manager started")
     while True:
         try:
-            configs = list_support_bots(include_disabled=False)
+            configs = list_support_bots(include_disabled=False, include_secret=True)
             active_ids = {config["id"] for config in configs}
 
             for support_bot_id, task in list(_polling_tasks.items()):
