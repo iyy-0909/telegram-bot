@@ -1,7 +1,11 @@
 telethon
 python-socks[asyncio]
+PySocks
 fastapi
+pydantic
 uvicorn
 jinja2
 python-multipart
 requests
+sqlalchemy
+aiohttp
