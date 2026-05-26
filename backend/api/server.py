@@ -16,6 +16,7 @@ from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
 from bot.listener_catchup import check_latest_content_consistency
+from bot.support_bot import get_recent_support_updates, test_support_bot_config
 
 from db.crud import (
     get_all_rules,
@@ -54,6 +55,27 @@ from db.crud_settings import (
     ensure_default_settings,
     get_send_settings,
     update_send_settings,
+)
+
+from db.crud_support import (
+    create_quick_reply,
+    create_tag,
+    delete_quick_reply,
+    ensure_support_defaults,
+    get_conversation_detail,
+    get_customer_detail,
+    get_support_settings,
+    list_customers,
+    list_conversations,
+    list_messages,
+    list_quick_replies,
+    list_tags,
+    mark_conversation_read,
+    set_customer_blocked,
+    set_customer_tags,
+    update_conversation_status,
+    update_quick_reply,
+    update_support_settings,
 )
 
 from db.crud_bot import (
@@ -281,6 +303,42 @@ class CloneTaskUpdate(BaseModel):
     enabled: Optional[bool] = None
     status: Optional[str] = None
     last_message_id: Optional[int] = None
+
+
+class SupportQuickReplyCreate(BaseModel):
+    title: str
+    content: str
+    sort: int = 0
+    enabled: bool = True
+
+
+class SupportQuickReplyUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    sort: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class SupportSettingsUpdate(BaseModel):
+    support_bot_id: Optional[str] = None
+    support_bot_token: Optional[str] = None
+    support_polling_enabled: Optional[str] = None
+    support_group_chat_id: Optional[str] = None
+    support_backend_base_url: Optional[str] = None
+    welcome_message: Optional[str] = None
+    off_hours_message: Optional[str] = None
+    business_hours_enabled: Optional[str] = None
+    business_start_hour: Optional[str] = None
+    business_end_hour: Optional[str] = None
+
+
+class SupportTagCreate(BaseModel):
+    name: str
+    color: str = ""
+
+
+class SupportCustomerTagsUpdate(BaseModel):
+    tag_ids: List[int] = []
 
 
 class BotCreate(BaseModel):
@@ -562,6 +620,197 @@ def api_get_clone_send_events(limit: int = 20):
 def api_get_listener_send_events(limit: int = 20):
     return {
         "events": get_listener_send_events(limit),
+    }
+
+
+@app.get("/api/support/conversations")
+def api_support_conversations(status: str = "all", q: str = "", limit: int = 100):
+    return {
+        "conversations": list_conversations(status=status, q=q, limit=limit),
+    }
+
+
+@app.get("/api/support/customers")
+def api_support_customers(q: str = "", limit: int = 100):
+    return {
+        "customers": list_customers(q=q, limit=limit),
+    }
+
+
+@app.get("/api/support/customers/{customer_id}")
+def api_support_customer_detail(customer_id: int):
+    customer = get_customer_detail(customer_id)
+
+    if not customer:
+        return {
+            "ok": False,
+            "message": "customer not found",
+        }
+
+    return {
+        "ok": True,
+        "customer": customer,
+    }
+
+
+@app.get("/api/support/conversations/{conversation_id}")
+def api_support_conversation_detail(conversation_id: int):
+    detail = get_conversation_detail(conversation_id)
+
+    if not detail:
+        return {
+            "ok": False,
+            "message": "conversation not found",
+        }
+
+    mark_conversation_read(conversation_id)
+    detail["ok"] = True
+    return detail
+
+
+@app.post("/api/support/conversations/{conversation_id}/close")
+def api_support_close_conversation(conversation_id: int):
+    conversation = update_conversation_status(conversation_id, "closed")
+
+    if not conversation:
+        return {
+            "ok": False,
+            "message": "conversation not found",
+        }
+
+    return {
+        "ok": True,
+        "message": "conversation closed",
+    }
+
+
+@app.post("/api/support/customers/{customer_id}/block")
+def api_support_block_customer(customer_id: int):
+    customer = set_customer_blocked(customer_id, True)
+
+    if not customer:
+        return {
+            "ok": False,
+            "message": "customer not found",
+        }
+
+    return {
+        "ok": True,
+        "message": "customer blocked",
+    }
+
+
+@app.post("/api/support/customers/{customer_id}/unblock")
+def api_support_unblock_customer(customer_id: int):
+    customer = set_customer_blocked(customer_id, False)
+
+    if not customer:
+        return {
+            "ok": False,
+            "message": "customer not found",
+        }
+
+    return {
+        "ok": True,
+        "message": "customer unblocked",
+    }
+
+
+@app.get("/api/support/messages")
+def api_support_messages(conversation_id: Optional[int] = None, customer_id: Optional[int] = None, limit: int = 200):
+    return {
+        "messages": list_messages(
+            conversation_id=conversation_id,
+            customer_id=customer_id,
+            limit=limit,
+        ),
+    }
+
+
+@app.get("/api/support/conversations/{conversation_id}/messages")
+def api_support_conversation_messages(conversation_id: int, limit: int = 200):
+    return {
+        "messages": list_messages(conversation_id=conversation_id, limit=limit),
+    }
+
+
+@app.get("/api/support/quick-replies")
+def api_support_quick_replies(include_disabled: bool = True):
+    return {
+        "items": list_quick_replies(include_disabled=include_disabled),
+    }
+
+
+@app.post("/api/support/quick-replies")
+def api_support_create_quick_reply(data: SupportQuickReplyCreate):
+    return create_quick_reply(data.dict())
+
+
+@app.put("/api/support/quick-replies/{reply_id}")
+def api_support_update_quick_reply(reply_id: int, data: SupportQuickReplyUpdate):
+    reply = update_quick_reply(reply_id, data.dict(exclude_unset=True))
+
+    if not reply:
+        return {
+            "ok": False,
+            "message": "quick reply not found",
+        }
+
+    return reply
+
+
+@app.delete("/api/support/quick-replies/{reply_id}")
+def api_support_delete_quick_reply(reply_id: int):
+    ok = delete_quick_reply(reply_id)
+
+    return {
+        "ok": ok,
+        "message": "ok" if ok else "quick reply not found",
+    }
+
+
+@app.get("/api/support/settings")
+def api_support_settings():
+    ensure_support_defaults()
+
+    return {
+        "settings": get_support_settings(),
+    }
+
+
+@app.put("/api/support/settings")
+def api_support_update_settings(data: SupportSettingsUpdate):
+    return {
+        "settings": update_support_settings(data.dict(exclude_unset=True)),
+    }
+
+
+@app.post("/api/support/bot/test")
+async def api_support_test_bot():
+    return await test_support_bot_config()
+
+
+@app.get("/api/support/updates/recent")
+async def api_support_recent_updates(limit: int = 30):
+    return await get_recent_support_updates(limit=limit)
+
+
+@app.get("/api/support/tags")
+def api_support_tags():
+    return {
+        "items": list_tags(),
+    }
+
+
+@app.post("/api/support/tags")
+def api_support_create_tag(data: SupportTagCreate):
+    return create_tag(data.dict())
+
+
+@app.put("/api/support/customers/{customer_id}/tags")
+def api_support_update_customer_tags(customer_id: int, data: SupportCustomerTagsUpdate):
+    return {
+        "items": set_customer_tags(customer_id, data.tag_ids),
     }
 
 

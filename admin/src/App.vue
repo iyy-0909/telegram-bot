@@ -79,6 +79,10 @@
       -->
     </div>
 
+    <div v-if="activeMenu === 'support'">
+      <SupportPanel :bots="bots" />
+    </div>
+
     <div v-if="activeMenu === 'clone'">
       <CloneTaskTable
         :tasks="cloneTasks"
@@ -171,6 +175,7 @@ import BotTable from "./components/BotTable.vue"
 import BotDialog from "./components/BotDialog.vue"
 import BotBindingTable from "./components/BotBindingTable.vue"
 import BotBindingDialog from "./components/BotBindingDialog.vue"
+import SupportPanel from "./components/SupportPanel.vue"
 
 import CloneTaskTable from "./components/CloneTaskTable.vue"
 import CloneTaskDialog from "./components/CloneTaskDialog.vue"
@@ -265,9 +270,14 @@ const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
 const CLONE_TASK_LOG_LIMIT = 20
 const LISTENER_TASK_LOG_LIMIT = 20
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["rules", "clone", "bots", "accounts", "logs", "settings", "templates", "guide"]
+const VALID_MENUS = ["rules", "clone", "bots", "support", "accounts", "logs", "settings", "templates", "guide"]
 
 function getSavedActiveMenu() {
+  const queryMenu = new URLSearchParams(window.location.search).get("menu")
+  if (VALID_MENUS.includes(queryMenu)) {
+    return queryMenu
+  }
+
   const saved = window.localStorage.getItem(MENU_STORAGE_KEY)
 
   if (VALID_MENUS.includes(saved)) {
@@ -618,6 +628,10 @@ async function handleMenuChange(menu) {
 
   if (menu === "bots") {
     await loadBotPage()
+  }
+
+  if (menu === "support") {
+    await loadBots()
   }
 
   if (menu === "clone") {

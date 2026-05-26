@@ -25,6 +25,10 @@
           <span>Bot 管理</span>
         </el-menu-item>
 
+        <el-menu-item index="support">
+          <span>客服机器人</span>
+        </el-menu-item>
+
         <el-menu-item index="templates">
           <span>内容模板规则</span>
         </el-menu-item>

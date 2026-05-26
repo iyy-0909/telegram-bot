@@ -252,3 +252,122 @@ class SystemSetting(Base):
     value = Column(Text, default="")
     remark = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportCustomer(Base):
+    """Customer who has initiated a private chat with the support bot."""
+
+    __tablename__ = "support_customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_user_id = Column(String, nullable=False, unique=True, index=True)
+    telegram_chat_id = Column(String, nullable=False, index=True)
+    username = Column(String, default="", index=True)
+    first_name = Column(String, default="")
+    last_name = Column(String, default="")
+    language_code = Column(String, default="")
+    source = Column(String, default="", index=True)
+    status = Column(String, default="active", index=True)
+    blocked = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_message_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportConversation(Base):
+    """Support conversation for a customer."""
+
+    __tablename__ = "support_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, nullable=False, index=True)
+    status = Column(String, default="open", index=True)
+    assigned_admin_id = Column(Integer, nullable=True, index=True)
+    support_thread_id = Column(Integer, nullable=True, index=True)
+    support_topic_name = Column(String, default="")
+    support_topic_created_at = Column(DateTime, nullable=True)
+    last_message = Column(Text, default="")
+    last_message_at = Column(DateTime, default=datetime.utcnow, index=True)
+    unread_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportMessage(Base):
+    """Message in a support conversation."""
+
+    __tablename__ = "support_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, nullable=False, index=True)
+    customer_id = Column(Integer, nullable=False, index=True)
+    sender_type = Column(String, nullable=False, index=True)
+    sender_id = Column(String, default="")
+    message_type = Column(String, default="text", index=True)
+    text = Column(Text, default="")
+    caption = Column(Text, default="")
+    file_id = Column(Text, default="")
+    file_unique_id = Column(String, default="")
+    file_name = Column(String, default="")
+    mime_type = Column(String, default="")
+    file_size = Column(Integer, nullable=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    duration = Column(Integer, nullable=True)
+    telegram_message_id = Column(Integer, nullable=True, index=True)
+    support_group_message_id = Column(Integer, nullable=True, index=True)
+    reply_to_support_group_message_id = Column(Integer, nullable=True, index=True)
+    send_status = Column(String, default="success", index=True)
+    error_message = Column(Text, default="")
+    status = Column(String, default="sent", index=True)
+    error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SupportQuickReply(Base):
+    """Reusable support reply."""
+
+    __tablename__ = "support_quick_replies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    content = Column(Text, default="")
+    sort = Column(Integer, default=0, index=True)
+    enabled = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportTag(Base):
+    """Customer tag."""
+
+    __tablename__ = "support_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    color = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportCustomerTag(Base):
+    """Many-to-many link between support customers and tags."""
+
+    __tablename__ = "support_customer_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, nullable=False, index=True)
+    tag_id = Column(Integer, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportSetting(Base):
+    """Support bot settings."""
+
+    __tablename__ = "support_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, nullable=False, unique=True, index=True)
+    value = Column(Text, default="")
+    remark = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow)

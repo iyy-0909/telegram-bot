@@ -10,6 +10,13 @@ from db.models import ListenerSentMessage
 from db.models import ContentTemplate
 from db.models import CloneSendEvent
 from db.models import ListenerSendEvent
+from db.models import SupportConversation
+from db.models import SupportCustomer
+from db.models import SupportCustomerTag
+from db.models import SupportMessage
+from db.models import SupportQuickReply
+from db.models import SupportSetting
+from db.models import SupportTag
 
 Base.metadata.create_all(bind=engine)
 
