@@ -3,6 +3,8 @@ import os
 import requests
 import time
 from bot.logger import logger
+from utils.proxy_utils import is_production
+from utils.proxy_utils import normalize_bot_api_proxy_for_runtime
 
 
 # =========================
@@ -15,11 +17,24 @@ ALERT_CHAT_ID = os.getenv("ALERT_CHAT_ID", "").strip()
 BOT_API_BASE = "https://api.telegram.org"
 REQUEST_TIMEOUT = 60
 
-# 你现在 Clash 端口是 7897
-BOT_API_PROXIES = {
-    "http": "http://127.0.0.1:7897",
-    "https": "http://127.0.0.1:7897",
-}
+DEFAULT_BOT_API_PROXY = "http://127.0.0.1:7897"
+
+
+def get_bot_api_proxies():
+    proxy = os.getenv("BOT_API_PROXY") or os.getenv("TELEGRAM_PROXY")
+
+    if not proxy and not is_production():
+        proxy = DEFAULT_BOT_API_PROXY
+
+    proxy = normalize_bot_api_proxy_for_runtime(proxy)
+
+    if not proxy:
+        return {}
+
+    return {
+        "http": proxy,
+        "https": proxy,
+    }
 
 
 # 告警限流：同一个 key 在 N 秒内只发送一次
@@ -54,7 +69,9 @@ def _send_message_sync(text: str):
 
     url = f"{BOT_API_BASE}/bot{CONTROL_BOT_TOKEN.strip()}/sendMessage"
 
-    response = requests.post(
+    session = requests.Session()
+    session.trust_env = False
+    response = session.post(
         url,
         data={
             "chat_id": ALERT_CHAT_ID,
@@ -62,7 +79,7 @@ def _send_message_sync(text: str):
             "disable_web_page_preview": True,
         },
         timeout=20,
-        proxies=BOT_API_PROXIES,
+        proxies=get_bot_api_proxies(),
     )
 
     try:

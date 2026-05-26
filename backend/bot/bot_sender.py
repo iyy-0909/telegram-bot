@@ -1,6 +1,7 @@
 import asyncio
 import json
 import mimetypes
+import os
 import re
 from pathlib import Path
 
@@ -9,14 +10,37 @@ from requests import exceptions as request_exceptions
 
 from db.crud_bot import normalize_target_channel
 from bot.logger import logger
+from utils.proxy_utils import is_production
+from utils.proxy_utils import normalize_bot_api_proxy_for_runtime
 
 
 BOT_API_BASE = "https://api.telegram.org"
 REQUEST_TIMEOUT = 180
-BOT_API_PROXIES = {
-    "http": "http://127.0.0.1:7897",
-    "https": "http://127.0.0.1:7897",
-}
+DEFAULT_BOT_API_PROXY = "http://127.0.0.1:7897"
+
+
+def get_bot_api_proxy():
+    proxy = (
+        os.getenv("BOT_API_PROXY")
+        or os.getenv("TELEGRAM_PROXY")
+    )
+
+    if not proxy and not is_production():
+        proxy = DEFAULT_BOT_API_PROXY
+
+    return normalize_bot_api_proxy_for_runtime(proxy)
+
+
+def get_bot_api_proxies():
+    proxy = get_bot_api_proxy()
+
+    if not proxy:
+        return {}
+
+    return {
+        "http": proxy,
+        "https": proxy,
+    }
 
 
 class BotApiError(Exception):
@@ -62,7 +86,8 @@ def encode_entities(entities):
 
 
 def describe_request_error(error: Exception, method: str) -> str:
-    proxy = BOT_API_PROXIES.get("https") or BOT_API_PROXIES.get("http") or "未配置"
+    proxies = get_bot_api_proxies()
+    proxy = proxies.get("https") or proxies.get("http") or "未配置"
     error_name = type(error).__name__
     raw_error = redact_bot_token(str(error))
 
@@ -88,6 +113,7 @@ def request_post(token: str, method: str, data=None, files=None):
     url = build_url(token, method)
     session = requests.Session()
     session.trust_env = False
+    proxies = get_bot_api_proxies()
 
     try:
         response = session.post(
@@ -95,7 +121,7 @@ def request_post(token: str, method: str, data=None, files=None):
             data=data or {},
             files=files,
             timeout=REQUEST_TIMEOUT,
-            proxies=BOT_API_PROXIES,
+            proxies=proxies,
         )
     except request_exceptions.RequestException as e:
         raise BotApiNetworkError(describe_request_error(e, method)) from e
@@ -115,12 +141,13 @@ def request_get(token: str, method: str):
     url = build_url(token, method)
     session = requests.Session()
     session.trust_env = False
+    proxies = get_bot_api_proxies()
 
     try:
         response = session.get(
             url,
             timeout=REQUEST_TIMEOUT,
-            proxies=BOT_API_PROXIES,
+            proxies=proxies,
         )
     except request_exceptions.RequestException as e:
         raise BotApiNetworkError(describe_request_error(e, method)) from e

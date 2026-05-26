@@ -26,6 +26,20 @@ socks5://1.2.3.4:1080
 http://1.2.3.4:7890
 ```
 
+Bot API 请求同样遵守这个规则。生产环境不要配置本地 Bot API 代理：
+
+```env
+BOT_API_PROXY=http://127.0.0.1:7897
+```
+
+如果服务器不能直连 `api.telegram.org`，请配置真实远程代理：
+
+```env
+BOT_API_PROXY=socks5://user:pass@host:port
+```
+
+生产环境启动时，如果发现 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`http_proxy`、`https_proxy`、`all_proxy` 指向本地地址，也会自动从运行时环境中清理，避免 `requests` 误走本地开发代理。
+
 生产环境忽略本地代理时，后端日志会出现类似记录：
 
 ```txt

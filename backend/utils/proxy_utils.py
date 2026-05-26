@@ -12,6 +12,16 @@ LOCAL_PROXY_HOSTS = {
 }
 
 
+PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
 def _proxy_to_text(proxy):
     if proxy is None:
         return ""
@@ -52,20 +62,29 @@ def _safe_proxy_text(proxy):
     return text
 
 
-def normalize_proxy_for_runtime(proxy: str | None, account_id=None, account_name=None) -> str | None:
+def is_production():
+    return os.getenv("APP_ENV", "").strip().lower() == "production"
+
+
+def is_local_proxy(proxy):
+    return _proxy_host(proxy) in LOCAL_PROXY_HOSTS
+
+
+def normalize_proxy_for_runtime(
+    proxy: str | None,
+    account_id=None,
+    account_name=None,
+    label="本地代理",
+) -> str | None:
     if not proxy:
         return None
 
-    app_env = os.getenv("APP_ENV", "").strip().lower()
-
-    if app_env != "production":
+    if not is_production():
         return proxy
 
-    host = _proxy_host(proxy)
-
-    if host in LOCAL_PROXY_HOSTS:
+    if is_local_proxy(proxy):
         parts = [
-            "生产环境已忽略本地代理",
+            f"生产环境已忽略{label}",
         ]
 
         if account_id is not None:
@@ -79,3 +98,23 @@ def normalize_proxy_for_runtime(proxy: str | None, account_id=None, account_name
         return None
 
     return proxy
+
+
+def normalize_bot_api_proxy_for_runtime(proxy: str | None) -> str | None:
+    return normalize_proxy_for_runtime(proxy, label="本地 Bot API 代理")
+
+
+def cleanup_local_proxy_env_vars():
+    if not is_production():
+        return
+
+    for key in PROXY_ENV_KEYS:
+        value = os.environ.get(key)
+
+        if not value or not is_local_proxy(value):
+            continue
+
+        logger.warning(
+            f"生产环境已清理本地代理环境变量 | key={key} | proxy={_safe_proxy_text(value)}"
+        )
+        os.environ.pop(key, None)

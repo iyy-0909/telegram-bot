@@ -8,6 +8,7 @@ from bot.handlers import register_handlers
 from bot.logger import logger
 from bot.support_bot import start_support_polling
 from init_db import init_db
+from utils.proxy_utils import cleanup_local_proxy_env_vars
 
 
 async def start_bot():
@@ -35,6 +36,7 @@ async def start_api():
 
 
 async def main():
+    cleanup_local_proxy_env_vars()
     init_db()
 
     await start_bot()
