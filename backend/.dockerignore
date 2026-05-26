@@ -6,7 +6,6 @@ __pycache__/
 
 data/
 logs/
-accounts/
 session/
 sessions/
 token/

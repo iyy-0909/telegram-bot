@@ -17,14 +17,13 @@ dist/
 # Local runtime data
 data/
 logs/
-accounts/
+/accounts/
 session/
 sessions/
 token/
 tokens/
 backend/data/
 backend/logs/
-backend/accounts/
 backend/session/
 backend/sessions/
 backend/token/
