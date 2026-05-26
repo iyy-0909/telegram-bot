@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: tg-backend
     restart: always
     env_file:
@@ -15,8 +15,8 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./data:/app/backend/data
+      - ./logs:/app/backend/logs
 
   admin:
     build:
