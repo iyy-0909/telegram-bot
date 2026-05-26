@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 
 from sqlalchemy import or_
 
@@ -16,10 +17,10 @@ from db.models import (
 
 DEFAULT_SUPPORT_SETTINGS = {
     "support_bot_id": "",
-    "support_bot_token": "",
+    "support_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
     "support_polling_enabled": "0",
-    "support_group_chat_id": "",
-    "support_backend_base_url": "http://127.0.0.1:5173",
+    "support_group_chat_id": os.getenv("TELEGRAM_SUPPORT_GROUP_CHAT_ID", ""),
+    "support_backend_base_url": os.getenv("ADMIN_PUBLIC_URL", "http://127.0.0.1:5173"),
     "welcome_message": "您好，欢迎咨询，请直接发送您的问题，客服会尽快回复您。",
     "off_hours_message": "您好，当前客服不在线，我们会尽快回复您。",
     "business_hours_enabled": "0",

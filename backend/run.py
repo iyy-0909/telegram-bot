@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uvicorn
 
 from bot.queue import send_worker
@@ -21,8 +22,8 @@ async def start_bot():
 async def start_api():
     config = uvicorn.Config(
         "api.server:app",
-        host="127.0.0.1",
-        port=8000,
+        host=os.getenv("APP_HOST", "0.0.0.0"),
+        port=int(os.getenv("APP_PORT", "8000")),
         reload=False,
         access_log=False,
     )

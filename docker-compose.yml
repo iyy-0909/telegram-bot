@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tg-backend
+    restart: always
+    env_file:
+      - .env
+    environment:
+      APP_HOST: ${APP_HOST:-0.0.0.0}
+      APP_PORT: ${APP_PORT:-8000}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/app.db}
+      TELEGRAM_RECEIVER_MODE: ${TELEGRAM_RECEIVER_MODE:-polling}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: tg-admin
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"

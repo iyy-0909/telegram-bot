@@ -1,6 +1,5 @@
 import axios from "axios"
-
-const API = "http://127.0.0.1:8000"
+import { API } from "./base"
 
 // 获取克隆任务列表
 export function getCloneTasks() {
