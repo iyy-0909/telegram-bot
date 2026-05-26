@@ -7,6 +7,7 @@ from accounts.manager import account_manager
 from bot.handlers import register_handlers
 from bot.logger import logger
 from bot.support_bot import start_support_polling
+from init_db import init_db
 
 
 async def start_bot():
@@ -34,6 +35,8 @@ async def start_api():
 
 
 async def main():
+    init_db()
+
     await start_bot()
 
     asyncio.create_task(send_worker())
