@@ -6,6 +6,7 @@ from telethon import TelegramClient
 from telethon.network import ConnectionTcpFull
 
 from config import API_ID, API_HASH
+from utils.proxy_utils import normalize_proxy_for_runtime
 
 
 # ====== 代理配置 ======
@@ -33,19 +34,24 @@ async def main():
 
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
 
+    runtime_proxy = normalize_proxy_for_runtime(PROXY)
+
     client = TelegramClient(
         session_path,
         API_ID,
         API_HASH,
         connection=ConnectionTcpFull,
-        proxy=PROXY,
+        proxy=runtime_proxy,
         connection_retries=10,
         retry_delay=3,
         timeout=30,
         auto_reconnect=True,
     )
 
-    print(f"正在通过代理连接 Telegram：{PROXY_HOST}:{PROXY_PORT}")
+    if runtime_proxy:
+        print(f"正在通过代理连接 Telegram：{PROXY_HOST}:{PROXY_PORT}")
+    else:
+        print("正在直连 Telegram")
 
     await client.connect()
 

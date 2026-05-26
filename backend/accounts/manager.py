@@ -3,6 +3,7 @@ from telethon import TelegramClient
 from config import API_ID, API_HASH, PROXY
 from db.crud import get_all_accounts
 from bot.logger import logger
+from utils.proxy_utils import normalize_proxy_for_runtime
 
 
 class AccountManager:
@@ -17,11 +18,18 @@ class AccountManager:
             if not account.enabled:
                 continue
 
+            configured_proxy = account.proxy or PROXY
+            runtime_proxy = normalize_proxy_for_runtime(
+                configured_proxy,
+                account_id=account.id,
+                account_name=account.name,
+            )
+
             client = TelegramClient(
                 account.session_path,
                 API_ID,
                 API_HASH,
-                proxy=PROXY,
+                proxy=runtime_proxy,
                 connection_retries=999,
                 retry_delay=5,
                 auto_reconnect=True,
