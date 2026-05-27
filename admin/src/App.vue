@@ -1,9 +1,15 @@
 <template>
-  <MainLayout
-    :status="status.status"
-    :active-menu="activeMenu"
-    @change-menu="handleMenuChange"
-  >
+  <LoginPanel
+    v-if="!isAuthenticated"
+    @login="handleLogin"
+  />
+
+  <div v-else>
+    <MainLayout
+      :status="status.status"
+      :active-menu="activeMenu"
+      @change-menu="handleMenuChange"
+    >
     <div v-if="activeMenu === 'rules'">
       <StatusCards :status="status" />
 
@@ -15,7 +21,7 @@
         @delete="deleteListenerTaskHandler"
         @start="startListenerTaskHandler"
         @stop="stopListenerTaskHandler"
-        @catchup="checkListenerCatchupHandler"
+        @catchup="checkListenerCatchupHandlerV2"
       />
     </div>
 
@@ -146,18 +152,19 @@
       @update:visible="contentTemplateDialogVisible = $event"
       @submit="submitContentTemplate"
     />
-  </MainLayout>
+    </MainLayout>
 
-  <CloneTaskDialog
-    :visible="cloneTaskDialogVisible"
-    :form="currentCloneTask"
-    :is-edit="isCloneTaskEdit"
-    :bots="bots"
-    :accounts="accounts"
-    :templates="contentTemplates"
-    @update:visible="cloneTaskDialogVisible = $event"
-    @submit="submitCloneTask"
-  />
+    <CloneTaskDialog
+      :visible="cloneTaskDialogVisible"
+      :form="currentCloneTask"
+      :is-edit="isCloneTaskEdit"
+      :bots="bots"
+      :accounts="accounts"
+      :templates="contentTemplates"
+      @update:visible="cloneTaskDialogVisible = $event"
+      @submit="submitCloneTask"
+    />
+  </div>
 </template>
 
 <script setup>
@@ -171,6 +178,7 @@ import ListenerTaskDialog from "./components/ListenerTaskDialog.vue"
 import LogPanel from "./components/LogPanel.vue"
 import SendSettingsPanel from "./components/SendSettingsPanel.vue"
 import UserGuide from "./components/UserGuide.vue"
+import LoginPanel from "./components/LoginPanel.vue"
 import ContentTemplateTable from "./components/ContentTemplateTable.vue"
 import ContentTemplateDialog from "./components/ContentTemplateDialog.vue"
 
@@ -243,6 +251,7 @@ import {
   stopListenerTask,
   getListenerSendEvents,
   checkListenerCatchup,
+  catchupLatestListenerMessage,
 } from "./api/listenerTasks"
 
 import {
@@ -255,6 +264,7 @@ import {
 
 
 const status = ref({})
+const isAuthenticated = ref(Boolean(localStorage.getItem("admin_token")))
 const rules = ref([])
 const listenerTasks = ref([])
 const listenerTaskLogs = ref([])
@@ -362,6 +372,7 @@ const currentListenerTask = reactive({
 const currentAccount = reactive({
   id: null,
   name: "",
+  username: "",
   session_path: "",
   proxy: "",
   enabled: true,
@@ -1062,6 +1073,45 @@ async function checkListenerCatchupHandler(id) {
 }
 
 
+async function checkListenerCatchupHandlerV2(id) {
+  const res = await checkListenerCatchup(id)
+  const data = res.data || {}
+
+  if (data.consistent) {
+    ElMessage.success(data.message || "源频道和目标频道最新内容一致")
+    await loadListenerTaskLogs()
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `${data.message || "源频道和目标频道最新内容不一致"}，是否补齐源频道最新一条内容？`,
+      "确认补齐",
+      {
+        type: "warning",
+        confirmButtonText: "补齐最新一条",
+        cancelButtonText: "取消",
+      },
+    )
+  } catch {
+    await loadListenerTaskLogs()
+    return
+  }
+
+  const catchupRes = await catchupLatestListenerMessage(id)
+  const catchupData = catchupRes.data || {}
+
+  if (catchupData.ok) {
+    ElMessage.success(catchupData.message || "最新一条已补齐发送")
+  } else {
+    ElMessage.warning(catchupData.message || "补齐失败")
+  }
+
+  await loadListenerTaskLogs()
+  await loadListenerTasks()
+}
+
+
 // =========================
 // 旧监听规则兼容
 // =========================
@@ -1198,6 +1248,7 @@ async function startClone(rule) {
 function resetCurrentAccount() {
   currentAccount.id = null
   currentAccount.name = ""
+  currentAccount.username = ""
   currentAccount.session_path = ""
   currentAccount.proxy = ""
   currentAccount.enabled = true
@@ -1230,6 +1281,7 @@ async function submitAccount(formData) {
   if (isAccountEdit.value) {
     await updateAccount(currentAccount.id, {
       name: currentAccount.name,
+      username: currentAccount.username,
       session_path: currentAccount.session_path,
       proxy: currentAccount.proxy,
       enabled: currentAccount.enabled,
@@ -1240,6 +1292,7 @@ async function submitAccount(formData) {
   } else {
     await createAccount({
       name: currentAccount.name,
+      username: currentAccount.username,
       session_path: currentAccount.session_path,
       proxy: currentAccount.proxy,
       remark: currentAccount.remark,
@@ -1256,6 +1309,7 @@ async function submitAccount(formData) {
 async function saveAccount(row) {
   await updateAccount(row.id, {
     name: row.name,
+    username: row.username,
     session_path: row.session_path,
     proxy: row.proxy,
     enabled: row.enabled,
@@ -1852,7 +1906,19 @@ function toNonNegativeNumber(value, fallback) {
 // 生命周期
 // =========================
 
+async function handleLogin(token) {
+  localStorage.setItem("admin_token", token)
+  isAuthenticated.value = true
+  ElMessage.success("登录成功")
+  window.location.reload()
+}
+
+
 onMounted(async () => {
+  if (!isAuthenticated.value) {
+    return
+  }
+
   loadCloneTaskLogs()
   loadListenerTaskLogs()
   await handleMenuChange(activeMenu.value)

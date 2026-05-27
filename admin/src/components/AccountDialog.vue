@@ -5,9 +5,13 @@
     :title="isEdit ? '编辑账号' : '新增账号'"
     width="600px"
   >
-    <el-form label-width="120px">
+    <el-form label-width="130px">
       <el-form-item label="账号名称">
         <el-input v-model="localForm.name" placeholder="例如 主账号" />
+      </el-form-item>
+
+      <el-form-item label="Telegram用户名">
+        <el-input v-model="localForm.username" placeholder="例如 review 或 @review" />
       </el-form-item>
 
       <el-form-item label="Session路径">
@@ -15,7 +19,7 @@
       </el-form-item>
 
       <el-form-item label="代理">
-        <el-input v-model="localForm.proxy" placeholder="暂时可留空" />
+        <el-input v-model="localForm.proxy" placeholder="可留空" />
       </el-form-item>
 
       <el-form-item label="启用">
@@ -40,7 +44,7 @@ import { reactive, watch } from "vue"
 const props = defineProps({
   visible: Boolean,
   form: Object,
-  isEdit: Boolean
+  isEdit: Boolean,
 })
 
 const emit = defineEmits(["update:visible", "submit"])
@@ -48,22 +52,34 @@ const emit = defineEmits(["update:visible", "submit"])
 const localForm = reactive({
   id: null,
   name: "",
+  username: "",
   session_path: "",
   proxy: "",
   enabled: true,
-  remark: ""
+  remark: "",
 })
 
 watch(
   () => props.form,
   (val) => {
     if (!val) return
-    Object.assign(localForm, val)
+    Object.assign(localForm, {
+      id: val.id ?? null,
+      name: val.name || "",
+      username: val.username || "",
+      session_path: val.session_path || "",
+      proxy: val.proxy || "",
+      enabled: val.enabled !== false,
+      remark: val.remark || "",
+    })
   },
-  { immediate: true, deep: true }
+  { immediate: true, deep: true },
 )
 
 function submit() {
-  emit("submit", { ...localForm })
+  emit("submit", {
+    ...localForm,
+    username: String(localForm.username || "").trim().replace(/^@+/, ""),
+  })
 }
 </script>

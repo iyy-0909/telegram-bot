@@ -235,6 +235,7 @@
 <script setup>
 import { ElMessage } from "element-plus"
 import { CopyDocument } from "@element-plus/icons-vue"
+import { copyText } from "../utils/clipboard"
 
 defineProps({
   tasks: {
@@ -317,7 +318,8 @@ async function copyValue(value) {
   }
 
   try {
-    await navigator.clipboard.writeText(text)
+    const ok = await copyText(text)
+    if (!ok) throw new Error("copy failed")
     ElMessage.success("已复制")
   } catch {
     ElMessage.error("复制失败")

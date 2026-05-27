@@ -327,6 +327,7 @@ def get_all_accounts():
 def create_account(
     name: str,
     session_path: str,
+    username: str = "",
     proxy: str = "",
     remark: str = "",
 ):
@@ -335,6 +336,7 @@ def create_account(
     try:
         account = Account(
             name=name,
+            username=(username or "").strip().lstrip("@"),
             session_path=session_path,
             proxy=proxy,
             enabled=True,
@@ -365,6 +367,10 @@ def update_account(account_id: int, data: dict):
             return None
 
         for key, value in data.items():
+            if key == "username":
+                account.username = (value or "").strip().lstrip("@")
+                continue
+
             if hasattr(account, key):
                 setattr(account, key, value)
 

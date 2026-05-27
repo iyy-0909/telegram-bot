@@ -185,6 +185,7 @@ import {
   getMyChannels,
   updateMyChannel,
 } from "../api/myChannels"
+import { copyText } from "../utils/clipboard"
 
 const props = defineProps({
   bots: {
@@ -316,7 +317,8 @@ async function copyValue(value) {
   }
 
   try {
-    await navigator.clipboard.writeText(text)
+    const ok = await copyText(text)
+    if (!ok) throw new Error("copy failed")
     ElMessage.success("已复制")
   } catch {
     ElMessage.error("复制失败")

@@ -32,3 +32,7 @@ export function getListenerSendEvents(limit = 20) {
 export function checkListenerCatchup(id) {
   return axios.post(`${API}/api/listener-tasks/${id}/catchup-check`)
 }
+
+export function catchupLatestListenerMessage(id) {
+  return axios.post(`${API}/api/listener-tasks/${id}/catchup-latest`)
+}

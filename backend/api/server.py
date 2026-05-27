@@ -1,9 +1,11 @@
 import asyncio
+import secrets
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from bot.handlers import reload_handlers
@@ -17,6 +19,8 @@ from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
 from bot.listener_catchup import check_latest_content_consistency
+from bot.listener_catchup import catchup_latest_listener_message
+from accounts.manager import account_manager
 from bot.support_bot import (
     check_group_topic_permission,
     get_recent_support_updates,
@@ -125,6 +129,13 @@ from db.crud_templates import (
 app = FastAPI(title="CloneBot API")
 
 
+ADMIN_PASSWORD = "0909"
+ADMIN_TOKEN = "clonebot-admin-0909"
+AUTH_EXEMPT_PATHS = {
+    "/api/auth/login",
+}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -135,6 +146,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_admin_auth(request: Request, call_next):
+    path = request.url.path
+
+    if request.method == "OPTIONS" or not path.startswith("/api/"):
+        return await call_next(request)
+
+    if path in AUTH_EXEMPT_PATHS:
+        return await call_next(request)
+
+    auth_header = request.headers.get("authorization") or ""
+    token = auth_header.removeprefix("Bearer ").strip()
+
+    if not secrets.compare_digest(token, ADMIN_TOKEN):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "未登录或登录已失效"},
+        )
+
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    password: str
 
 
 class RuleCreate(BaseModel):
@@ -246,6 +283,7 @@ class ContentTemplateRuleUpdate(BaseModel):
 
 class AccountCreate(BaseModel):
     name: str
+    username: str = ""
     session_path: str
     proxy: str = ""
     remark: str = ""
@@ -253,6 +291,7 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     name: str
+    username: str = ""
     session_path: str
     proxy: str = ""
     enabled: bool = True
@@ -753,6 +792,17 @@ async def check_my_channel_permissions(channel):
             },
         )
         return my_channel_to_dict(updated)
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(payload: LoginRequest):
+    if not secrets.compare_digest(payload.password, ADMIN_PASSWORD):
+        raise HTTPException(status_code=401, detail="密码错误")
+
+    return {
+        "ok": True,
+        "token": ADMIN_TOKEN,
+    }
 
 
 @app.get("/api/status")
@@ -1341,7 +1391,7 @@ def api_delete_listener_task(task_id: int):
 
 
 @app.post("/api/listener-tasks/{task_id}/start")
-def api_start_listener_task(task_id: int):
+async def api_start_listener_task(task_id: int):
     task = update_listener_status(
         task_id,
         enabled=True,
@@ -1353,6 +1403,24 @@ def api_start_listener_task(task_id: int):
         return {
             "ok": False,
             "message": "listener task not found",
+        }
+
+    if not account_manager.get_client(task.account_id):
+        await account_manager.load_accounts()
+
+    if not account_manager.get_client(task.account_id):
+        error = f"监听账号不存在或未加载：account_id={task.account_id}"
+        task = update_listener_status(
+            task_id,
+            enabled=False,
+            status="stopped",
+            last_error=error,
+        )
+        reload_handlers()
+        return {
+            "ok": False,
+            "message": error,
+            "task": listener_task_to_dict(task) if task else None,
         }
 
     reload_handlers()
@@ -1401,6 +1469,19 @@ async def api_listener_catchup_check(task_id: int):
     return await check_latest_content_consistency(task)
 
 
+@app.post("/api/listener-tasks/{task_id}/catchup-latest")
+async def api_listener_catchup_latest(task_id: int):
+    task = get_listener_task(task_id)
+
+    if not task:
+        return {
+            "ok": False,
+            "message": "listener task not found",
+        }
+
+    return await catchup_latest_listener_message(task)
+
+
 @app.get("/api/accounts")
 def accounts():
     return [
@@ -1413,6 +1494,7 @@ def accounts():
 def add_account(data: AccountCreate):
     account = create_account(
         name=data.name,
+        username=data.username,
         session_path=data.session_path,
         proxy=data.proxy,
         remark=data.remark,
