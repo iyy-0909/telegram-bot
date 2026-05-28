@@ -185,9 +185,20 @@ class CloneSendEvent(Base):
     task_id = Column(Integer, index=True, nullable=True)
     target = Column(String, default="", index=True)
     source_message_id = Column(Integer, nullable=True, index=True)
+    target_chat_id = Column(String, default="", index=True)
+    target_message_id = Column(Integer, nullable=True, index=True)
     grouped_id = Column(String, nullable=True)
     source_message_url = Column(Text, default="")
     target_message_url = Column(Text, default="")
+    event_type = Column(String, default="success", index=True)
+    status = Column(String, default="success", index=True)
+    message = Column(Text, default="")
+    error = Column(Text, default="")
+    message_type = Column(String, default="", index=True)
+    text = Column(Text, default="")
+    caption = Column(Text, default="")
+    bot_id = Column(Integer, nullable=True, index=True)
+    bot_name = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -203,6 +214,7 @@ class ListenerSendEvent(Base):
     event_type = Column(String, default="success", index=True)
     source_channel = Column(String, default="", index=True)
     target = Column(String, default="", index=True)
+    target_chat_id = Column(String, default="", index=True)
     account_id = Column(Integer, nullable=True, index=True)
     account_name = Column(String, default="")
     source_message_id = Column(Integer, nullable=True, index=True)
@@ -210,11 +222,68 @@ class ListenerSendEvent(Base):
     grouped_id = Column(String, nullable=True)
     source_message_url = Column(Text, default="")
     target_message_url = Column(Text, default="")
+    message_type = Column(String, default="", index=True)
+    text = Column(Text, default="")
+    caption = Column(Text, default="")
     status = Column(String, default="success", index=True)
     message = Column(Text, default="")
     error = Column(Text, default="")
     bot_id = Column(Integer, nullable=True)
     bot_name = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BulkReplaceJob(Base):
+    __tablename__ = "bulk_replace_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    old_text = Column(Text, default="")
+    new_text = Column(Text, default="")
+    channel_ids = Column(Text, default="[]")
+    message_type = Column(String, default="all", index=True)
+    source_type = Column(String, default="all", index=True)
+    status = Column(String, default="pending", index=True)
+    total_count = Column(Integer, default=0)
+    success_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    created_by = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BulkReplaceJobItem(Base):
+    __tablename__ = "bulk_replace_job_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, index=True, nullable=False)
+    source_type = Column(String, default="", index=True)
+    source_record_id = Column(Integer, index=True, nullable=False)
+    target_chat_id = Column(String, default="", index=True)
+    target_message_id = Column(Integer, nullable=True, index=True)
+    message_type = Column(String, default="", index=True)
+    original_text = Column(Text, default="")
+    replaced_text = Column(Text, default="")
+    status = Column(String, default="pending", index=True)
+    error_message = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ControlCommandLog(Base):
+    __tablename__ = "control_command_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(String, default="", index=True)
+    message_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(String, default="", index=True)
+    username = Column(String, default="")
+    command = Column(String, default="", index=True)
+    raw_text = Column(Text, default="")
+    parsed_args = Column(Text, default="")
+    status = Column(String, default="received", index=True)
+    result_message = Column(Text, default="")
+    error_message = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

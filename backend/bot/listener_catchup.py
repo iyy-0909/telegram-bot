@@ -187,7 +187,7 @@ async def check_latest_content_consistency(task):
     }
 
 
-async def catchup_latest_listener_message(task):
+async def catchup_latest_listener_message(task, force=False):
     client = account_manager.get_client(task.account_id)
 
     if not client:
@@ -259,6 +259,7 @@ async def catchup_latest_listener_message(task):
             tasks=[task],
             source_message_id=source_message_id,
             grouped_id=grouped_id,
+            force=force,
         )
 
         return {
@@ -266,6 +267,7 @@ async def catchup_latest_listener_message(task):
             "message": "最新一条已补齐发送" if sent else "最新一条未发送，可能已去重或发送失败",
             "source_message_id": source_message_id,
             "grouped_id": str(grouped_id) if grouped_id else None,
+            "force": bool(force),
         }
 
     except Exception as e:

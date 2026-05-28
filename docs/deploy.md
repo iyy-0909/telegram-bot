@@ -117,3 +117,61 @@ updated_existing = true
 ```
 
 如果旧 `.session` 文件已被 Telegram 判定失效，脚本会把旧文件改名备份为 `.invalid_时间戳`，然后继续用相同 `session_path` 重新登录。这样任务里的 `account_id` 不需要修改。
+
+## 云台 Bot / 告警通知配置
+
+云台 Bot 使用 `.env` 配置，不做后台配置页。建议使用独立 Bot，不要和客服 Bot、分发 Bot 共用。
+
+服务器 `/opt/telegram-bot/.env` 示例：
+
+```env
+CONTROL_BOT_ENABLED=true
+CONTROL_BOT_TOKEN=123456789:AAxxxx
+CONTROL_CHAT_ID=-100xxxxxxxxxx
+CONTROL_ADMIN_IDS=123456789
+CONTROL_COMMANDS_ENABLED=true
+CONTROL_ALERTS_ENABLED=true
+CONTROL_ALERT_THREAD_ID=
+CONTROL_COMMAND_THREAD_ID=
+CONTROL_POLLING_TIMEOUT=30
+CONTROL_NOTIFY_LEVEL=error
+```
+
+Telegram 侧配置：
+
+1. 创建一个独立控制 Bot。
+2. 创建一个私密群或超级群作为云台。
+3. 把控制 Bot 拉进云台群，并设置为管理员。
+4. 在群里发送 `/whoami` 获取管理员 Telegram user_id。
+5. 把群 chat_id 填入 `CONTROL_CHAT_ID`，管理员 ID 填入 `CONTROL_ADMIN_IDS`。
+6. 重启后端。
+
+说明：
+
+- 接收告警可以用频道。
+- 如果要执行命令，推荐使用私密群或超级群。
+- `CONTROL_CHAT_ID` 是唯一允许处理命令的 chat_id，其他群/私聊会被忽略。
+- `CONTROL_ADMIN_IDS` 未配置时，只允许告警，不允许命令控制。
+- 如果云台是话题群，可以使用 `CONTROL_ALERT_THREAD_ID` 和 `CONTROL_COMMAND_THREAD_ID`。
+
+重启并查看日志：
+
+```bash
+cd /opt/telegram-bot
+docker compose down
+docker compose up -d --build
+docker logs -f tg-backend
+```
+
+常用命令：
+
+```text
+/help
+/whoami
+/status
+/listeners
+/clones
+/pause listener 5
+/resume listener 5
+/run clone 2
+```

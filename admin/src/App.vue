@@ -24,6 +24,7 @@
         @start="startListenerTaskHandler"
         @stop="stopListenerTaskHandler"
         @catchup="checkListenerCatchupHandlerV2"
+        @refresh-logs="loadListenerTaskLogs"
       />
     </div>
 
@@ -98,6 +99,10 @@
       <MyChannelTable :bots="bots" />
     </div>
 
+    <div v-if="activeMenu === 'bulk-replace'">
+      <BulkReplacePanel />
+    </div>
+
     <div v-if="activeMenu === 'clone'">
       <CloneTaskTable
         :tasks="cloneTasks"
@@ -112,6 +117,7 @@
         @resume="resumeCloneTaskHandler"
         @stop="handleStopCloneTask"
         @toggle-listener="handleToggleCloneListener"
+        @refresh-logs="loadCloneTaskLogs"
       />
     </div>
 
@@ -198,6 +204,7 @@ import BotBindingTable from "./components/BotBindingTable.vue"
 import BotBindingDialog from "./components/BotBindingDialog.vue"
 import SupportPanel from "./components/SupportPanel.vue"
 import MyChannelTable from "./components/MyChannelTable.vue"
+import BulkReplacePanel from "./components/BulkReplacePanel.vue"
 
 import CloneTaskTable from "./components/CloneTaskTable.vue"
 import CloneTaskDialog from "./components/CloneTaskDialog.vue"
@@ -300,10 +307,11 @@ const pageLoading = reactive({
 const MENU_STORAGE_KEY = "clonebot_active_menu"
 const CLONE_TASK_LOG_STORAGE_KEY = "clonebot_clone_task_logs"
 const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
-const CLONE_TASK_LOG_LIMIT = 20
-const LISTENER_TASK_LOG_LIMIT = 200
+const CLONE_TASK_LOG_LIMIT = 50
+const LISTENER_TASK_LOG_LIMIT = 50
+const SEND_LOG_REFRESH_INTERVAL = 5 * 60 * 1000
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["rules", "clone", "bots", "my-channels", "support", "accounts", "logs", "settings", "templates", "guide"]
+const VALID_MENUS = ["rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "logs", "settings", "templates", "guide"]
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -639,9 +647,10 @@ function mapCloneSendEvent(event) {
     task_id: event.task_id ?? "",
     task_name: event.target || "",
     action: "目标发送成功",
-    status: "sent",
-    result: "success",
-    message: `Bot API 已成功发送到目标频道 ${event.target || ""}`,
+    status: event.status || event.event_type || "success",
+    result: event.status || event.event_type || "success",
+    message: event.message || `Bot API 已成功发送到目标频道 ${event.target || ""}`,
+    error: event.error || "",
     target: event.target || "",
     source_message_id: event.source_message_id ?? "",
     grouped_id: event.grouped_id ?? null,
@@ -1177,20 +1186,18 @@ async function checkListenerCatchupHandler(id) {
 async function checkListenerCatchupHandlerV2(id) {
   const res = await checkListenerCatchup(id)
   const data = res.data || {}
-
-  if (data.consistent) {
-    ElMessage.success(data.message || "源频道和目标频道最新内容一致")
-    await loadListenerTaskLogs()
-    return
-  }
+  const force = Boolean(data.consistent)
+  const confirmMessage = force
+    ? `${data.message || "源频道和目标频道最新内容一致"}，是否仍然强行补齐源频道最新一条内容？强行补齐会重复发送。`
+    : `${data.message || "源频道和目标频道最新内容不一致"}，是否补齐源频道最新一条内容？`
 
   try {
     await ElMessageBox.confirm(
-      `${data.message || "源频道和目标频道最新内容不一致"}，是否补齐源频道最新一条内容？`,
-      "确认补齐",
+      confirmMessage,
+      force ? "确认强行补齐" : "确认补齐",
       {
         type: "warning",
-        confirmButtonText: "补齐最新一条",
+        confirmButtonText: force ? "强行补齐最新一条" : "补齐最新一条",
         cancelButtonText: "取消",
       },
     )
@@ -1199,7 +1206,7 @@ async function checkListenerCatchupHandlerV2(id) {
     return
   }
 
-  const catchupRes = await catchupLatestListenerMessage(id)
+  const catchupRes = await catchupLatestListenerMessage(id, { force })
   const catchupData = catchupRes.data || {}
 
   if (catchupData.ok) {
@@ -1212,8 +1219,6 @@ async function checkListenerCatchupHandlerV2(id) {
   await loadListenerTasks()
 }
 
-
-// =========================
 // 旧监听规则兼容
 // =========================
 
@@ -2056,7 +2061,7 @@ onMounted(async () => {
     } catch (e) {
       console.error("自动刷新发送缓存失败", e)
     }
-  }, 3000)
+  }, SEND_LOG_REFRESH_INTERVAL)
 
 })
 

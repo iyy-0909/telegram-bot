@@ -276,6 +276,16 @@ async def send_to_targets(
                         grouped_id=grouped_id,
                         source_message_url=source_message_url,
                         target_message_url=target_message_url,
+                        target_chat_id=target,
+                        target_message_id=target_message_ids[0] if target_message_ids else None,
+                        message_type="caption" if prepared.get("files") else "text",
+                        text=(prepared.get("text") or "") if not prepared.get("files") else "",
+                        caption=(prepared.get("text") or "") if prepared.get("files") else "",
+                        bot_id=send_result.get("bot_id") if isinstance(send_result, dict) else getattr(task, "bot_id", None),
+                        bot_name=send_result.get("bot_name") if isinstance(send_result, dict) else "",
+                        event_type="success",
+                        status="success",
+                        message="Bot API 已成功发送到目标频道",
                     )
 
                     if not dedupe_written:
@@ -313,6 +323,23 @@ async def send_to_targets(
                         f"target={target} | source_message_id={source_message_id} | "
                         f"error={error}"
                     )
+                    add_clone_send_event(
+                        task_id=task.id,
+                        target=target,
+                        source_message_id=source_message_id,
+                        grouped_id=grouped_id,
+                        source_message_url=source_message_url,
+                        target_message_url="",
+                        target_chat_id=target,
+                        message_type="caption" if prepared.get("files") else "text",
+                        text=(prepared.get("text") or "") if not prepared.get("files") else "",
+                        caption=(prepared.get("text") or "") if prepared.get("files") else "",
+                        bot_id=getattr(task, "bot_id", None),
+                        event_type="failed",
+                        status="failed",
+                        message="Bot API 发送失败",
+                        error=error,
+                    )
 
             except Exception as e:
                 failed_count += 1
@@ -320,6 +347,23 @@ async def send_to_targets(
                 logger.exception(
                     f"发送{target_label}异常，继续其他目标 | task_id={task.id} | "
                     f"target={target} | source_message_id={source_message_id} | {e}"
+                )
+                add_clone_send_event(
+                    task_id=task.id,
+                    target=target,
+                    source_message_id=source_message_id,
+                    grouped_id=grouped_id,
+                    source_message_url=source_message_url,
+                    target_message_url="",
+                    target_chat_id=target,
+                    message_type="caption" if prepared.get("files") else "text",
+                    text=(prepared.get("text") or "") if not prepared.get("files") else "",
+                    caption=(prepared.get("text") or "") if prepared.get("files") else "",
+                    bot_id=getattr(task, "bot_id", None),
+                    event_type="failed",
+                    status="failed",
+                    message="克隆发送异常",
+                    error=str(e),
                 )
 
         if sent_count > 0:

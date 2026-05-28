@@ -15,6 +15,7 @@ def event_to_dict(event):
         "event_type": getattr(event, "event_type", "") or event.status or "",
         "source_channel": getattr(event, "source_channel", "") or "",
         "target": event.target or "",
+        "target_chat_id": getattr(event, "target_chat_id", "") or "",
         "account_id": getattr(event, "account_id", None),
         "account_name": getattr(event, "account_name", "") or "",
         "source_message_id": event.source_message_id,
@@ -22,6 +23,9 @@ def event_to_dict(event):
         "grouped_id": event.grouped_id,
         "source_message_url": event.source_message_url or "",
         "target_message_url": event.target_message_url or "",
+        "message_type": getattr(event, "message_type", "") or "",
+        "text": getattr(event, "text", "") or "",
+        "caption": getattr(event, "caption", "") or "",
         "status": event.status or "",
         "message": event.message or "",
         "error": event.error or "",
@@ -31,18 +35,91 @@ def event_to_dict(event):
 
 
 def prune_listener_send_events(db, limit: int = MAX_EVENTS):
-    ids_to_keep = [
-        row.id
-        for row in db.query(ListenerSendEvent.id)
-        .order_by(ListenerSendEvent.id.desc())
-        .limit(limit)
-        .all()
-    ]
+    # 发送记录现在也是批量历史编辑的数据来源，不能再自动删除旧记录。
+    return
 
-    if ids_to_keep:
-        db.query(ListenerSendEvent).filter(
-            ListenerSendEvent.id.notin_(ids_to_keep)
-        ).delete(synchronize_session=False)
+
+def apply_event_fields(event, *, task_id, task_name, target, source_message_id,
+                       event_type, source_channel, account_id, account_name,
+                       target_message_id, grouped_id, source_message_url,
+                       target_message_url, status, message, error, bot_id, bot_name,
+                       target_chat_id="", message_type="", text="", caption=""):
+    event.time = format_app_time()
+    event.task_id = task_id
+    event.task_name = task_name or ""
+    event.event_type = event_type or status or ""
+    event.source_channel = source_channel or ""
+    event.target = target or ""
+    event.target_chat_id = target_chat_id or target or ""
+    event.account_id = account_id
+    event.account_name = account_name or ""
+    event.source_message_id = source_message_id
+    event.target_message_id = target_message_id
+    event.grouped_id = str(grouped_id) if grouped_id else None
+    event.source_message_url = source_message_url or ""
+    event.target_message_url = target_message_url or ""
+    event.message_type = message_type or ""
+    event.text = text or ""
+    event.caption = caption or ""
+    event.status = status or ""
+    event.message = message or ""
+    event.error = error or ""
+    event.bot_id = bot_id
+    event.bot_name = bot_name or ""
+
+
+def normalize_grouped_id(grouped_id):
+    return str(grouped_id) if grouped_id else None
+
+
+def listener_event_content_key(event):
+    grouped_id = normalize_grouped_id(getattr(event, "grouped_id", None))
+    source_channel = getattr(event, "source_channel", "") or ""
+
+    if grouped_id:
+        return (
+            getattr(event, "task_id", None),
+            source_channel,
+            "album",
+            grouped_id,
+        )
+
+    source_message_id = getattr(event, "source_message_id", None)
+    if source_message_id:
+        return (
+            getattr(event, "task_id", None),
+            source_channel,
+            "message",
+            source_message_id,
+        )
+
+    return (
+        getattr(event, "task_id", None),
+        "task",
+    )
+
+
+def find_existing_content_event(db, *, task_id, source_channel, source_message_id, grouped_id):
+    grouped_id = normalize_grouped_id(grouped_id)
+    query = db.query(ListenerSendEvent).filter(ListenerSendEvent.task_id == task_id)
+
+    if source_channel:
+        query = query.filter(ListenerSendEvent.source_channel == source_channel)
+
+    if grouped_id:
+        query = query.filter(ListenerSendEvent.grouped_id == grouped_id)
+    elif source_message_id:
+        query = query.filter(
+            ListenerSendEvent.source_message_id == source_message_id,
+            ListenerSendEvent.grouped_id.is_(None),
+        )
+    else:
+        query = query.filter(
+            ListenerSendEvent.source_message_id.is_(None),
+            ListenerSendEvent.grouped_id.is_(None),
+        )
+
+    return query.order_by(ListenerSendEvent.id.desc()).first()
 
 
 def add_listener_send_event(
@@ -64,31 +141,50 @@ def add_listener_send_event(
     error="",
     bot_id=None,
     bot_name="",
+    target_chat_id="",
+    message_type="",
+    text="",
+    caption="",
 ):
     db = SessionLocal()
 
     try:
-        event = ListenerSendEvent(
-            time=format_app_time(),
+        event = find_existing_content_event(
+            db,
             task_id=task_id,
-            task_name=task_name or "",
-            event_type=event_type or status or "",
             source_channel=source_channel or "",
-            target=target or "",
-            account_id=account_id,
-            account_name=account_name or "",
             source_message_id=source_message_id,
-            target_message_id=target_message_id,
-            grouped_id=str(grouped_id) if grouped_id else None,
-            source_message_url=source_message_url or "",
-            target_message_url=target_message_url or "",
-            status=status or "",
-            message=message or "",
-            error=error or "",
-            bot_id=bot_id,
-            bot_name=bot_name or "",
+            grouped_id=grouped_id,
         )
-        db.add(event)
+
+        if event is None:
+            event = ListenerSendEvent(task_id=task_id)
+            db.add(event)
+
+        apply_event_fields(
+            event,
+            task_id=task_id,
+            task_name=task_name,
+            target=target,
+            source_message_id=source_message_id,
+            event_type=event_type,
+            source_channel=source_channel,
+            account_id=account_id,
+            account_name=account_name,
+            target_message_id=target_message_id,
+            grouped_id=grouped_id,
+            source_message_url=source_message_url,
+            target_message_url=target_message_url,
+            status=status,
+            message=message,
+            error=error,
+            bot_id=bot_id,
+            bot_name=bot_name,
+            target_chat_id=target_chat_id,
+            message_type=message_type,
+            text=text,
+            caption=caption,
+        )
         db.flush()
         prune_listener_send_events(db)
         db.commit()
@@ -105,6 +201,7 @@ def add_listener_send_event(
             "event_type": event_type or status or "",
             "source_channel": source_channel,
             "target": target,
+            "target_chat_id": target_chat_id or target or "",
             "account_id": account_id,
             "account_name": account_name,
             "source_message_id": source_message_id,
@@ -112,6 +209,9 @@ def add_listener_send_event(
             "grouped_id": grouped_id,
             "source_message_url": source_message_url,
             "target_message_url": target_message_url,
+            "message_type": message_type or "",
+            "text": text or "",
+            "caption": caption or "",
             "status": status,
             "message": message,
             "error": error,
@@ -133,13 +233,24 @@ def get_listener_send_events(limit: int = MAX_EVENTS):
     db = SessionLocal()
 
     try:
-        events = (
+        rows = (
             db.query(ListenerSendEvent)
             .order_by(ListenerSendEvent.id.desc())
             .limit(limit)
             .all()
         )
-        return [event_to_dict(event) for event in events]
+        events = []
+        seen_content_keys = set()
+
+        for event in rows:
+            key = listener_event_content_key(event)
+            if key in seen_content_keys:
+                continue
+
+            seen_content_keys.add(key)
+            events.append(event_to_dict(event))
+
+        return events
 
     finally:
         db.close()

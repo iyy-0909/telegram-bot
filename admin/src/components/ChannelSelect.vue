@@ -63,6 +63,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  valueKey: {
+    type: String,
+    default: "target",
+  },
 })
 
 defineEmits(["update:modelValue"])
@@ -111,6 +115,10 @@ async function loadChannels() {
 }
 
 function channelValue(channel) {
+  if (props.valueKey === "id") {
+    return channel.id
+  }
+
   return channel.username || channel.chat_id || channel.target_value || ""
 }
 

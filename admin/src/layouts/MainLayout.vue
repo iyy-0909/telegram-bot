@@ -42,6 +42,7 @@ const menuItems = [
   ["clone", "克隆任务"],
   ["bots", "Bot 管理"],
   ["my-channels", "我的频道"],
+  ["bulk-replace", "批量替换"],
   ["support", "客服机器人"],
   ["templates", "内容模板规则"],
   ["accounts", "账号管理"],

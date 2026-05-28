@@ -494,16 +494,19 @@ function updateTemplateField({ key, value }) {
 }
 
 .switch-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .switch-row {
+  width: fit-content;
+  max-width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 10px;
   min-height: 38px;
   padding: 8px 10px;
   border: 1px solid #ebeef5;
@@ -515,8 +518,7 @@ function updateTemplateField({ key, value }) {
 @media (max-width: 900px) {
   .section-row,
   .form-grid.two,
-  .form-grid.four,
-  .switch-grid {
+  .form-grid.four {
     grid-template-columns: 1fr;
   }
 }

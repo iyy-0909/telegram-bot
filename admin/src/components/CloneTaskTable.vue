@@ -146,11 +146,14 @@
     <template #header>
       <div class="card-header">
         <div>
-          <div class="card-title">发送成功缓存</div>
+          <div class="card-title">最近克隆发送结果</div>
           <div class="card-subtitle">
-            只缓存最近 20 条 Bot API 成功发送记录，最新在最上方
+            展示最近发送结果，成功、失败都会显示；建议需要时手动刷新
           </div>
         </div>
+        <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+          刷新
+        </el-button>
       </div>
     </template>
     <el-table
@@ -160,7 +163,7 @@
         stripe
         height="320"
         class="clone-log-table"
-        empty-text="暂无发送成功缓存，任务发送成功后会显示最近 20 条记录。"
+        empty-text="暂无发送结果，任务发送后会显示最近记录。"
       >
       <el-table-column prop="time" label="时间" width="160" />
 
@@ -204,6 +207,7 @@
       </el-table-column>
 
       <el-table-column prop="message" label="内容" min-width="260" show-overflow-tooltip />
+      <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
       </el-table>
   </el-card>
 </template>
@@ -240,6 +244,7 @@ const emit = defineEmits([
   "resume",
   "stop",
   "toggle-listener",
+  "refresh-logs",
 ])
 
 const formatTargets = (value) => {

@@ -1,47 +1,23 @@
 import asyncio
-import os
-import requests
 import time
+
+from bot.bot_sender import BotApiError, request_post
+from bot.control_config import control_config
 from bot.logger import logger
-from utils.proxy_utils import is_production
-from utils.proxy_utils import normalize_bot_api_proxy_for_runtime
+from utils.time_utils import format_app_time
 
 
-# =========================
-# 这里先写死，后面再放到后台系统设置
-# =========================
-
-CONTROL_BOT_TOKEN = os.getenv("CONTROL_BOT_TOKEN", "").strip()
-ALERT_CHAT_ID = os.getenv("ALERT_CHAT_ID", "").strip()
-
-BOT_API_BASE = "https://api.telegram.org"
-REQUEST_TIMEOUT = 60
-
-DEFAULT_BOT_API_PROXY = "http://127.0.0.1:7897"
-
-
-def get_bot_api_proxies():
-    proxy = os.getenv("BOT_API_PROXY") or os.getenv("TELEGRAM_PROXY")
-
-    if not proxy and not is_production():
-        proxy = DEFAULT_BOT_API_PROXY
-
-    proxy = normalize_bot_api_proxy_for_runtime(proxy)
-
-    if not proxy:
-        return {}
-
-    return {
-        "http": proxy,
-        "https": proxy,
-    }
-
-
-# 告警限流：同一个 key 在 N 秒内只发送一次
 ALERT_COOLDOWN_SECONDS = 300
+LEVEL_ORDER = {
+    "info": 10,
+    "warning": 20,
+    "error": 30,
+}
 
-# key -> last_sent_time
 _alert_last_sent = {}
+_missing_token_logged = False
+_missing_chat_logged = False
+
 
 def should_send_alert(key: str) -> bool:
     now = time.time()
@@ -49,8 +25,7 @@ def should_send_alert(key: str) -> bool:
 
     if now - last_time < ALERT_COOLDOWN_SECONDS:
         logger.warning(
-            f"告警限流跳过 | key={key} | "
-            f"cooldown={ALERT_COOLDOWN_SECONDS}s"
+            f"告警限流跳过 | key={key} | cooldown={ALERT_COOLDOWN_SECONDS}s"
         )
         return False
 
@@ -58,115 +33,111 @@ def should_send_alert(key: str) -> bool:
     return True
 
 
-def _send_message_sync(text: str):
-    if not CONTROL_BOT_TOKEN or CONTROL_BOT_TOKEN == "你的控制机器人TOKEN":
-        logger.warning("告警未发送：CONTROL_BOT_TOKEN 未配置")
+def should_notify_level(level, min_level):
+    return LEVEL_ORDER.get(level, 30) >= LEVEL_ORDER.get(min_level, 30)
+
+
+def _send_message_sync(text: str, thread_id: str = ""):
+    global _missing_token_logged
+    global _missing_chat_logged
+
+    config = control_config()
+
+    if not config["enabled"] or not config["alerts_enabled"]:
         return False
 
-    if not ALERT_CHAT_ID or ALERT_CHAT_ID == "你的私有频道ID或@频道username":
-        logger.warning("告警未发送：ALERT_CHAT_ID 未配置")
+    if not config["token"]:
+        if not _missing_token_logged:
+            _missing_token_logged = True
+            logger.warning("CONTROL_BOT_TOKEN 未配置，云台告警通知已禁用。")
         return False
 
-    url = f"{BOT_API_BASE}/bot{CONTROL_BOT_TOKEN.strip()}/sendMessage"
+    if not config["chat_id"]:
+        if not _missing_chat_logged:
+            _missing_chat_logged = True
+            logger.warning("CONTROL_CHAT_ID 未配置，云台告警通知已禁用。")
+        return False
 
-    session = requests.Session()
-    session.trust_env = False
-    response = session.post(
-        url,
-        data={
-            "chat_id": ALERT_CHAT_ID,
-            "text": text,
-            "disable_web_page_preview": True,
-        },
-        timeout=20,
-        proxies=get_bot_api_proxies(),
-    )
+    data = {
+        "chat_id": config["chat_id"],
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+
+    target_thread_id = thread_id or config.get("alert_thread_id") or ""
+    if target_thread_id:
+        data["message_thread_id"] = target_thread_id
 
     try:
-        result = response.json()
-    except Exception:
-        logger.error(f"告警发送失败：返回非 JSON | {response.text}")
+        request_post(config["token"], "sendMessage", data, None)
+        return True
+    except BotApiError as e:
+        logger.warning(f"云台告警发送失败，已忽略 | {e}")
         return False
-
-    if not result.get("ok"):
-        error_code = result.get("error_code")
-        description = result.get("description", "")
-
-        if error_code == 429:
-            retry_after = (
-                result.get("parameters", {}) or {}
-            ).get("retry_after", 60)
-
-            logger.warning(
-                f"告警发送触发 Telegram 限流 | "
-                f"retry_after={retry_after}s | {description}"
-            )
-            return False
-
-        logger.error(f"告警发送失败：{result}")
-        return False
-
-    return True
 
 
 async def notify_text(text: str):
     try:
         return await asyncio.to_thread(_send_message_sync, text)
     except Exception as e:
-        # 告警本身失败，不要再打印完整 traceback，避免日志爆炸
-        logger.warning(f"告警发送失败，已忽略 | {type(e).__name__}: {e}")
+        logger.warning(f"云台告警发送失败，已忽略 | {type(e).__name__}: {e}")
         return False
 
-async def notify_error(title: str, detail: str = "", task_id=None, target=None):
-    """
-    发送错误告警。
 
-    限流规则：
-    同一个 title + task_id + target 在 60 秒内只发送一次。
-    """
-    alert_key = f"{title}:{task_id}:{target}"
+async def send_control_alert(title: str, message: str, level: str = "error", context=None):
+    config = control_config()
+    level = (level or "error").lower()
 
-    if not should_send_alert(alert_key):
+    if not should_notify_level(level, config.get("notify_level", "error")):
+        return False
+
+    context = context or {}
+    key = f"{title}:{level}:{context.get('task_id')}:{context.get('target')}"
+    if not should_send_alert(key):
         return False
 
     lines = [
-        "🚨 系统错误告警",
-        "",
-        f"类型：{title}",
+        f"【{title}】",
+        f"级别：{level.upper()}",
+        f"时间：{format_app_time()}",
     ]
 
-    if task_id is not None:
-        lines.append(f"任务ID：{task_id}")
+    for label, key_name in [
+        ("模块", "module"),
+        ("任务ID", "task_id"),
+        ("频道", "channel"),
+        ("目标", "target"),
+        ("Bot", "bot_name"),
+    ]:
+        value = context.get(key_name)
+        if value not in (None, ""):
+            lines.append(f"{label}：{value}")
 
-    if target:
-        lines.append(f"目标：{target}")
-
-    if detail:
-        lines.extend([
-            "",
-            "详情：",
-            str(detail)[:3000],
-        ])
-
-    text = "\n".join(lines)
-
-    return await notify_text(text)
-
-async def notify_task_event(title: str, task_id=None, task_name="", detail=""):
-    lines = [
-        f"📌 {title}",
-    ]
-
-    if task_id is not None:
-        lines.append(f"任务ID：{task_id}")
-
-    if task_name:
-        lines.append(f"任务名：{task_name}")
-
-    if detail:
-        lines.extend([
-            "",
-            str(detail)[:3000],
-        ])
+    if message:
+        lines.extend(["", "详情：", str(message)[:3000]])
 
     return await notify_text("\n".join(lines))
+
+
+async def notify_error(title: str, detail: str = "", task_id=None, target=None):
+    return await send_control_alert(
+        title=title,
+        message=detail,
+        level="error",
+        context={
+            "task_id": task_id,
+            "target": target,
+        },
+    )
+
+
+async def notify_task_event(title: str, task_id=None, task_name="", detail=""):
+    return await send_control_alert(
+        title=title,
+        message=detail,
+        level="info",
+        context={
+            "task_id": task_id,
+            "task_name": task_name,
+        },
+    )

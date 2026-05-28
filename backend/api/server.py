@@ -1,5 +1,6 @@
 import asyncio
 import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,6 +19,7 @@ from bot.notifier import notify_text
 from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
+from bot.bulk_replace import execute_bulk_replace, preview_bulk_replace
 from bot.listener_catchup import check_latest_content_consistency
 from bot.listener_catchup import catchup_latest_listener_message
 from accounts.manager import account_manager
@@ -506,6 +508,30 @@ class MyChannelUpdate(BaseModel):
     is_default: Optional[bool] = None
     remark: Optional[str] = None
 
+
+class BulkReplacePreviewRequest(BaseModel):
+    channel_ids: List[int] = []
+    old_text: str
+    new_text: str = ""
+    message_type: str = "all"
+    date_range: Optional[List[str]] = None
+    limit: int = 500
+    source_type: str = "all"
+
+
+class BulkReplaceExecuteRequest(BaseModel):
+    records: List[dict] = []
+    old_text: str
+    new_text: str = ""
+    channel_ids: List[int] = []
+    message_type: str = "all"
+    source_type: str = "all"
+    dry_run: bool = False
+
+
+class ListenerCatchupRequest(BaseModel):
+    force: bool = False
+
 def clone_task_to_dict(task):
     return {
         "id": task.id,
@@ -921,6 +947,54 @@ def api_delete_my_channel(channel_id: int):
         "ok": ok,
         "message": "ok" if ok else "channel not found",
     }
+
+
+def parse_optional_datetime(value):
+    text = (value or "").strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+@app.post("/api/bulk-replace/preview")
+def api_bulk_replace_preview(payload: BulkReplacePreviewRequest):
+    date_range = payload.date_range or []
+    start_time = parse_optional_datetime(date_range[0]) if len(date_range) >= 1 else None
+    end_time = parse_optional_datetime(date_range[1]) if len(date_range) >= 2 else None
+
+    try:
+        return preview_bulk_replace(
+            channel_ids=payload.channel_ids,
+            old_text=payload.old_text,
+            new_text=payload.new_text,
+            message_type=payload.message_type,
+            source_type=payload.source_type,
+            start_time=start_time,
+            end_time=end_time,
+            limit=payload.limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/bulk-replace/execute")
+async def api_bulk_replace_execute(payload: BulkReplaceExecuteRequest):
+    try:
+        return await execute_bulk_replace(
+            records=payload.records,
+            old_text=payload.old_text,
+            new_text=payload.new_text,
+            channel_ids=payload.channel_ids,
+            message_type=payload.message_type,
+            source_type=payload.source_type,
+            dry_run=payload.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/my-channels/{channel_id}/check")
@@ -1490,7 +1564,10 @@ async def api_listener_catchup_check(task_id: int):
 
 
 @app.post("/api/listener-tasks/{task_id}/catchup-latest")
-async def api_listener_catchup_latest(task_id: int):
+async def api_listener_catchup_latest(
+    task_id: int,
+    payload: Optional[ListenerCatchupRequest] = None,
+):
     task = get_listener_task(task_id)
 
     if not task:
@@ -1499,7 +1576,10 @@ async def api_listener_catchup_latest(task_id: int):
             "message": "listener task not found",
         }
 
-    return await catchup_latest_listener_message(task)
+    return await catchup_latest_listener_message(
+        task,
+        force=bool(payload.force) if payload else False,
+    )
 
 
 @app.get("/api/accounts")

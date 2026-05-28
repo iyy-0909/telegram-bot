@@ -32,6 +32,53 @@ _album_cache = {}
 _album_tasks = {}
 
 
+async def ensure_client_connected(client):
+    if client and hasattr(client, "is_connected") and not client.is_connected():
+        await client.connect()
+
+
+async def fetch_complete_album_messages(client, channel, grouped_id, existing_messages):
+    if not grouped_id:
+        return existing_messages
+
+    try:
+        await ensure_client_connected(client)
+        fetched = []
+
+        async for message in client.iter_messages(channel, limit=30):
+            if getattr(message, "grouped_id", None) == grouped_id:
+                fetched.append(message)
+
+        if not fetched:
+            return existing_messages
+
+        merged = {
+            message.id: message
+            for message in existing_messages
+        }
+
+        for message in fetched:
+            merged[message.id] = message
+
+        complete_messages = list(merged.values())
+        complete_messages.sort(key=lambda msg: msg.id)
+
+        if len(complete_messages) > len(existing_messages):
+            logger.info(
+                f"监听相册补拉完整消息 | grouped_id={grouped_id} | "
+                f"cached={len(existing_messages)} | complete={len(complete_messages)}"
+            )
+
+        return complete_messages
+
+    except Exception as e:
+        logger.warning(
+            f"监听相册补拉失败，使用已缓存消息 | "
+            f"channel={channel} | grouped_id={grouped_id} | {e}"
+        )
+        return existing_messages
+
+
 def build_task_groups(tasks):
     groups = defaultdict(list)
 
@@ -72,6 +119,7 @@ async def send_prepared_to_tasks(
     tasks,
     source_message_id,
     grouped_id=None,
+    force=False,
 ):
     success_count = 0
 
@@ -121,7 +169,7 @@ async def send_prepared_to_tasks(
             continue
 
         for target in targets:
-            if target_already_sent(
+            if (not force) and target_already_sent(
                 task.id,
                 target,
                 source_message_id,
@@ -250,6 +298,10 @@ async def send_prepared_to_tasks(
                         message="Bot API 已成功发送到目标频道",
                         bot_id=bot_id,
                         bot_name=bot_name,
+                        target_chat_id=target,
+                        message_type="caption" if send_payload.get("files") else "text",
+                        text=(send_payload.get("text") or "") if not send_payload.get("files") else "",
+                        caption=(send_payload.get("text") or "") if send_payload.get("files") else "",
                     )
 
                     logger.info(
@@ -316,12 +368,23 @@ async def flush_album(album_key):
     messages = cache_data["messages"]
     tasks = cache_data["tasks"]
     grouped_id = cache_data["grouped_id"]
+    account_id = album_key[0]
+    source = album_key[1]
 
     _album_cache.pop(album_key, None)
     _album_tasks.pop(album_key, None)
 
     if not messages:
         return
+
+    client = account_manager.get_client(account_id)
+    if client:
+        messages = await fetch_complete_album_messages(
+            client,
+            source,
+            grouped_id,
+            messages,
+        )
 
     messages.sort(key=lambda msg: msg.id)
 
@@ -333,6 +396,12 @@ async def flush_album(album_key):
         if text:
             raw_text = text
             break
+
+    if not raw_text:
+        logger.warning(
+            f"监听相册未找到 caption | grouped_id={grouped_id} | "
+            f"message_ids={[msg.id for msg in messages]}"
+        )
 
     max_message_id = max(msg.id for msg in messages)
     prepared = None

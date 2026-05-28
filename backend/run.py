@@ -7,6 +7,7 @@ from accounts.manager import account_manager
 from bot.handlers import register_handlers
 from bot.logger import logger
 from bot.support_bot import start_support_polling
+from bot.control_bot import start_control_polling
 from init_db import init_db
 from utils.proxy_utils import cleanup_local_proxy_env_vars
 
@@ -43,6 +44,7 @@ async def main():
 
     asyncio.create_task(send_worker())
     start_support_polling()
+    start_control_polling()
 
     await start_api()
 

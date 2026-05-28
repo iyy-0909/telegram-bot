@@ -558,10 +558,12 @@ function updateTemplateField({ key, value }) {
 }
 
 .switch-row {
+  width: fit-content;
+  max-width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 10px;
   min-height: 38px;
   padding: 8px 10px;
   border: 1px solid #ebeef5;

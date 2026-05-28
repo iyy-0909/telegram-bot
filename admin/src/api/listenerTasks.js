@@ -33,6 +33,6 @@ export function checkListenerCatchup(id) {
   return axios.post(`${API}/api/listener-tasks/${id}/catchup-check`)
 }
 
-export function catchupLatestListenerMessage(id) {
-  return axios.post(`${API}/api/listener-tasks/${id}/catchup-latest`)
+export function catchupLatestListenerMessage(id, data = {}) {
+  return axios.post(`${API}/api/listener-tasks/${id}/catchup-latest`, data)
 }

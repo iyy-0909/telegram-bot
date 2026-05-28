@@ -141,7 +141,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">监听执行记录</div>
-            <div class="card-subtitle">保留最近 200 条执行流水，展示收到、过滤、去重、发送中、成功和失败。</div>
+            <div class="card-subtitle">展示最近 50 条监听执行结果；自动刷新已放慢，建议需要时手动刷新。</div>
           </div>
 
           <el-select v-model="eventFilter" clearable placeholder="事件筛选" class="event-filter">
@@ -155,6 +155,9 @@
             <el-option label="失败" value="failed" />
             <el-option label="账号异常" value="account_error" />
           </el-select>
+          <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+            刷新
+          </el-button>
         </div>
       </template>
 
@@ -239,7 +242,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup"])
+const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup", "refresh-logs"])
 const eventFilter = ref("")
 
 const runtimeEvents = computed(() => {

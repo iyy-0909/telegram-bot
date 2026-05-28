@@ -167,6 +167,67 @@ async def bot_get_me(token: str):
     return await asyncio.to_thread(request_get, token, "getMe")
 
 
+async def bot_edit_message_text(
+    token: str,
+    chat_id: str,
+    message_id: int,
+    text: str,
+    parse_mode: str = None,
+    entities=None,
+):
+    chat_id = normalize_chat_id(chat_id)
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text or "",
+        "disable_web_page_preview": True,
+    }
+
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    elif entities:
+        data["entities"] = encode_entities(entities)
+
+    logger.info(
+        f"Bot edit text start | chat_id={chat_id} | message_id={message_id}"
+    )
+    result = await asyncio.to_thread(request_post, token, "editMessageText", data, None)
+    logger.info(
+        f"Bot edit text ok | chat_id={chat_id} | message_id={message_id}"
+    )
+    return result
+
+
+async def bot_edit_message_caption(
+    token: str,
+    chat_id: str,
+    message_id: int,
+    caption: str,
+    parse_mode: str = None,
+    entities=None,
+):
+    chat_id = normalize_chat_id(chat_id)
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "caption": caption or "",
+    }
+
+    if parse_mode and caption:
+        data["parse_mode"] = parse_mode
+    elif entities and caption:
+        data["caption_entities"] = encode_entities(entities)
+
+    logger.info(
+        f"Bot edit caption start | chat_id={chat_id} | message_id={message_id}"
+    )
+    result = await asyncio.to_thread(request_post, token, "editMessageCaption", data, None)
+    logger.info(
+        f"Bot edit caption ok | chat_id={chat_id} | message_id={message_id}"
+    )
+    return result
+
+
 def guess_media_type(file_path: str) -> str:
     mime_type, _ = mimetypes.guess_type(file_path)
 
