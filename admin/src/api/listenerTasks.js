@@ -25,7 +25,7 @@ export function stopListenerTask(id) {
   return axios.post(`${API}/api/listener-tasks/${id}/stop`)
 }
 
-export function getListenerSendEvents(limit = 20) {
+export function getListenerSendEvents(limit = 200) {
   return axios.get(`${API}/api/listener-send-events?limit=${limit}`)
 }
 

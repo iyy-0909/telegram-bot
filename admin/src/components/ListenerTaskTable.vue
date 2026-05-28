@@ -1,11 +1,30 @@
 <template>
   <div class="listener-page">
+    <div class="overview-grid">
+      <div class="overview-card">
+        <span>运行中任务</span>
+        <strong>{{ overview.running }}</strong>
+      </div>
+      <div class="overview-card success">
+        <span>成功发送</span>
+        <strong>{{ overview.success }}</strong>
+      </div>
+      <div class="overview-card warning">
+        <span>过滤 / 去重</span>
+        <strong>{{ overview.skipped }}</strong>
+      </div>
+      <div class="overview-card danger">
+        <span>失败 / 异常</span>
+        <strong>{{ overview.failed }}</strong>
+      </div>
+    </div>
+
     <el-card class="listener-card">
       <template #header>
         <div class="card-header">
           <div>
             <div class="card-title">监听任务</div>
-            <div class="card-subtitle">实时监听源频道新消息，并通过 Bot API 分发</div>
+            <div class="card-subtitle">展示任务运行状态、最近处理动作和最后错误。</div>
           </div>
 
           <el-button type="primary" @click="emit('add')">
@@ -23,6 +42,7 @@
       >
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="name" label="任务名" min-width="150" show-overflow-tooltip />
+
         <el-table-column label="源频道" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             <button
@@ -37,6 +57,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
+
         <el-table-column label="目标频道" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
             <button
@@ -49,8 +70,8 @@
             </button>
           </template>
         </el-table-column>
-        <el-table-column prop="account_id" label="账号" width="80" align="center" />
-        <el-table-column label="状态" width="100" align="center">
+
+        <el-table-column label="运行状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
               {{ row.enabled ? "运行中" : "已停止" }}
@@ -58,7 +79,29 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="last_error" label="最近错误" min-width="180" show-overflow-tooltip />
+        <el-table-column label="最近动作" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="recent-action">
+              <el-tag
+                v-if="latestEvent(row.id)"
+                :type="eventTagType(latestEvent(row.id).event_type || latestEvent(row.id).status)"
+                size="small"
+              >
+                {{ eventLabel(latestEvent(row.id).event_type || latestEvent(row.id).status) }}
+              </el-tag>
+              <span v-if="latestEvent(row.id)" class="recent-message">
+                {{ latestEvent(row.id).message || latestEvent(row.id).error || "-" }}
+              </span>
+              <span v-else>-</span>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="账号 / Bot" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="muted-line">账号 {{ row.account_id || "-" }} / Bot {{ row.bot_id || "默认" }}</div>
+          </template>
+        </el-table-column>
 
         <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
@@ -107,23 +150,43 @@
       <template #header>
         <div class="card-header">
           <div>
-            <div class="card-title">监听发送缓存</div>
-            <div class="card-subtitle">只缓存最近 20 条监听发送记录，最新在最上方</div>
+            <div class="card-title">监听执行记录</div>
+            <div class="card-subtitle">保留最近 200 条执行流水，展示收到、过滤、去重、发送中、成功和失败。</div>
           </div>
+
+          <el-select v-model="eventFilter" clearable placeholder="事件筛选" class="event-filter">
+            <el-option label="收到" value="received" />
+            <el-option label="准备完成" value="prepared" />
+            <el-option label="发送中" value="sending" />
+            <el-option label="成功" value="success" />
+            <el-option label="过滤" value="filtered" />
+            <el-option label="空内容" value="empty" />
+            <el-option label="去重" value="deduped" />
+            <el-option label="失败" value="failed" />
+            <el-option label="账号异常" value="account_error" />
+          </el-select>
         </div>
       </template>
 
       <el-table
-        :data="events"
+        :data="runtimeEvents"
         border
         stripe
-        height="320"
+        height="460"
         class="listener-log-table"
-        empty-text="暂无监听发送记录"
+        empty-text="暂无监听执行记录"
       >
         <el-table-column prop="time" label="时间" width="160" />
+        <el-table-column label="事件" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="eventTagType(row.event_type || row.status)" size="small">
+              {{ eventLabel(row.event_type || row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="task_id" label="任务ID" width="90" align="center" />
         <el-table-column prop="task_name" label="任务名" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="source_channel" label="源频道" min-width="130" show-overflow-tooltip />
 
         <el-table-column label="目标" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
@@ -165,19 +228,20 @@
         </el-table-column>
 
         <el-table-column prop="bot_name" label="Bot" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="message" label="内容" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="error" label="错误" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="message" label="详情" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
       </el-table>
     </el-card>
   </div>
 </template>
 
 <script setup>
+import { computed, ref } from "vue"
 import { ElMessage } from "element-plus"
 import { CopyDocument } from "@element-plus/icons-vue"
 import { copyText } from "../utils/clipboard"
 
-defineProps({
+const props = defineProps({
   tasks: {
     type: Array,
     required: true,
@@ -189,6 +253,40 @@ defineProps({
 })
 
 const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup"])
+const eventFilter = ref("")
+
+const runtimeEvents = computed(() => {
+  const list = props.events || []
+  if (!eventFilter.value) return list
+  return list.filter((event) => (event.event_type || event.status) === eventFilter.value)
+})
+
+const overview = computed(() => {
+  const events = props.events || []
+  const failedTypes = new Set(["failed", "error", "account_error", "bot_error", "permission_error"])
+  const skippedTypes = new Set(["filtered", "empty", "deduped"])
+
+  return {
+    running: props.tasks.filter((task) => task.enabled).length,
+    success: events.filter((event) => (event.event_type || event.status) === "success").length,
+    skipped: events.filter((event) => skippedTypes.has(event.event_type || event.status)).length,
+    failed: events.filter((event) => failedTypes.has(event.event_type || event.status)).length,
+  }
+})
+
+const latestEventMap = computed(() => {
+  const map = new Map()
+  for (const event of props.events || []) {
+    if (!map.has(event.task_id)) {
+      map.set(event.task_id, event)
+    }
+  }
+  return map
+})
+
+function latestEvent(taskId) {
+  return latestEventMap.value.get(taskId)
+}
 
 function formatTargets(value) {
   if (!value) return "-"
@@ -199,6 +297,32 @@ function formatTargets(value) {
   } catch {
     return String(value)
   }
+}
+
+function eventLabel(type) {
+  const labels = {
+    received: "收到",
+    prepared: "准备",
+    sending: "发送中",
+    success: "成功",
+    filtered: "过滤",
+    empty: "空内容",
+    deduped: "去重",
+    failed: "失败",
+    error: "失败",
+    account_error: "账号异常",
+    bot_error: "Bot异常",
+    permission_error: "权限异常",
+  }
+  return labels[type] || type || "-"
+}
+
+function eventTagType(type) {
+  if (type === "success") return "success"
+  if (type === "sending" || type === "prepared" || type === "received") return "primary"
+  if (type === "filtered" || type === "empty" || type === "deduped") return "warning"
+  if (["failed", "error", "account_error", "bot_error", "permission_error"].includes(type)) return "danger"
+  return "info"
 }
 
 async function copyValue(value) {
@@ -223,19 +347,59 @@ async function copyValue(value) {
   width: 100%;
 }
 
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.overview-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+}
+
+.overview-card span {
+  display: block;
+  color: #606266;
+  font-size: 13px;
+}
+
+.overview-card strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 24px;
+  color: #303133;
+}
+
+.overview-card.success strong {
+  color: #67c23a;
+}
+
+.overview-card.warning strong {
+  color: #e6a23c;
+}
+
+.overview-card.danger strong {
+  color: #f56c6c;
+}
+
 .listener-card,
 .listener-log-card {
   border-radius: 12px;
 }
 
 .listener-log-card {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
 }
 
 .card-title {
@@ -250,9 +414,32 @@ async function copyValue(value) {
   color: #909399;
 }
 
+.event-filter {
+  width: 160px;
+}
+
 .listener-table,
 .listener-log-table {
   width: 100%;
+}
+
+.recent-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recent-message,
+.muted-line {
+  color: #606266;
+  font-size: 12px;
+}
+
+.recent-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .action-buttons {
@@ -310,5 +497,11 @@ async function copyValue(value) {
 
 .link-success {
   color: #67c23a;
+}
+
+@media (max-width: 900px) {
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

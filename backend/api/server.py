@@ -21,6 +21,7 @@ from bot.listener_events import get_listener_send_events
 from bot.listener_catchup import check_latest_content_consistency
 from bot.listener_catchup import catchup_latest_listener_message
 from accounts.manager import account_manager
+from bot.channel_utils import normalize_channel_identifier, normalize_channel_list_json
 from bot.support_bot import (
     check_group_topic_permission,
     get_recent_support_updates,
@@ -211,6 +212,7 @@ class ListenerTaskCreate(BaseModel):
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
+    selected_filter_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -235,6 +237,7 @@ class ListenerTaskUpdate(BaseModel):
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
+    selected_filter_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -325,6 +328,7 @@ class CloneTaskCreate(BaseModel):
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
+    selected_filter_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -357,6 +361,7 @@ class CloneTaskUpdate(BaseModel):
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
+    selected_filter_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -528,6 +533,7 @@ def clone_task_to_dict(task):
         "selected_head_template_group_id": getattr(task, "selected_head_template_group_id", None),
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
+        "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
@@ -550,6 +556,7 @@ def content_template_to_dict(template):
     }
 
 
+
 def content_template_rule_to_dict(rule):
     group = rule.get("group")
     items = rule.get("items") or []
@@ -561,6 +568,18 @@ def content_template_rule_to_dict(rule):
     ]
     data["item_count"] = len(data["items"])
     return data
+
+
+def normalize_task_channels(data):
+    payload = dict(data)
+
+    if "source_channel" in payload and payload.get("source_channel") is not None:
+        payload["source_channel"] = normalize_channel_identifier(payload.get("source_channel"))
+
+    if "target_channels" in payload and payload.get("target_channels") is not None:
+        payload["target_channels"] = normalize_channel_list_json(payload.get("target_channels"))
+
+    return payload
 
 
 def rule_to_dict(rule):
@@ -602,6 +621,7 @@ def listener_task_to_dict(task):
         "selected_head_template_group_id": getattr(task, "selected_head_template_group_id", None),
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
+        "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
@@ -1002,7 +1022,7 @@ def api_get_clone_send_events(limit: int = 20):
 
 
 @app.get("/api/listener-send-events")
-def api_get_listener_send_events(limit: int = 20):
+def api_get_listener_send_events(limit: int = 200):
     return {
         "events": get_listener_send_events(limit),
     }
@@ -1357,7 +1377,7 @@ def api_get_listener_tasks():
 
 @app.post("/api/listener-tasks")
 def api_create_listener_task(data: ListenerTaskCreate):
-    task = create_listener_task(data.dict())
+    task = create_listener_task(normalize_task_channels(data.dict()))
     reload_handlers()
     return listener_task_to_dict(task)
 
@@ -1366,7 +1386,7 @@ def api_create_listener_task(data: ListenerTaskCreate):
 def api_update_listener_task(task_id: int, data: ListenerTaskUpdate):
     task = update_listener_task(
         task_id,
-        data.dict(exclude_unset=True),
+        normalize_task_channels(data.dict(exclude_unset=True)),
     )
 
     if not task:
@@ -1541,7 +1561,7 @@ def api_get_clone_tasks():
 @app.post("/api/clone-tasks")
 def api_create_clone_task(data: CloneTaskCreate):
     """创建克隆任务"""
-    task_data = data.dict()
+    task_data = normalize_task_channels(data.dict())
     task_data = validate_clone_task_message_range(task_data)
 
     task = create_clone_task(task_data)
@@ -1561,7 +1581,7 @@ def api_create_clone_task(data: CloneTaskCreate):
 @app.put("/api/clone-tasks/{task_id}")
 def api_update_clone_task(task_id: int, data: CloneTaskUpdate):
     """更新克隆任务"""
-    update_data = data.dict(exclude_unset=True)
+    update_data = normalize_task_channels(data.dict(exclude_unset=True))
     update_data = validate_clone_task_update_message_range(task_id, update_data)
 
     task = update_clone_task(

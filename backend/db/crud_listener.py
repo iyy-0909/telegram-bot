@@ -24,6 +24,7 @@ DEFAULT_TASK_VALUES = {
     "selected_head_template_group_id": None,
     "selected_body_template_group_id": None,
     "selected_footer_template_group_id": None,
+    "selected_filter_template_group_id": None,
     "selected_head_template_id": None,
     "selected_body_template_id": None,
     "selected_footer_template_id": None,
@@ -85,7 +86,13 @@ def normalize_task_data(data):
         if key == "clone_task_id" and value in ("", 0):
             value = None
 
-        if key.startswith("selected_") and key.endswith("_template_id"):
+        if (
+            key.startswith("selected_")
+            and (
+                key.endswith("_template_id")
+                or key.endswith("_template_group_id")
+            )
+        ):
             if value in ("", 0):
                 value = None
             elif value is not None:
@@ -283,6 +290,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
             selected_head_template_group_id=getattr(clone_task, "selected_head_template_group_id", None),
             selected_body_template_group_id=getattr(clone_task, "selected_body_template_group_id", None),
             selected_footer_template_group_id=getattr(clone_task, "selected_footer_template_group_id", None),
+            selected_filter_template_group_id=getattr(clone_task, "selected_filter_template_group_id", None),
             selected_head_template_id=getattr(clone_task, "selected_head_template_id", None),
             selected_body_template_id=getattr(clone_task, "selected_body_template_id", None),
             selected_footer_template_id=getattr(clone_task, "selected_footer_template_id", None),

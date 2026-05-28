@@ -559,9 +559,15 @@ async def clone_task(task, stop_event=None):
                         update_clone_progress(task.id, message_id)
                         mark_message_sent(task.id, message_id, None)
 
+                        reason = result.get("reason") or "filtered"
+                        skip_message = (
+                            "克隆跳过：内容处理后为空"
+                            if reason == "empty_after_process"
+                            else "克隆跳过：关键词过滤"
+                        )
                         logger.warning(
-                            f"克隆跳过：关键词过滤 | task_id={task.id} | "
-                            f"message_id={message_id}"
+                            f"{skip_message} | task_id={task.id} | "
+                            f"message_id={message_id} | reason={reason}"
                         )
 
                         continue
@@ -627,9 +633,15 @@ async def clone_task(task, stop_event=None):
                         update_clone_progress(task.id, max_id)
                         mark_message_sent(task.id, max_id, grouped_id)
 
+                        reason = result.get("reason") or "filtered"
+                        skip_message = (
+                            "克隆跳过：相册内容处理后为空"
+                            if reason == "empty_after_process"
+                            else "克隆跳过：相册关键词过滤"
+                        )
                         logger.warning(
-                            f"克隆跳过：相册关键词过滤 | task_id={task.id} | "
-                            f"grouped_id={grouped_id} | last_id={max_id}"
+                            f"{skip_message} | task_id={task.id} | "
+                            f"grouped_id={grouped_id} | last_id={max_id} | reason={reason}"
                         )
 
                         continue

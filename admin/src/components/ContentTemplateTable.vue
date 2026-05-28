@@ -28,7 +28,7 @@
       <el-table-column label="类型" width="110" align="center">
         <template #default="{ row }">
           <el-tag :type="getTypeTag(row.type)" size="small">
-            {{ row.type }}
+            {{ typeLabel(row.type) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -104,9 +104,21 @@ function getTypeTag(type) {
     head: "success",
     body: "warning",
     footer: "info",
+    filter: "danger",
   }
 
   return map[type] || "info"
+}
+
+function typeLabel(type) {
+  const map = {
+    head: "头部",
+    body: "正文",
+    footer: "底部",
+    filter: "过滤",
+  }
+
+  return map[type] || type || "-"
 }
 
 function previewItems(items) {

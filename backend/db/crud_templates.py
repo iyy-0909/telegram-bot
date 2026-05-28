@@ -6,7 +6,7 @@ from db.models import ContentTemplate
 from bot.logger import logger
 
 
-VALID_TEMPLATE_TYPES = {"head", "body", "footer"}
+VALID_TEMPLATE_TYPES = {"head", "body", "footer", "filter"}
 
 
 def normalize_template_type(value):
@@ -482,3 +482,36 @@ def pick_template_content(
             f"读取随机内容模板失败，跳过 | type={template_type} | {e}"
         )
         return ""
+
+
+def get_filter_keywords(selected_group_id=None):
+    if not selected_group_id:
+        return []
+
+    try:
+        group = get_template(int(selected_group_id))
+
+        if (
+            not group
+            or not group.enabled
+            or group.type != "filter"
+            or group.parent_id is not None
+        ):
+            logger.warning(
+                f"指定过滤关键词规则不可用，跳过 | group_id={selected_group_id}"
+            )
+            return []
+
+        items = get_enabled_template_items_by_group("filter", int(selected_group_id))
+        keywords = []
+
+        for item in items:
+            for line in (item.content or "").splitlines():
+                keyword = line.strip()
+                if keyword:
+                    keywords.append(keyword)
+
+        return keywords
+    except Exception as e:
+        logger.warning(f"读取过滤关键词规则失败，跳过 | group_id={selected_group_id} | {e}")
+        return []

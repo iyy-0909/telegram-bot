@@ -2,7 +2,7 @@ import json
 import re
 
 from bot.logger import logger
-from db.crud_templates import pick_template_content
+from db.crud_templates import get_filter_keywords, pick_template_content
 
 
 TEXT_LIMIT = 4096
@@ -317,6 +317,17 @@ def process_content(raw_text: str, task):
         getattr(task, "blocked_keywords", None) or getattr(task, "keywords", None),
         [],
     )
+    template_keywords = get_filter_keywords(
+        getattr(task, "selected_filter_template_group_id", None)
+    )
+    blocked_keywords = [
+        *(
+            blocked_keywords
+            if isinstance(blocked_keywords, list)
+            else []
+        ),
+        *template_keywords,
+    ]
     replace_words, delete_lines = parse_replace_config(getattr(task, "replace_words", "{}"))
     # Legacy footer is kept in database/API for compatibility, but no longer
     # participates in sending. Use content_templates footer instead.
@@ -342,6 +353,13 @@ def process_content(raw_text: str, task):
     text = remove_lines_by_keywords(text, delete_lines)
     text = apply_replace_words(text, replace_words)
     text = compact_blank_lines(text)
+
+    if not text.strip():
+        return {
+            "blocked": True,
+            "text": "",
+            "reason": "empty_after_process",
+        }
 
     text = apply_content_templates(text, task)
     # Old footer function is intentionally disabled.

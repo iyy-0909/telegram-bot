@@ -89,21 +89,34 @@ async def send_prepared_to_tasks(
         result = process_content(raw_text, task)
 
         if result.get("blocked"):
+            reason = result.get("reason") or "filtered"
+            is_empty_after_process = reason == "empty_after_process"
+            event_type = "empty" if is_empty_after_process else "filtered"
+            event_message = (
+                "内容处理后为空，已跳过"
+                if is_empty_after_process
+                else "监听消息被过滤"
+            )
+
             for target in targets:
                 add_listener_send_event(
                     task_id=task.id,
                     task_name=task.name,
+                    event_type=event_type,
+                    source_channel=task.source_channel,
                     target=target,
+                    account_id=task.account_id,
                     source_message_id=source_message_id,
                     grouped_id=grouped_id,
                     source_message_url=task_source_url(task, source_message_id),
-                    status="filtered",
-                    message="监听消息被过滤",
+                    status=event_type,
+                    message=event_message,
                 )
 
             logger.warning(
-                f"监听消息被过滤 | task_id={task.id} | "
-                f"message_id={source_message_id} | grouped_id={grouped_id}"
+                f"{event_message} | task_id={task.id} | "
+                f"message_id={source_message_id} | grouped_id={grouped_id} | "
+                f"reason={reason}"
             )
             continue
 
@@ -117,7 +130,10 @@ async def send_prepared_to_tasks(
                 add_listener_send_event(
                     task_id=task.id,
                     task_name=task.name,
+                    event_type="deduped",
+                    source_channel=task.source_channel,
                     target=target,
+                    account_id=task.account_id,
                     source_message_id=source_message_id,
                     grouped_id=grouped_id,
                     source_message_url=task_source_url(task, source_message_id),
@@ -167,6 +183,20 @@ async def send_prepared_to_tasks(
             )
 
             try:
+                add_listener_send_event(
+                    task_id=task.id,
+                    task_name=task.name,
+                    event_type="sending",
+                    source_channel=task.source_channel,
+                    target=target,
+                    account_id=task.account_id,
+                    source_message_id=source_message_id,
+                    grouped_id=grouped_id,
+                    source_message_url=task_source_url(task, source_message_id),
+                    status="sending",
+                    message="准备发送到目标频道",
+                )
+
                 send_result = await send_queue.send(
                     send_prepared_by_bot,
                     target,
@@ -199,12 +229,20 @@ async def send_prepared_to_tasks(
                         target_url = send_result.get("target_message_url") or ""
                         bot_id = send_result.get("bot_id")
                         bot_name = send_result.get("bot_name") or ""
+                        target_ids = send_result.get("target_message_ids") or []
+                        target_message_id = target_ids[0] if target_ids else None
+                    else:
+                        target_message_id = None
 
                     add_listener_send_event(
                         task_id=task.id,
                         task_name=task.name,
+                        event_type="success",
+                        source_channel=task.source_channel,
                         target=target,
+                        account_id=task.account_id,
                         source_message_id=source_message_id,
+                        target_message_id=target_message_id,
                         grouped_id=grouped_id,
                         source_message_url=task_source_url(task, source_message_id),
                         target_message_url=target_url,
@@ -227,7 +265,10 @@ async def send_prepared_to_tasks(
                     add_listener_send_event(
                         task_id=task.id,
                         task_name=task.name,
+                        event_type="failed",
+                        source_channel=task.source_channel,
                         target=target,
+                        account_id=task.account_id,
                         source_message_id=source_message_id,
                         grouped_id=grouped_id,
                         source_message_url=task_source_url(task, source_message_id),
@@ -247,7 +288,10 @@ async def send_prepared_to_tasks(
                 add_listener_send_event(
                     task_id=task.id,
                     task_name=task.name,
+                    event_type="failed",
+                    source_channel=task.source_channel,
                     target=target,
+                    account_id=task.account_id,
                     source_message_id=source_message_id,
                     grouped_id=grouped_id,
                     source_message_url=task_source_url(task, source_message_id),
@@ -294,6 +338,21 @@ async def flush_album(album_key):
     prepared = None
 
     try:
+        for task in tasks:
+            add_listener_send_event(
+                task_id=task.id,
+                task_name=task.name,
+                event_type="received",
+                source_channel=task.source_channel,
+                target="",
+                account_id=task.account_id,
+                source_message_id=max_message_id,
+                grouped_id=grouped_id,
+                source_message_url=task_source_url(task, max_message_id),
+                status="received",
+                message=f"收到源频道相册，共 {len(messages)} 条",
+            )
+
         prepared = await prepare_album(messages, raw_text)
         prepared["_raw_text"] = raw_text
         prepared["_source_payload"] = messages
@@ -304,6 +363,21 @@ async def flush_album(album_key):
                 f"message_ids={[msg.id for msg in messages]}"
             )
             return
+
+        for task in tasks:
+            add_listener_send_event(
+                task_id=task.id,
+                task_name=task.name,
+                event_type="prepared",
+                source_channel=task.source_channel,
+                target="",
+                account_id=task.account_id,
+                source_message_id=max_message_id,
+                grouped_id=grouped_id,
+                source_message_url=task_source_url(task, max_message_id),
+                status="prepared",
+                message="相册内容准备完成",
+            )
 
         await send_prepared_to_tasks(
             prepared=prepared,
@@ -379,6 +453,20 @@ async def process_message(message, tasks, source):
     prepared = None
 
     try:
+        for task in tasks:
+            add_listener_send_event(
+                task_id=task.id,
+                task_name=task.name,
+                event_type="received",
+                source_channel=task.source_channel,
+                target="",
+                account_id=task.account_id,
+                source_message_id=message.id,
+                source_message_url=task_source_url(task, message.id),
+                status="received",
+                message="收到源频道新消息",
+            )
+
         prepared = await prepare_single_message(message, raw_text)
         prepared["_raw_text"] = raw_text
         prepared["_source_payload"] = message
@@ -388,6 +476,20 @@ async def process_message(message, tasks, source):
                 f"监听单条准备失败 | message_id={message.id}"
             )
             return
+
+        for task in tasks:
+            add_listener_send_event(
+                task_id=task.id,
+                task_name=task.name,
+                event_type="prepared",
+                source_channel=task.source_channel,
+                target="",
+                account_id=task.account_id,
+                source_message_id=message.id,
+                source_message_url=task_source_url(task, message.id),
+                status="prepared",
+                message="内容准备完成",
+            )
 
         await send_prepared_to_tasks(
             prepared=prepared,
@@ -434,6 +536,19 @@ def register_handlers():
 
         if not listen_client:
             logger.error(f"监听账号不存在：account_id={account_id}")
+            for task in group_tasks:
+                add_listener_send_event(
+                    task_id=task.id,
+                    task_name=task.name,
+                    event_type="account_error",
+                    source_channel=task.source_channel,
+                    target="",
+                    account_id=task.account_id,
+                    source_message_id=None,
+                    status="error",
+                    message="监听账号不存在或未加载",
+                    error=f"account_id={account_id}",
+                )
             continue
 
         builder = events.NewMessage(chats=source)

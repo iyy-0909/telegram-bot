@@ -4,7 +4,7 @@ from bot.logger import logger
 from utils.time_utils import format_app_time
 
 
-MAX_EVENTS = 20
+MAX_EVENTS = 200
 
 
 def event_to_dict(event):
@@ -12,8 +12,13 @@ def event_to_dict(event):
         "time": event.time or "",
         "task_id": event.task_id,
         "task_name": event.task_name or "",
+        "event_type": getattr(event, "event_type", "") or event.status or "",
+        "source_channel": getattr(event, "source_channel", "") or "",
         "target": event.target or "",
+        "account_id": getattr(event, "account_id", None),
+        "account_name": getattr(event, "account_name", "") or "",
         "source_message_id": event.source_message_id,
+        "target_message_id": getattr(event, "target_message_id", None),
         "grouped_id": event.grouped_id,
         "source_message_url": event.source_message_url or "",
         "target_message_url": event.target_message_url or "",
@@ -46,6 +51,11 @@ def add_listener_send_event(
     task_name,
     target,
     source_message_id,
+    event_type="success",
+    source_channel="",
+    account_id=None,
+    account_name="",
+    target_message_id=None,
     grouped_id=None,
     source_message_url="",
     target_message_url="",
@@ -62,8 +72,13 @@ def add_listener_send_event(
             time=format_app_time(),
             task_id=task_id,
             task_name=task_name or "",
+            event_type=event_type or status or "",
+            source_channel=source_channel or "",
             target=target or "",
+            account_id=account_id,
+            account_name=account_name or "",
             source_message_id=source_message_id,
+            target_message_id=target_message_id,
             grouped_id=str(grouped_id) if grouped_id else None,
             source_message_url=source_message_url or "",
             target_message_url=target_message_url or "",
@@ -87,8 +102,13 @@ def add_listener_send_event(
             "time": format_app_time(),
             "task_id": task_id,
             "task_name": task_name,
+            "event_type": event_type or status or "",
+            "source_channel": source_channel,
             "target": target,
+            "account_id": account_id,
+            "account_name": account_name,
             "source_message_id": source_message_id,
+            "target_message_id": target_message_id,
             "grouped_id": grouped_id,
             "source_message_url": source_message_url,
             "target_message_url": target_message_url,

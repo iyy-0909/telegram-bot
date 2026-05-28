@@ -3,7 +3,7 @@
     <div class="page-hero">
       <div>
         <div class="title">我的频道</div>
-        <div class="subtitle">统一管理目标频道、分组和 Bot 发帖权限，创建任务时直接选择。</div>
+        <div class="subtitle">统一管理目标频道、分组和 Bot 发帖权限，创建任务时可直接选择。</div>
       </div>
       <div class="summary">
         <div class="summary-item">
@@ -54,72 +54,81 @@
     </div>
 
     <el-card class="table-card">
-    <el-table :data="channels" border stripe empty-text="暂无频道">
-      <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
-      <el-table-column label="username" min-width="150" show-overflow-tooltip>
-        <template #default="{ row }">
-          <button
-            v-if="row.username"
-            class="copy-chip"
-            type="button"
-            @click="copyValue(row.username)"
-          >
-            <span>{{ row.username }}</span>
-            <el-icon><CopyDocument /></el-icon>
-          </button>
-          <span v-else>-</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="chat_id" label="chat_id" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="group_name" label="分组" min-width="120" />
-      <el-table-column label="绑定 Bot" min-width="120">
-        <template #default="{ row }">
-          <el-tag size="small" effect="plain">
-            {{ botName(row.bot_id) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'enabled' ? 'success' : row.status === 'error' ? 'danger' : 'info'">
-            {{ row.status }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="权限" min-width="220">
-        <template #default="{ row }">
-          <div class="perm">
-            <el-tag size="small" :type="row.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(row.bot_is_member) }}</el-tag>
-            <el-tag size="small" :type="row.bot_is_admin ? 'success' : 'info'">管理员 {{ yesNo(row.bot_is_admin) }}</el-tag>
-            <el-tag size="small" :type="row.can_post_messages ? 'success' : 'warning'">发帖 {{ yesNo(row.can_post_messages) }}</el-tag>
-            <el-tag size="small" :type="row.can_manage_topics ? 'success' : 'info'">话题 {{ yesNo(row.can_manage_topics) }}</el-tag>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column prop="last_check_at" label="最后检测" min-width="160" />
-      <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-      <el-table-column label="操作" width="260" fixed="right">
-        <template #default="{ row }">
-          <div class="row-actions">
-          <el-button size="small" @click="openEdit(row)">
-            <el-icon><Edit /></el-icon>
-            编辑
-          </el-button>
-          <el-button size="small" @click="check(row)">
-            <el-icon><Connection /></el-icon>
-            检测
-          </el-button>
-          <el-button size="small" @click="toggle(row)">
-            {{ row.status === "disabled" ? "启用" : "禁用" }}
-          </el-button>
-          <el-button size="small" type="danger" plain @click="remove(row)">
-            <el-icon><Delete /></el-icon>
-            删除
-          </el-button>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+      <el-table :data="channels" border stripe empty-text="暂无频道">
+        <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="username" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <button
+              v-if="row.username"
+              class="copy-chip"
+              type="button"
+              @click="copyValue(row.username)"
+            >
+              <span>{{ row.username }}</span>
+              <el-icon><CopyDocument /></el-icon>
+            </button>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="group_name" label="分组" min-width="120" />
+        <el-table-column label="绑定 Bot" min-width="130">
+          <template #default="{ row }">
+            <button
+              v-if="botUsername(row)"
+              class="copy-chip bot-chip"
+              type="button"
+              @click="copyValue(botUsername(row))"
+            >
+              <span>{{ botUsername(row) }}</span>
+              <el-icon><CopyDocument /></el-icon>
+            </button>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'enabled' ? 'success' : row.status === 'error' ? 'danger' : 'info'">
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="权限" min-width="220">
+          <template #default="{ row }">
+            <div class="perm">
+              <el-tag size="small" :type="row.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(row.bot_is_member) }}</el-tag>
+              <el-tag size="small" :type="row.bot_is_admin ? 'success' : 'info'">管理员 {{ yesNo(row.bot_is_admin) }}</el-tag>
+              <el-tag size="small" :type="row.can_post_messages ? 'success' : 'warning'">发帖 {{ yesNo(row.can_post_messages) }}</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后检测" min-width="160">
+          <template #default="{ row }">
+            {{ formatDateTime(row.last_check_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
+        <el-table-column label="操作" width="280" fixed="right">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-button size="small" @click="openEdit(row)">
+                <el-icon><Edit /></el-icon>
+                编辑
+              </el-button>
+              <el-button size="small" @click="check(row)">
+                <el-icon><Connection /></el-icon>
+                检测
+              </el-button>
+              <el-button size="small" @click="toggle(row)">
+                {{ row.status === "disabled" ? "启用" : "禁用" }}
+              </el-button>
+              <el-button size="small" type="danger" plain @click="remove(row)">
+                <el-icon><Delete /></el-icon>
+                删除
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="620px">
@@ -292,17 +301,73 @@ async function toggle(row) {
 }
 
 async function remove(row) {
-  await ElMessageBox.confirm("确定删除这个频道？旧任务字段不会被删除。", "确认删除", {
-    type: "warning",
-  })
+  await ElMessageBox.confirm(
+    "确定删除这个频道？旧任务字段不会被删除。",
+    "确认删除",
+    { type: "warning" },
+  )
   await deleteMyChannel(row.id)
   ElMessage.success("频道已删除")
   await load()
 }
 
-function botName(botId) {
+function botUsername(rowOrBotId) {
+  const row = typeof rowOrBotId === "object"
+    ? rowOrBotId
+    : channels.value.find((channel) => Number(channel.bot_id) === Number(rowOrBotId))
+  const botId = typeof rowOrBotId === "object" ? rowOrBotId?.bot_id : rowOrBotId
+
+  if (row?.bot_username) {
+    const username = String(row.bot_username).trim()
+    return username.startsWith("@") ? username : `@${username}`
+  }
+
+  if (row?.bot_link) {
+    const match = String(row.bot_link).trim().match(/t\.me\/([^/?#]+)/i)
+    if (match) return `@${match[1]}`
+  }
+
   const bot = props.bots.find((item) => Number(item.id) === Number(botId))
-  return bot ? `${bot.name} (#${bot.id})` : "默认 Bot"
+
+  if (!bot) {
+    return row?.bot_name || (botId ? `#${botId}` : "")
+  }
+
+  const username = String(bot.username || "").trim()
+
+  if (username) {
+    return username.startsWith("@") ? username : `@${username}`
+  }
+
+  const link = String(bot.bot_link || "").trim()
+  const match = link.match(/t\.me\/([^/?#]+)/i)
+
+  return match ? `@${match[1]}` : ""
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "-"
+  }
+
+  const text = String(value).trim()
+  const normalized = text.includes("T") ? text : text.replace(" ", "T")
+  const date = new Date(normalized)
+
+  if (Number.isNaN(date.getTime())) {
+    return text.replace("T", " ").slice(0, 19)
+  }
+
+  const pad = (number) => String(number).padStart(2, "0")
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join("-") + " " + [
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join(":")
 }
 
 function yesNo(value) {
@@ -440,6 +505,15 @@ async function copyValue(value) {
 .copy-chip:hover {
   border-color: #409eff;
   background: #ecf5ff;
+}
+
+.bot-chip {
+  color: #606266;
+  background: #f5f7fa;
+}
+
+.bot-chip:hover {
+  color: #409eff;
 }
 
 .copy-chip span {

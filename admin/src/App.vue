@@ -11,7 +11,7 @@
       @change-menu="handleMenuChange"
     >
     <div v-if="activeMenu === 'rules'">
-      <StatusCards :status="status" />
+      <!-- <StatusCards :status="status" /> -->
 
       <ListenerTaskTable
         :tasks="listenerTasks"
@@ -285,7 +285,7 @@ const MENU_STORAGE_KEY = "clonebot_active_menu"
 const CLONE_TASK_LOG_STORAGE_KEY = "clonebot_clone_task_logs"
 const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
 const CLONE_TASK_LOG_LIMIT = 20
-const LISTENER_TASK_LOG_LIMIT = 20
+const LISTENER_TASK_LOG_LIMIT = 200
 const SECONDS_PER_MINUTE = 60
 const VALID_MENUS = ["rules", "clone", "bots", "my-channels", "support", "accounts", "logs", "settings", "templates", "guide"]
 
@@ -365,6 +365,7 @@ const currentListenerTask = reactive({
   selected_head_template_id: null,
   selected_body_template_id: null,
   selected_footer_template_id: null,
+  selected_filter_template_group_id: null,
   album_wait_seconds: 3,
 })
 
@@ -424,6 +425,7 @@ const currentCloneTask = reactive({
   selected_head_template_id: null,
   selected_body_template_id: null,
   selected_footer_template_id: null,
+  selected_filter_template_group_id: null,
   enabled: true,
   status: "idle",
   last_message_id: 0,
@@ -719,7 +721,7 @@ function openEditContentTemplateDialog(row) {
 async function submitContentTemplate(formData) {
   Object.assign(currentContentTemplate, formData)
 
-  if (!["head", "body", "footer"].includes(currentContentTemplate.type)) {
+  if (!["head", "body", "footer", "filter"].includes(currentContentTemplate.type)) {
     ElMessage.error("模板类型不正确")
     return
   }
@@ -812,6 +814,7 @@ function resetCurrentListenerTask() {
     selected_head_template_id: null,
     selected_body_template_id: null,
     selected_footer_template_id: null,
+    selected_filter_template_group_id: null,
     album_wait_seconds: 3,
   })
 }
@@ -854,6 +857,7 @@ async function openEditListenerTaskDialog(row) {
     selected_head_template_id: normalizeTemplateId(row.selected_head_template_id),
     selected_body_template_id: normalizeTemplateId(row.selected_body_template_id),
     selected_footer_template_id: normalizeTemplateId(row.selected_footer_template_id),
+    selected_filter_template_group_id: normalizeTemplateId(row.selected_filter_template_group_id),
     album_wait_seconds: toPositiveNumber(row.album_wait_seconds, 3),
   })
 
@@ -905,17 +909,64 @@ function normalizeChannelList(value) {
   const result = []
 
   for (const item of items) {
-    const channel = String(item || "").trim()
+    const channel = normalizeChannelInput(item)
+    const key = channel.toLowerCase()
 
-    if (!channel || seen.has(channel)) {
+    if (!channel || seen.has(key)) {
       continue
     }
 
-    seen.add(channel)
+    seen.add(key)
     result.push(channel)
   }
 
   return result
+}
+
+
+function normalizeChannelInput(value) {
+  let text = String(value || "").trim()
+
+  if (!text) {
+    return ""
+  }
+
+  if (/^-?\d+$/.test(text)) {
+    return text
+  }
+
+  text = text.replace(/^https?:\/\//i, "")
+  text = text.replace(/^telegram\.me\//i, "t.me/")
+
+  if (/^t\.me\//i.test(text)) {
+    const parts = text.replace(/^t\.me\//i, "").split(/[/?#]/).filter(Boolean)
+
+    if (parts[0] === "c" && parts[1] && /^\d+$/.test(parts[1])) {
+      return `-100${parts[1]}`
+    }
+
+    text = parts[0] || ""
+  }
+
+  if (text.startsWith("@")) {
+    text = text.slice(1)
+  }
+
+  if (text.includes("/")) {
+    text = text.split("/")[0]
+  }
+
+  text = text.trim()
+
+  if (!text) {
+    return ""
+  }
+
+  if (/^-?\d+$/.test(text)) {
+    return text
+  }
+
+  return `@${text}`
 }
 
 
@@ -974,6 +1025,9 @@ async function submitListenerTask(formData) {
     selected_footer_template_id: currentListenerTask.use_random_footer
       ? normalizeTemplateId(currentListenerTask.selected_footer_template_id)
       : null,
+    selected_filter_template_group_id: normalizeTemplateId(
+      currentListenerTask.selected_filter_template_group_id,
+    ),
     album_wait_seconds: toPositiveNumber(currentListenerTask.album_wait_seconds, 3),
   }
 
@@ -1578,6 +1632,7 @@ function resetCurrentCloneTask() {
     selected_head_template_id: null,
     selected_body_template_id: null,
     selected_footer_template_id: null,
+    selected_filter_template_group_id: null,
     enabled: true,
     status: "idle",
     last_message_id: 0,
@@ -1624,6 +1679,7 @@ async function openEditCloneTaskDialog(row) {
     selected_head_template_id: normalizeTemplateId(row.selected_head_template_id),
     selected_body_template_id: normalizeTemplateId(row.selected_body_template_id),
     selected_footer_template_id: normalizeTemplateId(row.selected_footer_template_id),
+    selected_filter_template_group_id: normalizeTemplateId(row.selected_filter_template_group_id),
     enabled: row.enabled ?? true,
     status: row.status || "idle",
     last_message_id: row.last_message_id || 0,
@@ -1698,7 +1754,10 @@ function validateCloneTaskMessageRange() {
 async function submitCloneTask(formData) {
   Object.assign(currentCloneTask, formData)
 
-  if (!currentCloneTask.name || !currentCloneTask.source_channel) {
+  const sourceChannel = normalizeChannelInput(currentCloneTask.source_channel)
+  const targetChannels = normalizeChannelList(currentCloneTask.target_channels)
+
+  if (!currentCloneTask.name || !sourceChannel) {
     ElMessage.error("任务名称和源频道不能为空")
     return
   }
@@ -1708,8 +1767,8 @@ async function submitCloneTask(formData) {
 
   const payload = {
     name: currentCloneTask.name,
-    source_channel: currentCloneTask.source_channel,
-    target_channels: currentCloneTask.target_channels || "[]",
+    source_channel: sourceChannel,
+    target_channels: JSON.stringify(targetChannels),
     account_id: toPositiveNumber(currentCloneTask.account_id, 1),
     bot_id: normalizeTemplateId(currentCloneTask.bot_id),
     start_message_url: (currentCloneTask.start_message_url || "").trim(),
@@ -1742,6 +1801,9 @@ async function submitCloneTask(formData) {
     selected_footer_template_id: currentCloneTask.use_random_footer
       ? normalizeTemplateId(currentCloneTask.selected_footer_template_id)
       : null,
+    selected_filter_template_group_id: normalizeTemplateId(
+      currentCloneTask.selected_filter_template_group_id,
+    ),
     enabled: currentCloneTask.enabled,
   }
 

@@ -5,24 +5,25 @@
     :title="isEdit ? '编辑内容模板规则' : '添加内容模板规则'"
     width="760px"
   >
-    <el-form label-width="100px">
+    <el-form label-width="110px">
       <el-form-item label="规则类型">
         <el-select v-model="localForm.type">
           <el-option label="头部 head" value="head" />
           <el-option label="正文 body" value="body" />
           <el-option label="底部 footer" value="footer" />
+          <el-option label="过滤关键词 filter" value="filter" />
         </el-select>
       </el-form-item>
 
       <el-form-item label="规则名称">
-        <el-input v-model="localForm.name" placeholder="例如 A规则 / 上海footer" />
+        <el-input v-model="localForm.name" placeholder="例如 A规则 / 上海footer / 通用过滤词" />
       </el-form-item>
 
       <el-form-item label="启用">
         <el-switch v-model="localForm.enabled" />
       </el-form-item>
 
-      <el-divider content-position="left">规则内容</el-divider>
+      <el-divider content-position="left">{{ contentTitle }}</el-divider>
 
       <div class="content-list">
         <div
@@ -31,7 +32,7 @@
           class="content-item"
         >
           <div class="content-item-head">
-            <span>内容 {{ index + 1 }}</span>
+            <span>{{ localForm.type === "filter" ? "关键词组" : "内容" }} {{ index + 1 }}</span>
             <div class="content-actions">
               <el-switch v-model="item.enabled" active-text="启用" />
               <el-input-number
@@ -41,11 +42,7 @@
                 controls-position="right"
                 class="weight-input"
               />
-              <el-button
-                type="danger"
-                text
-                @click="removeItem(index)"
-              >
+              <el-button type="danger" text @click="removeItem(index)">
                 删除
               </el-button>
             </div>
@@ -54,14 +51,14 @@
           <el-input
             v-model="item.content"
             type="textarea"
-            :rows="4"
-            placeholder="填写这条模板内容"
+            :rows="localForm.type === 'filter' ? 5 : 4"
+            :placeholder="contentPlaceholder"
           />
         </div>
       </div>
 
       <el-button class="add-content-button" @click="addItem">
-        添加一条内容
+        添加一条{{ localForm.type === "filter" ? "关键词组" : "内容" }}
       </el-button>
     </el-form>
 
@@ -73,7 +70,7 @@
 </template>
 
 <script setup>
-import { reactive, watch } from "vue"
+import { computed, reactive, watch } from "vue"
 
 const props = defineProps({
   visible: Boolean,
@@ -92,6 +89,16 @@ const localForm = reactive({
   enabled: true,
   items: [],
 })
+
+const contentTitle = computed(() => (
+  localForm.type === "filter" ? "过滤关键词" : "规则内容"
+))
+
+const contentPlaceholder = computed(() => (
+  localForm.type === "filter"
+    ? "每行填写一个过滤关键词。任务选择该规则后，任意关键词命中都会跳过整条内容。"
+    : "填写这条模板内容"
+))
 
 watch(
   () => props.form,
@@ -139,7 +146,7 @@ function submit() {
     enabled: localForm.enabled,
     items: localForm.items.map((item, index) => ({
       id: normalizeTemplateId(item.id),
-      name: `内容 ${index + 1}`,
+      name: `${localForm.type === "filter" ? "关键词组" : "内容"} ${index + 1}`,
       content: item.content || "",
       enabled: item.enabled ?? true,
       weight: toPositiveNumber(item.weight, 1),

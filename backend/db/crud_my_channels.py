@@ -4,7 +4,7 @@ from sqlalchemy import or_
 
 from db.crud_bot import normalize_target_channel
 from db.database import SessionLocal
-from db.models import MyChannel
+from db.models import BotAccount, MyChannel
 
 
 def normalize_username(value):
@@ -48,6 +48,21 @@ def channel_to_target(channel):
 
 
 def my_channel_to_dict(channel):
+    bot_name = ""
+    bot_username = ""
+    bot_link = ""
+
+    if channel.bot_id:
+        db = SessionLocal()
+        try:
+            bot = db.query(BotAccount).filter(BotAccount.id == channel.bot_id).first()
+            if bot:
+                bot_name = bot.name or ""
+                bot_username = bot.username or ""
+                bot_link = bot.bot_link or ""
+        finally:
+            db.close()
+
     return {
         "id": channel.id,
         "title": channel.title or "",
@@ -57,6 +72,9 @@ def my_channel_to_dict(channel):
         "group_name": channel.group_name or "",
         "tags": channel.tags or "[]",
         "bot_id": channel.bot_id,
+        "bot_name": bot_name,
+        "bot_username": bot_username,
+        "bot_link": bot_link,
         "status": channel.status or "enabled",
         "is_default": bool(channel.is_default),
         "remark": channel.remark or "",
