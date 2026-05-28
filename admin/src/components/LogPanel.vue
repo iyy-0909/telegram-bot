@@ -1,10 +1,10 @@
-<template>
+﻿<template>
   <el-card>
     <template #header>
       <div class="card-header">
-        <span>运行日志</span>
+        <span>杩愯鏃ュ織</span>
         <el-button type="primary" @click="$emit('refresh')">
-          刷新
+          鍒锋柊
         </el-button>
       </div>
     </template>
@@ -53,5 +53,7 @@ defineEmits(["refresh"])
 .log-line {
   line-height: 1.6;
   white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 </style>

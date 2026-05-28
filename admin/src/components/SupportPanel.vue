@@ -23,7 +23,7 @@
 
     <div class="toolbar">
       <el-alert
-        title="客服回复在 Telegram 客服群/话题内完成，后台只负责配置和只读管理。"
+        title="客服回复在 Telegram 客服群话题内完成，后台只负责配置和只读管理。"
         type="info"
         show-icon
         :closable="false"
@@ -36,62 +36,68 @@
     </div>
 
     <el-card class="table-card">
-    <el-table :data="items" border stripe empty-text="暂无客服 Bot">
-      <el-table-column prop="name" label="名称" min-width="150" />
-      <el-table-column label="Bot" min-width="160">
-        <template #default="{ row }">
-          <el-tag size="small" effect="plain">
-            {{ botLabel(row) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="客服群 chat_id" min-width="170">
-        <template #default="{ row }">
-          <span class="mono-text">{{ row.support_group_chat_id || "-" }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="polling" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.polling_enabled ? 'success' : 'info'">
-            {{ row.polling_enabled ? "开启" : "关闭" }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'enabled' ? 'success' : row.status === 'error' ? 'danger' : 'info'">
-            {{ row.status }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="last_error" label="最后错误" min-width="220" show-overflow-tooltip />
-      <el-table-column label="欢迎语" min-width="220" show-overflow-tooltip>
-        <template #default="{ row }">
-          {{ row.welcome_message || row.welcome_media_file_id || "-" }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
-        <template #default="{ row }">
-          <div class="row-actions">
-          <el-button size="small" @click="openEdit(row)">
-            <el-icon><Edit /></el-icon>
-            编辑
-          </el-button>
-          <el-button size="small" @click="testBot(row)">
-            <el-icon><CircleCheck /></el-icon>
-            检测
-          </el-button>
-          <el-button size="small" @click="togglePolling(row)">
-            {{ row.polling_enabled ? "停用" : "启用" }}
-          </el-button>
-          <el-button size="small" type="danger" plain @click="remove(row)">
-            <el-icon><Delete /></el-icon>
-            删除
-          </el-button>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+      <el-table
+        :data="items"
+        v-loading="loading"
+        border
+        stripe
+        empty-text="暂无客服 Bot，请点击“新增客服 Bot”创建客服接待配置。"
+      >
+        <el-table-column prop="name" label="名称" min-width="150" />
+        <el-table-column label="Bot" min-width="160">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">
+              {{ botLabel(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="客服群 chat_id" min-width="170">
+          <template #default="{ row }">
+            <span class="mono-text">{{ row.support_group_chat_id || "-" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="polling" width="100">
+          <template #default="{ row }">
+            <StatusTag :status="row.polling_enabled ? 'running' : 'stopped'" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <StatusTag :status="row.status" />
+          </template>
+        </el-table-column>
+        <el-table-column label="最后错误" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <ErrorText :message="row.last_error" />
+          </template>
+        </el-table-column>
+        <el-table-column label="欢迎语" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.welcome_message || row.welcome_media_file_id || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="280" fixed="right">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-button size="small" @click="openEdit(row)">
+                <el-icon><Edit /></el-icon>
+                编辑
+              </el-button>
+              <el-button size="small" @click="testBot(row)">
+                <el-icon><CircleCheck /></el-icon>
+                检测
+              </el-button>
+              <el-button size="small" @click="togglePolling(row)">
+                {{ row.polling_enabled ? "停用" : "启用" }}
+              </el-button>
+              <el-button size="small" type="danger" plain @click="remove(row)">
+                <el-icon><Delete /></el-icon>
+                删除
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑客服 Bot' : '新增客服 Bot'" width="760px">
@@ -101,14 +107,7 @@
         </el-form-item>
 
         <el-form-item label="复用已有 Bot">
-          <el-select v-model="form.bot_id" clearable filterable placeholder="选择 Bot">
-            <el-option
-              v-for="bot in enabledBots"
-              :key="bot.id"
-              :label="`${bot.name} (#${bot.id})`"
-              :value="bot.id"
-            />
-          </el-select>
+          <BotSelect v-model="form.bot_id" :bots="props.bots" placeholder="选择 Bot" />
         </el-form-item>
 
         <el-form-item label="或填写 Bot Token">
@@ -187,7 +186,7 @@
 
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -204,6 +203,9 @@ import {
   testSupportBotItem,
   updateSupportBot,
 } from "../api/support"
+import BotSelect from "./BotSelect.vue"
+import ErrorText from "./ErrorText.vue"
+import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
   bots: {
@@ -214,8 +216,9 @@ const props = defineProps({
 
 const items = ref([])
 const dialogVisible = ref(false)
+const loading = ref(false)
+const saving = ref(false)
 const form = reactive(emptyForm())
-const enabledBots = computed(() => props.bots.filter((bot) => bot.enabled))
 const stats = computed(() => ({
   total: items.value.length,
   polling: items.value.filter((item) => item.polling_enabled).length,
@@ -246,8 +249,13 @@ function emptyForm() {
 }
 
 async function load() {
-  const res = await getSupportBots()
-  items.value = res.data.items || []
+  loading.value = true
+  try {
+    const res = await getSupportBots()
+    items.value = res.data.items || []
+  } finally {
+    loading.value = false
+  }
 }
 
 function openCreate() {
@@ -291,16 +299,21 @@ async function save() {
     delete payload.bot_token
   }
 
-  if (form.id) {
-    await updateSupportBot(form.id, payload)
-    ElMessage.success("客服 Bot 已保存")
-  } else {
-    await createSupportBot(payload)
-    ElMessage.success("客服 Bot 已新增")
-  }
+  saving.value = true
+  try {
+    if (form.id) {
+      await updateSupportBot(form.id, payload)
+      ElMessage.success("客服 Bot 已保存")
+    } else {
+      await createSupportBot(payload)
+      ElMessage.success("客服 Bot 已新增")
+    }
 
-  dialogVisible.value = false
-  await load()
+    dialogVisible.value = false
+    await load()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function testBot(row) {

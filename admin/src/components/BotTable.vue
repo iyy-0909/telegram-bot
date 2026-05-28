@@ -21,26 +21,24 @@
 
       <el-table
         :data="bots"
+        v-loading="loading"
         border
         stripe
         size="large"
         style="width: 100%"
-        empty-text="暂无 Bot"
+        empty-text="暂无 Bot，请点击“新增 Bot”添加分发机器人。"
       >
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="name" label="Bot 名称" min-width="160" />
 
         <el-table-column label="Bot 链接" min-width="160">
           <template #default="{ row }">
-            <button
+            <CopyText
               v-if="botUsername(row)"
-              class="bot-link chip-link"
-              type="button"
-              @click="copyBotUsername(row)"
-            >
-              <el-icon><CopyDocument /></el-icon>
-              {{ botUsername(row) }}
-            </button>
+              :value="botUsername(row)"
+              :text="botUsername(row)"
+              tone="primary"
+            />
             <span v-else class="muted">测试或保存 Token 后生成</span>
           </template>
         </el-table-column>
@@ -55,11 +53,7 @@
 
         <el-table-column label="启用" width="100" align="center">
           <template #default="{ row }">
-            <el-switch
-              :model-value="row.enabled"
-              size="small"
-              @change="value => emit('toggle', row, value)"
-            />
+            <StatusTag :status="row.enabled ? 'enabled' : 'disabled'" />
           </template>
         </el-table-column>
 
@@ -67,9 +61,7 @@
 
         <el-table-column label="最后错误" min-width="220">
           <template #default="{ row }">
-            <span class="error-text">
-              {{ row.last_error || "-" }}
-            </span>
+            <ErrorText :message="row.last_error" />
           </template>
         </el-table-column>
 
@@ -92,6 +84,17 @@
                   <el-icon><CircleCheck /></el-icon>
                 </el-button>
               </el-tooltip>
+              <el-tooltip :content="row.enabled ? '停用' : '启用'" placement="top">
+                <el-button
+                  size="small"
+                  :type="row.enabled ? 'warning' : 'success'"
+                  plain
+                  circle
+                  @click="emit('toggle', row, !row.enabled)"
+                >
+                  <el-icon><SwitchButton /></el-icon>
+                </el-button>
+              </el-tooltip>
               <el-tooltip content="删除" placement="top">
                 <el-button
                   size="small"
@@ -112,14 +115,19 @@
 
 <script setup>
 import { computed } from "vue"
-import { ElMessage } from "element-plus"
-import { CircleCheck, CopyDocument, Delete, Edit, Plus } from "@element-plus/icons-vue"
-import { copyText } from "../utils/clipboard"
+import { CircleCheck, Delete, Edit, Plus, SwitchButton } from "@element-plus/icons-vue"
+import CopyText from "./CopyText.vue"
+import ErrorText from "./ErrorText.vue"
+import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
   bots: {
     type: Array,
     required: true,
+  },
+  loading: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -156,22 +164,6 @@ const maskToken = (token) => {
   }
 
   return `${token.slice(0, 8)}...${token.slice(-6)}`
-}
-
-async function copyBotUsername(bot) {
-  const username = botUsername(bot)
-
-  if (!username) {
-    return
-  }
-
-  try {
-    const ok = await copyText(username)
-    if (!ok) throw new Error("copy failed")
-    ElMessage.success("已复制")
-  } catch {
-    ElMessage.error("复制失败")
-  }
 }
 </script>
 
@@ -226,37 +218,8 @@ async function copyBotUsername(bot) {
   border: 1px solid #e5e7eb;
 }
 
-.bot-link {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  color: #409eff;
-  text-decoration: none;
-  cursor: pointer;
-  font: inherit;
-}
-
-.chip-link {
-  border: 1px solid #b3d8ff;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: #ecf5ff;
-}
-
-.bot-link:hover {
-  border-color: #409eff;
-  background: #d9ecff;
-}
-
 .muted {
   color: #909399;
-  font-size: 12px;
-}
-
-.error-text {
-  color: #f56c6c;
   font-size: 12px;
 }
 

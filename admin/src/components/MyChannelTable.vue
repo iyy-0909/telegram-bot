@@ -54,42 +54,40 @@
     </div>
 
     <el-card class="table-card">
-      <el-table :data="channels" border stripe empty-text="暂无频道">
+      <el-table
+        :data="channels"
+        v-loading="loading"
+        border
+        stripe
+        empty-text="暂无频道，请点击“新增频道”添加你的目标频道。"
+      >
         <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
         <el-table-column label="username" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <button
+            <CopyText
               v-if="row.username"
-              class="copy-chip"
-              type="button"
-              @click="copyValue(row.username)"
-            >
-              <span>{{ row.username }}</span>
-              <el-icon><CopyDocument /></el-icon>
-            </button>
+              :value="row.username"
+              :text="row.username"
+              tone="primary"
+            />
             <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="group_name" label="分组" min-width="120" />
         <el-table-column label="绑定 Bot" min-width="130">
           <template #default="{ row }">
-            <button
+            <CopyText
               v-if="botUsername(row)"
-              class="copy-chip bot-chip"
-              type="button"
-              @click="copyValue(botUsername(row))"
-            >
-              <span>{{ botUsername(row) }}</span>
-              <el-icon><CopyDocument /></el-icon>
-            </button>
+              :value="botUsername(row)"
+              :text="botUsername(row)"
+              tone="primary"
+            />
             <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'enabled' ? 'success' : row.status === 'error' ? 'danger' : 'info'">
-              {{ row.status }}
-            </el-tag>
+            <StatusTag :status="row.status" />
           </template>
         </el-table-column>
         <el-table-column label="权限" min-width="220">
@@ -146,20 +144,13 @@
           <el-input v-model="form.group_name" />
         </el-form-item>
         <el-form-item label="默认 Bot">
-          <el-select v-model="form.bot_id" clearable filterable placeholder="不选则使用系统默认 Bot">
-            <el-option
-              v-for="bot in enabledBots"
-              :key="bot.id"
-              :label="`${bot.name} (#${bot.id})`"
-              :value="bot.id"
-            />
-          </el-select>
+          <BotSelect v-model="form.bot_id" :bots="props.bots" placeholder="不选则使用系统默认 Bot" />
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
-            <el-option label="enabled" value="enabled" />
-            <el-option label="disabled" value="disabled" />
-            <el-option label="error" value="error" />
+            <el-option label="正常" value="enabled" />
+            <el-option label="已禁用" value="disabled" />
+            <el-option label="异常" value="error" />
           </el-select>
         </el-form-item>
         <el-form-item label="备注">
@@ -168,7 +159,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -179,7 +170,6 @@ import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
   Connection,
-  CopyDocument,
   Delete,
   Edit,
   Plus,
@@ -194,7 +184,9 @@ import {
   getMyChannels,
   updateMyChannel,
 } from "../api/myChannels"
-import { copyText } from "../utils/clipboard"
+import BotSelect from "./BotSelect.vue"
+import CopyText from "./CopyText.vue"
+import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
   bots: {
@@ -206,12 +198,13 @@ const props = defineProps({
 const channels = ref([])
 const dialogVisible = ref(false)
 const editing = ref(null)
+const loading = ref(false)
+const saving = ref(false)
 const filters = reactive({
   keyword: "",
   status: "",
 })
 const form = reactive(emptyForm())
-const enabledBots = computed(() => props.bots.filter((bot) => bot.enabled))
 const channelStats = computed(() => ({
   total: channels.value.length,
   enabled: channels.value.filter((channel) => channel.status === "enabled").length,
@@ -234,8 +227,13 @@ function emptyForm() {
 }
 
 async function load() {
-  const res = await getMyChannels(filters)
-  channels.value = res.data.items || []
+  loading.value = true
+  try {
+    const res = await getMyChannels(filters)
+    channels.value = res.data.items || []
+  } finally {
+    loading.value = false
+  }
 }
 
 function openCreate() {
@@ -265,16 +263,21 @@ async function save() {
     return
   }
 
-  if (editing.value?.id) {
-    await updateMyChannel(editing.value.id, form)
-    ElMessage.success("频道已保存")
-  } else {
-    await createMyChannel(form)
-    ElMessage.success("频道已添加")
-  }
+  saving.value = true
+  try {
+    if (editing.value?.id) {
+      await updateMyChannel(editing.value.id, form)
+      ElMessage.success("频道已保存")
+    } else {
+      await createMyChannel(form)
+      ElMessage.success("频道已添加")
+    }
 
-  dialogVisible.value = false
-  await load()
+    dialogVisible.value = false
+    await load()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function check(row) {
@@ -373,22 +376,6 @@ function formatDateTime(value) {
 function yesNo(value) {
   return value ? "是" : "否"
 }
-
-async function copyValue(value) {
-  const text = String(value || "").trim()
-
-  if (!text) {
-    return
-  }
-
-  try {
-    const ok = await copyText(text)
-    if (!ok) throw new Error("copy failed")
-    ElMessage.success("已复制")
-  } catch {
-    ElMessage.error("复制失败")
-  }
-}
 </script>
 
 <style scoped>
@@ -485,42 +472,6 @@ async function copyValue(value) {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-}
-
-.copy-chip {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  border: 1px solid #dcdfe6;
-  border-radius: 999px;
-  padding: 3px 9px;
-  background: #ffffff;
-  color: #409eff;
-  cursor: pointer;
-  font: inherit;
-}
-
-.copy-chip:hover {
-  border-color: #409eff;
-  background: #ecf5ff;
-}
-
-.bot-chip {
-  color: #606266;
-  background: #f5f7fa;
-}
-
-.bot-chip:hover {
-  color: #409eff;
-}
-
-.copy-chip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .row-actions {

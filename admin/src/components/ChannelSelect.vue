@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-select
     :model-value="modelValue"
     :multiple="multiple"
@@ -26,9 +26,7 @@
       >
         <div class="option-row">
           <span>{{ channelLabel(channel) }}</span>
-          <el-tag size="small" :type="channel.status === 'enabled' ? 'success' : 'warning'">
-            {{ channel.status }}
-          </el-tag>
+          <StatusTag :status="channel.status" />
         </div>
       </el-option>
     </el-option-group>
@@ -38,6 +36,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue"
 import { getMyChannels } from "../api/myChannels"
+import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
   modelValue: {
@@ -50,14 +49,14 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: "请选择频道",
+    default: "璇烽€夋嫨棰戦亾",
   },
   includeDisabled: {
     type: Boolean,
     default: false,
   },
   botId: {
-    type: [Number, String, null],
+    type: [Number, String],
     default: null,
   },
   allowCreate: {
@@ -85,7 +84,7 @@ const groupedChannels = computed(() => {
   })
 
   for (const channel of filtered) {
-    const groupName = channel.group_name || "默认分组"
+    const groupName = channel.group_name || "榛樿鍒嗙粍"
 
     if (!groups.has(groupName)) {
       groups.set(groupName, [])
@@ -116,9 +115,11 @@ function channelValue(channel) {
 }
 
 function channelLabel(channel) {
-  const name = channel.title || channel.username || channel.chat_id || `频道 ${channel.id}`
+  const title = channel.title || `棰戦亾 ${channel.id}`
   const value = channel.username || channel.chat_id || ""
-  return value && value !== name ? `${name} (${value})` : name
+  const group = channel.group_name || "榛樿鍒嗙粍"
+  const status = channel.status || "unknown"
+  return [title, value, group, status].filter(Boolean).join(" / ")
 }
 </script>
 
@@ -132,5 +133,13 @@ function channelLabel(channel) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.option-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

@@ -14,12 +14,13 @@
       </div>
     </template>
 
-    <el-table
+<el-table
       :data="tasks"
+      v-loading="loading"
       border
       stripe
       class="clone-table"
-      empty-text="暂无克隆任务"
+      empty-text="暂无克隆任务，请点击“新增任务”创建历史克隆任务。"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -27,9 +28,11 @@
 
       <el-table-column prop="source_channel" label="源频道" min-width="170">
         <template #default="{ row }">
-          <el-tag type="info" effect="plain">
-            {{ row.source_channel }}
-          </el-tag>
+          <CopyText
+            :value="row.source_channel"
+            :text="row.source_channel"
+            tone="primary"
+          />
         </template>
       </el-table-column>
 
@@ -49,29 +52,13 @@
 
       <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }">
-          <el-tag :type="getStatusType(row.status)" size="small">
-            {{ row.status || "idle" }}
-          </el-tag>
+          <StatusTag :status="row.status || 'idle'" />
         </template>
       </el-table-column>
 
       <el-table-column label="Worker" width="110" align="center">
         <template #default="{ row }">
-          <el-tag
-            v-if="row.worker_running"
-            type="success"
-            size="small"
-          >
-            运行中
-          </el-tag>
-
-          <el-tag
-            v-else
-            type="info"
-            size="small"
-          >
-            未运行
-          </el-tag>
+          <StatusTag :status="row.worker_running ? 'running' : 'stopped'" />
         </template>
       </el-table-column>
 
@@ -166,32 +153,27 @@
         </div>
       </div>
     </template>
-
     <el-table
-      :data="taskLogs"
-      border
-      stripe
-      height="320"
-      class="clone-log-table"
-      empty-text="暂无缓存记录"
-    >
+        :data="taskLogs"
+        v-loading="logsLoading"
+        border
+        stripe
+        height="320"
+        class="clone-log-table"
+        empty-text="暂无发送成功缓存，任务发送成功后会显示最近 20 条记录。"
+      >
       <el-table-column prop="time" label="时间" width="160" />
 
       <el-table-column label="结果" width="90" align="center">
         <template #default="{ row }">
-          <el-tag :type="getLogResultType(row.result)" size="small">
-            {{ getLogResultText(row.result) }}
-          </el-tag>
+          <StatusTag :status="row.result || 'unknown'" />
         </template>
       </el-table-column>
 
       <el-table-column prop="task_id" label="任务ID" width="90" align="center" />
       <el-table-column label="目标" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">
-          <button class="copy-text" type="button" @click="copyValue(row.target)">
-            <span>{{ row.target || "-" }}</span>
-            <el-icon v-if="row.target" class="copy-icon"><CopyDocument /></el-icon>
-          </button>
+          <CopyText :value="row.target" :text="row.target" />
         </template>
       </el-table-column>
       <el-table-column prop="source_message_id" label="源消息" width="90" align="center" />
@@ -199,43 +181,36 @@
 
       <el-table-column label="源链接" min-width="190" show-overflow-tooltip>
         <template #default="{ row }">
-          <button
+          <CopyText
             v-if="row.source_message_url"
-            class="copy-text link-primary"
-            type="button"
-            @click="copyValue(row.source_message_url)"
-          >
-            <span>{{ row.source_message_url }}</span>
-            <el-icon class="copy-icon"><CopyDocument /></el-icon>
-          </button>
+            :value="row.source_message_url"
+            :text="row.source_message_url"
+            tone="primary"
+          />
           <span v-else>{{ row.source_message_url || "-" }}</span>
         </template>
       </el-table-column>
 
       <el-table-column label="目标链接" min-width="190" show-overflow-tooltip>
         <template #default="{ row }">
-          <button
+          <CopyText
             v-if="row.target_message_url"
-            class="copy-text link-success"
-            type="button"
-            @click="copyValue(row.target_message_url)"
-          >
-            <span>{{ row.target_message_url }}</span>
-            <el-icon class="copy-icon"><CopyDocument /></el-icon>
-          </button>
+            :value="row.target_message_url"
+            :text="row.target_message_url"
+            tone="success"
+          />
           <span v-else>{{ row.target_message_url || "-" }}</span>
         </template>
       </el-table-column>
 
       <el-table-column prop="message" label="内容" min-width="260" show-overflow-tooltip />
-    </el-table>
+      </el-table>
   </el-card>
 </template>
 
 <script setup>
-import { ElMessage } from "element-plus"
-import { CopyDocument } from "@element-plus/icons-vue"
-import { copyText } from "../utils/clipboard"
+import CopyText from "./CopyText.vue"
+import StatusTag from "./StatusTag.vue"
 
 defineProps({
   tasks: {
@@ -245,6 +220,14 @@ defineProps({
   taskLogs: {
     type: Array,
     default: () => [],
+  },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  logsLoading: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -258,19 +241,6 @@ const emit = defineEmits([
   "stop",
   "toggle-listener",
 ])
-
-const getStatusType = (status) => {
-  const map = {
-    idle: "info",
-    running: "success",
-    paused: "warning",
-    stopped: "danger",
-    done: "primary",
-    error: "danger",
-  }
-
-  return map[status] || "info"
-}
 
 const formatTargets = (value) => {
   if (!value) {
@@ -290,41 +260,13 @@ const formatTargets = (value) => {
   }
 }
 
-const getLogResultType = (result) => {
-  const map = {
-    success: "success",
-    error: "danger",
-    info: "info",
-  }
-
-  return map[result] || "info"
+const targetSummary = (value) => {
+  const text = formatTargets(value)
+  if (!text || text === "-") return "-"
+  const parts = text.split(",").map((item) => item.trim()).filter(Boolean)
+  return parts.length > 1 ? `已选 ${parts.length} 个频道` : text
 }
 
-const getLogResultText = (result) => {
-  const map = {
-    success: "成功",
-    error: "失败",
-    info: "记录",
-  }
-
-  return map[result] || "记录"
-}
-
-async function copyValue(value) {
-  const text = String(value || "").trim()
-
-  if (!text || text === "-") {
-    return
-  }
-
-  try {
-    const ok = await copyText(text)
-    if (!ok) throw new Error("copy failed")
-    ElMessage.success("已复制")
-  } catch {
-    ElMessage.error("复制失败")
-  }
-}
 </script>
 
 <style scoped>

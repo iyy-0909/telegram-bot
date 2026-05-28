@@ -17,11 +17,12 @@
 
     <el-table
       :data="rules"
+      v-loading="loading"
       border
       stripe
       row-key="id"
       class="template-table"
-      empty-text="暂无内容模板规则"
+      empty-text="暂无内容模板规则，请点击“添加规则”创建 head/body/footer/过滤关键词规则。"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -81,6 +82,10 @@ const props = defineProps({
   templates: {
     type: Array,
     required: true,
+  },
+  loading: {
+    type: Boolean,
+    default: false,
   },
 })
 

@@ -1,182 +1,160 @@
-<template>
+﻿<template>
   <el-dialog
     :model-value="visible"
     @update:model-value="$emit('update:visible', $event)"
     :title="isEdit ? '编辑监听任务' : '新增监听任务'"
-    width="880px"
+    width="980px"
+    class="task-dialog"
   >
-    <el-form label-width="150px">
-      <el-form-item v-if="!isEdit" label="复制已有任务">
-        <el-select
-          v-model="copyTaskId"
-          clearable
-          filterable
-          placeholder="可选择一条已有监听任务作为模板"
-          @change="applyCopyTask"
-        >
-          <el-option
-            v-for="task in copyableTasks"
-            :key="task.id"
-            :label="copyTaskLabel(task)"
-            :value="task.id"
-          />
-        </el-select>
-        <div class="field-tip">
-          只复制规则配置，不复制任务 ID 和运行状态，复制后可以继续修改。
-        </div>
-      </el-form-item>
+    <el-form class="task-form" label-position="top">
+      <div class="section-row">
+        <section class="form-section">
+          <div class="section-title">基础信息</div>
+          <div class="form-grid two">
+            <el-form-item v-if="!isEdit" label="复制规则">
+              <el-select
+                v-model="copyTaskId"
+                clearable
+                filterable
+                placeholder="选择已有任务作为模板"
+                @change="applyCopyTask"
+              >
+                <el-option
+                  v-for="task in copyableTasks"
+                  :key="task.id"
+                  :label="copyTaskLabel(task)"
+                  :value="task.id"
+                />
+              </el-select>
+            </el-form-item>
 
-      <el-form-item label="任务名称">
-        <el-input v-model="localForm.name" placeholder="例如 上海频道实时监听" />
-      </el-form-item>
+            <el-form-item label="任务名称">
+              <el-input v-model="localForm.name" placeholder="例如：上海频道实时监听" />
+            </el-form-item>
 
-      <el-form-item>
-        <template #label>
-          <div class="field-label">
-            <span>源频道</span>
-            <el-tooltip content="添加源频道" placement="top">
-              <el-button class="add-channel-button" type="primary" circle @click="addSourceChannel">
-                <el-icon><Plus /></el-icon>
-              </el-button>
-            </el-tooltip>
+            <el-form-item label="监听账号">
+              <AccountSelect v-model="localForm.account_id" :accounts="props.accounts" />
+            </el-form-item>
+
+            <el-form-item label="分发 Bot">
+              <BotSelect
+                v-model="localForm.bot_id"
+                :bots="props.bots"
+                placeholder="请选择分发 Bot"
+              />
+            </el-form-item>
           </div>
-        </template>
-        <div class="channel-list">
-          <div
-            v-for="(_, index) in sourceChannels"
-            :key="`source-${index}`"
-            class="channel-row"
-          >
-            <el-input
-              v-model="sourceChannels[index]"
-              placeholder="支持 @channel、chat_id、https://t.me/channel"
-              clearable
+        </section>
+
+        <section class="form-section">
+          <div class="section-title">频道与分发</div>
+
+          <el-form-item>
+            <template #label>
+              <div class="field-label">
+                <span>源频道</span>
+                <el-tooltip content="添加源频道" placement="top">
+                  <el-button class="add-channel-button" type="primary" circle @click="addSourceChannel">
+                    <el-icon><Plus /></el-icon>
+                  </el-button>
+                </el-tooltip>
+              </div>
+            </template>
+            <div class="channel-list">
+              <div
+                v-for="(_, index) in sourceChannels"
+                :key="`source-${index}`"
+                class="channel-row"
+              >
+                <el-input
+                  v-model="sourceChannels[index]"
+                  placeholder="@channel / chat_id / t.me"
+                  clearable
+                />
+                <el-button :disabled="sourceChannels.length <= 1" @click="removeSourceChannel(index)">
+                  删除
+                </el-button>
+              </div>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="目标频道">
+            <ChannelSelect
+              v-model="targetChannels"
+              multiple
+              include-disabled
+              allow-create
+              :bot-id="localForm.bot_id"
+              placeholder="选择或输入目标频道"
             />
-            <el-button :disabled="sourceChannels.length <= 1" @click="removeSourceChannel(index)">
-              删除
-            </el-button>
-          </div>
+          </el-form-item>
+        </section>
+      </div>
+
+      <section class="form-section">
+        <div class="section-title">内容处理</div>
+
+        <div class="form-grid two">
+          <el-form-item label="通用过滤词">
+            <el-select
+              v-model="localForm.selected_filter_template_group_id"
+              clearable
+              filterable
+              placeholder="选择过滤规则"
+            >
+              <el-option
+                v-for="group in enabledTemplateGroupsByType('filter')"
+                :key="group.id"
+                :label="templateLabel(group)"
+                :value="group.id"
+              />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="任务补充过滤词">
+            <el-select
+              v-model="blockedKeywordList"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="输入关键词后回车"
+            >
+              <el-option
+                v-for="keyword in blockedKeywordList"
+                :key="keyword"
+                :label="keyword"
+                :value="keyword"
+              />
+            </el-select>
+          </el-form-item>
         </div>
-      </el-form-item>
 
-      <el-form-item label="目标频道">
-        <ChannelSelect
-          v-model="targetChannels"
-          multiple
-          include-disabled
-          allow-create
-          :bot-id="localForm.bot_id"
-          placeholder="选择目标频道，也可手动输入 @username / chat_id / https://t.me/channel"
-        />
-      </el-form-item>
+        <el-form-item label="替换词">
+          <ReplaceRulesEditor v-model="localForm.replace_words" />
+        </el-form-item>
 
-      <el-form-item label="监听账号">
-        <el-select v-model="localForm.account_id" filterable>
-          <el-option
-            v-for="account in accounts"
-            :key="account.id"
-            :label="accountLabel(account)"
-            :value="account.id"
-          />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item label="分发 Bot">
-        <el-select
-          v-model="localForm.bot_id"
-          placeholder="请选择分发 Bot"
-          clearable
-          filterable
-        >
-          <el-option
-            v-for="bot in enabledBots()"
-            :key="bot.id"
-            :label="`${bot.name} (#${bot.id})`"
-            :value="bot.id"
-          />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item label="通用过滤词">
-        <el-select
-          v-model="localForm.selected_filter_template_group_id"
-          clearable
-          filterable
-          placeholder="选择内容模板规则里的过滤关键词"
-        >
-          <el-option
-            v-for="group in enabledTemplateGroupsByType('filter')"
-            :key="group.id"
-            :label="templateLabel(group)"
-            :value="group.id"
-          />
-        </el-select>
-        <div class="field-tip">
-          命中过滤词后整条内容会跳过，不再拼接模板。
+        <div class="switch-row">
+          <span>删除旧联系方式</span>
+          <el-switch v-model="localForm.remove_contact_lines" />
         </div>
-      </el-form-item>
+      </section>
 
-      <el-form-item label="任务补充过滤词">
-        <el-select
-          v-model="blockedKeywordList"
-          multiple
-          filterable
-          allow-create
-          default-first-option
-          placeholder="输入关键词后回车，可添加多个"
-        >
-          <el-option
-            v-for="keyword in blockedKeywordList"
-            :key="keyword"
-            :label="keyword"
-            :value="keyword"
-          />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item label="替换词">
-        <ReplaceRulesEditor v-model="localForm.replace_words" />
-      </el-form-item>
-
-      <el-form-item label="删除旧联系方式">
-        <el-switch v-model="localForm.remove_contact_lines" />
-      </el-form-item>
-
-      <el-divider content-position="left">内容模板规则</el-divider>
-
-      <el-form-item label="启用 head">
-        <TemplatePicker
-          v-model:enabled="localForm.use_random_head"
-          v-model:group-id="localForm.selected_head_template_group_id"
-          v-model:item-id="localForm.selected_head_template_id"
-          type="head"
+      <section class="form-section">
+        <TemplateRulePanel
+          :values="localForm"
           :templates="templates"
+          @update="updateTemplateField"
         />
-      </el-form-item>
+      </section>
 
-      <el-form-item label="启用 body">
-        <TemplatePicker
-          v-model:enabled="localForm.use_random_body"
-          v-model:group-id="localForm.selected_body_template_group_id"
-          v-model:item-id="localForm.selected_body_template_id"
-          type="body"
-          :templates="templates"
-        />
-      </el-form-item>
-
-      <el-form-item label="启用 footer">
-        <TemplatePicker
-          v-model:enabled="localForm.use_random_footer"
-          v-model:group-id="localForm.selected_footer_template_group_id"
-          v-model:item-id="localForm.selected_footer_template_id"
-          type="footer"
-          :templates="templates"
-        />
-      </el-form-item>
-
-      <el-form-item label="启用">
-        <el-switch v-model="localForm.enabled" />
-      </el-form-item>
+      <section class="form-section">
+        <div class="section-title">任务开关</div>
+        <div class="switch-row">
+          <span>启用任务</span>
+          <el-switch v-model="localForm.enabled" />
+        </div>
+      </section>
     </el-form>
 
     <template #footer>
@@ -187,10 +165,13 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, reactive, ref, resolveComponent, watch } from "vue"
+import { computed, reactive, ref, watch } from "vue"
 import { Plus } from "@element-plus/icons-vue"
+import AccountSelect from "./AccountSelect.vue"
+import BotSelect from "./BotSelect.vue"
 import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
+import TemplateRulePanel from "./TemplateRulePanel.vue"
 
 const props = defineProps({
   visible: Boolean,
@@ -370,15 +351,6 @@ function submit() {
   })
 }
 
-function accountLabel(account) {
-  const username = account.username ? ` @${account.username}` : ""
-  return `${account.id} - ${account.name}${username}`
-}
-
-function enabledBots() {
-  return props.bots.filter((bot) => bot.enabled)
-}
-
 function enabledTemplateGroupsByType(type) {
   return props.templates.filter(
     (template) => template.type === type && template.enabled && !template.parent_id,
@@ -386,7 +358,7 @@ function enabledTemplateGroupsByType(type) {
 }
 
 function templateLabel(template) {
-  return template.name || `模板 ${template.id}`
+  return template.name || `妯℃澘 ${template.id}`
 }
 
 function parseChannelItems(value) {
@@ -404,7 +376,7 @@ function parseChannelItems(value) {
         items = [text]
       }
     } else if (text) {
-      items = text.split(/[\n,，]+/)
+      items = text.split(/[\n,，\s]+/)
     }
   }
 
@@ -461,7 +433,7 @@ function parseJsonArray(value) {
     const parsed = JSON.parse(value || "[]")
     return Array.isArray(parsed) ? uniqueStrings(parsed) : []
   } catch {
-    return uniqueStrings(String(value || "").split(/[\n,，]+/))
+    return uniqueStrings(String(value || "").split(/[\n,，\s]+/))
   }
 }
 
@@ -506,82 +478,11 @@ function toPositiveNumber(value, fallback) {
   return Math.floor(numberValue)
 }
 
-const TemplatePicker = defineComponent({
-  props: {
-    enabled: Boolean,
-    groupId: {
-      type: [Number, String],
-      default: null,
-    },
-    itemId: {
-      type: [Number, String],
-      default: null,
-    },
-    type: String,
-    templates: {
-      type: Array,
-      default: () => [],
-    },
-  },
-  emits: ["update:enabled", "update:groupId", "update:itemId"],
-  setup(componentProps, { emit: componentEmit }) {
-    const groups = computed(() => componentProps.templates.filter(
-      (template) => (
-        template.type === componentProps.type
-        && template.enabled
-        && !template.parent_id
-      ),
-    ))
-    const items = computed(() => componentProps.templates.filter(
-      (template) => (
-        template.type === componentProps.type
-        && template.enabled
-        && Number(template.parent_id) === Number(componentProps.groupId)
-        && (template.content || "").trim()
-      ),
-    ))
-
-    return () => h("div", { class: "template-row" }, [
-      h(resolveComponent("el-switch"), {
-        modelValue: componentProps.enabled,
-        "onUpdate:modelValue": (value) => componentEmit("update:enabled", value),
-      }),
-      h(resolveComponent("el-select"), {
-        modelValue: componentProps.groupId,
-        disabled: !componentProps.enabled,
-        placeholder: "选择规则",
-        clearable: true,
-        class: "template-select",
-        "onUpdate:modelValue": (value) => {
-          componentEmit("update:groupId", value)
-          componentEmit("update:itemId", null)
-        },
-      }, () => groups.value.map((group) => h(resolveComponent("el-option"), {
-        key: group.id,
-        label: group.name || `模板 ${group.id}`,
-        value: group.id,
-      }))),
-      h(resolveComponent("el-select"), {
-        modelValue: componentProps.itemId,
-        disabled: !componentProps.enabled || !componentProps.groupId,
-        placeholder: "规则内随机",
-        clearable: true,
-        class: "template-select",
-        "onUpdate:modelValue": (value) => componentEmit("update:itemId", value),
-      }, () => [
-        h(resolveComponent("el-option"), {
-          label: "规则内随机",
-          value: null,
-        }),
-        ...items.value.map((item) => h(resolveComponent("el-option"), {
-          key: item.id,
-          label: item.name || `内容 ${item.id}`,
-          value: item.id,
-        })),
-      ]),
-    ])
-  },
-})
+function updateTemplateField({ key, value }) {
+  if (Object.prototype.hasOwnProperty.call(localForm, key)) {
+    localForm[key] = value
+  }
+}
 </script>
 
 <style scoped>
@@ -612,23 +513,67 @@ const TemplatePicker = defineComponent({
   width: 100%;
 }
 
-.template-row {
+.task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 10px;
+}
+
+.form-section {
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.section-title {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px 12px;
+}
+
+.form-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-form :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+
+.task-form :deep(.form-section > .el-form-item:last-child),
+.task-form :deep(.form-grid .el-form-item) {
+  margin-bottom: 0;
+}
+
+.switch-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  justify-content: space-between;
   gap: 12px;
-  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #303133;
 }
 
-.template-select {
-  max-width: 260px;
-  width: 100%;
-}
-
-.field-tip {
-  margin-top: 6px;
-  color: #909399;
-  font-size: 12px;
-  line-height: 1.4;
+@media (max-width: 900px) {
+  .section-row,
+  .form-grid.two {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -10,20 +10,23 @@
       </div>
     </template>
 
-    <el-table :data="accounts" border>
+    <el-table
+      :data="accounts"
+      v-loading="loading"
+      border
+      empty-text="暂无采集账号，请运行 login_account.py 登录或点击新增账号。"
+    >
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="name" label="账号名称" min-width="140" show-overflow-tooltip />
 
       <el-table-column label="Telegram 用户名" min-width="160">
         <template #default="{ row }">
-          <button
+          <CopyText
             v-if="row.username"
-            class="copy-username"
-            type="button"
-            @click="copyUsername(row.username)"
-          >
-            {{ formatUsername(row.username) }}
-          </button>
+            :value="formatUsername(row.username)"
+            :text="formatUsername(row.username)"
+            tone="primary"
+          />
           <span v-else>-</span>
         </template>
       </el-table-column>
@@ -33,22 +36,26 @@
 
       <el-table-column label="启用" width="100">
         <template #default="{ row }">
-          <el-switch
-            v-model="row.enabled"
-            @change="$emit('toggle', row)"
-          />
+          <StatusTag :status="row.enabled ? 'enabled' : 'disabled'" />
         </template>
       </el-table-column>
 
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
 
-      <el-table-column label="操作" width="180">
+      <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <el-button
             size="small"
             @click="$emit('edit', row)"
           >
             编辑
+          </el-button>
+
+          <el-button
+            size="small"
+            @click="toggleAccount(row)"
+          >
+            {{ row.enabled ? "禁用" : "启用" }}
           </el-button>
 
           <el-button
@@ -65,17 +72,21 @@
 </template>
 
 <script setup>
-import { ElMessage } from "element-plus"
-import { copyText } from "../utils/clipboard"
+import CopyText from "./CopyText.vue"
+import StatusTag from "./StatusTag.vue"
 
-defineProps({
+const props = defineProps({
   accounts: {
     type: Array,
     default: () => [],
   },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-defineEmits([
+const emit = defineEmits([
   "add",
   "edit",
   "delete",
@@ -92,16 +103,9 @@ function formatUsername(username) {
   return value.startsWith("@") ? value : `@${value}`
 }
 
-async function copyUsername(username) {
-  const value = formatUsername(username)
-
-  try {
-    const ok = await copyText(value)
-    if (!ok) throw new Error("copy failed")
-    ElMessage.success("已复制")
-  } catch {
-    ElMessage.error("复制失败")
-  }
+function toggleAccount(row) {
+  row.enabled = !row.enabled
+  emit("toggle", row)
 }
 </script>
 
@@ -112,16 +116,4 @@ async function copyUsername(username) {
   align-items: center;
 }
 
-.copy-username {
-  border: 0;
-  padding: 0;
-  color: #1677ff;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-}
-
-.copy-username:hover {
-  text-decoration: underline;
-}
 </style>

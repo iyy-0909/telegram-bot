@@ -16,6 +16,8 @@
       <ListenerTaskTable
         :tasks="listenerTasks"
         :events="listenerTaskLogs"
+        :loading="pageLoading.listenerTasks"
+        :logs-loading="pageLoading.listenerLogs"
         @add="openAddListenerTaskDialog"
         @edit="openEditListenerTaskDialog"
         @delete="deleteListenerTaskHandler"
@@ -42,6 +44,7 @@
     <div v-if="activeMenu === 'templates'">
       <ContentTemplateTable
         :templates="contentTemplates"
+        :loading="pageLoading.templates"
         @add="openAddContentTemplateDialog"
         @edit="openEditContentTemplateDialog"
         @delete="deleteContentTemplateHandler"
@@ -56,6 +59,7 @@
     <div v-if="activeMenu === 'accounts'">
       <AccountTable
         :accounts="accounts"
+        :loading="pageLoading.accounts"
         @add="openAddAccountDialog"
         @edit="openEditAccountDialog"
         @delete="deleteAccount"
@@ -66,6 +70,7 @@
     <div v-if="activeMenu === 'bots'" class="bot-page">
       <BotTable
         :bots="bots"
+        :loading="pageLoading.bots"
         @add="openAddBotDialog"
         @edit="openEditBotDialog"
         @delete="deleteBotHandler"
@@ -97,6 +102,8 @@
       <CloneTaskTable
         :tasks="cloneTasks"
         :task-logs="cloneTaskLogs"
+        :loading="pageLoading.cloneTasks"
+        :logs-loading="pageLoading.cloneLogs"
         @add="openAddCloneTaskDialog"
         @edit="openEditCloneTaskDialog"
         @delete="removeCloneTaskHandler"
@@ -280,6 +287,15 @@ const sendSettings = ref({
   send_retry_count: 2,
   send_retry_delay: 5,
 })
+const pageLoading = reactive({
+  listenerTasks: false,
+  listenerLogs: false,
+  accounts: false,
+  bots: false,
+  cloneTasks: false,
+  cloneLogs: false,
+  templates: false,
+})
 
 const MENU_STORAGE_KEY = "clonebot_active_menu"
 const CLONE_TASK_LOG_STORAGE_KEY = "clonebot_clone_task_logs"
@@ -456,12 +472,18 @@ async function loadRules() {
 }
 
 async function loadListenerTasks() {
-  const res = await getListenerTasks()
-  listenerTasks.value = res.data || []
+  pageLoading.listenerTasks = true
+  try {
+    const res = await getListenerTasks()
+    listenerTasks.value = res.data || []
+  } finally {
+    pageLoading.listenerTasks = false
+  }
 }
 
 
 async function loadListenerTaskLogs() {
+  pageLoading.listenerLogs = true
   try {
     const res = await getListenerSendEvents(LISTENER_TASK_LOG_LIMIT)
     listenerTaskLogs.value = res.data.events || []
@@ -469,6 +491,8 @@ async function loadListenerTaskLogs() {
   } catch (e) {
     listenerTaskLogs.value = getCachedListenerTaskLogs()
     console.error("加载监听发送缓存失败", e)
+  } finally {
+    pageLoading.listenerLogs = false
   }
 }
 
@@ -503,14 +527,24 @@ async function loadLogs() {
 
 
 async function loadAccounts() {
-  const res = await getAccounts()
-  accounts.value = res.data
+  pageLoading.accounts = true
+  try {
+    const res = await getAccounts()
+    accounts.value = res.data
+  } finally {
+    pageLoading.accounts = false
+  }
 }
 
 
 async function loadBots() {
-  const res = await getBots()
-  bots.value = res.data
+  pageLoading.bots = true
+  try {
+    const res = await getBots()
+    bots.value = res.data
+  } finally {
+    pageLoading.bots = false
+  }
 }
 
 
@@ -527,10 +561,15 @@ async function loadBotPage() {
 
 
 async function loadCloneTasks() {
-  const res = await getCloneTasks()
-  const tasks = res.data || []
+  pageLoading.cloneTasks = true
+  try {
+    const res = await getCloneTasks()
+    const tasks = res.data || []
 
-  cloneTasks.value = tasks
+    cloneTasks.value = tasks
+  } finally {
+    pageLoading.cloneTasks = false
+  }
 }
 
 
@@ -548,6 +587,7 @@ function scheduleCloneTaskRefresh() {
 
 
 async function loadCloneTaskLogs() {
+  pageLoading.cloneLogs = true
   try {
     const res = await getCloneSendEvents(CLONE_TASK_LOG_LIMIT)
     const events = (res.data.events || []).map(mapCloneSendEvent)
@@ -557,6 +597,8 @@ async function loadCloneTaskLogs() {
   } catch (e) {
     cloneTaskLogs.value = getCachedCloneTaskLogs()
     console.error("加载克隆任务缓存失败", e)
+  } finally {
+    pageLoading.cloneLogs = false
   }
 }
 
@@ -616,8 +658,13 @@ async function loadSendSettings() {
 
 
 async function loadContentTemplates() {
-  const res = await getContentTemplates()
-  contentTemplates.value = res.data || []
+  pageLoading.templates = true
+  try {
+    const res = await getContentTemplates()
+    contentTemplates.value = res.data || []
+  } finally {
+    pageLoading.templates = false
+  }
 }
 
 

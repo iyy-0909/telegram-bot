@@ -43,3 +43,11 @@ cd D:\MyProject\telegram-bot\backend
 ..\.venv\Scripts\Activate.ps1
 python run.py
 ```
+
+## Frontend UI Skill
+
+以后所有 `admin/` 前端页面、组件、表格、表单、菜单、弹窗、交互和错误展示开发，都必须遵守：
+
+- `docs/frontend-ui-skill.md`
+
+修改前端时必须先阅读该文档，并按其中的布局、表格、状态标签、表单、公共组件、错误展示、验收标准执行。
