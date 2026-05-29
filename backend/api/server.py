@@ -20,6 +20,8 @@ from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
 from bot.bulk_replace import execute_bulk_replace, preview_bulk_replace
+from bot.account_login import account_login_manager
+from bot.runtime_queue import runtime_queue_state
 from bot.listener_catchup import check_latest_content_consistency
 from bot.listener_catchup import catchup_latest_listener_message
 from accounts.manager import account_manager
@@ -301,6 +303,22 @@ class AccountUpdate(BaseModel):
     proxy: str = ""
     enabled: bool = True
     remark: str = ""
+
+
+class AccountLoginStart(BaseModel):
+    phone: str
+    name: str = ""
+    session_path: str = ""
+    proxy: str = ""
+    remark: str = ""
+    account_id: Optional[int] = None
+    update_existing: bool = False
+
+
+class AccountLoginVerify(BaseModel):
+    login_id: str
+    code: str
+    password: str = ""
 
 
 class CloneTaskCreate(BaseModel):
@@ -858,6 +876,41 @@ def status():
     return {
         "status": "running",
         "rules_count": len(listener_tasks),
+    }
+
+
+@app.get("/api/runtime/dashboard")
+def api_runtime_dashboard():
+    queue_snapshot = runtime_queue_state.snapshot()
+    listener_tasks = get_all_listener_tasks()
+    clone_snapshot = clone_manager.snapshot()
+    loaded_account_ids = sorted(account_manager.clients.keys())
+
+    enabled_listener_count = len([
+        task for task in listener_tasks
+        if getattr(task, "enabled", False)
+    ])
+
+    queue_stats = queue_snapshot.get("stats", {})
+    stats = {
+        **queue_stats,
+        "clone_running_count": clone_snapshot.get("total_running", 0),
+        "listener_enabled_count": enabled_listener_count,
+        "loaded_account_count": len(loaded_account_ids),
+    }
+
+    return {
+        "queue": queue_snapshot,
+        "clone_workers": clone_snapshot,
+        "listener": {
+            "enabled_count": enabled_listener_count,
+            "total_count": len(listener_tasks),
+        },
+        "accounts": {
+            "loaded_count": len(loaded_account_ids),
+            "loaded_ids": loaded_account_ids,
+        },
+        "stats": stats,
     }
 
 
@@ -1601,6 +1654,40 @@ def add_account(data: AccountCreate):
     )
 
     return account_to_dict(account)
+
+
+@app.post("/api/accounts/login/start")
+async def api_account_login_start(data: AccountLoginStart):
+    result = await account_login_manager.start_login(
+        phone=data.phone,
+        name=data.name,
+        session_path=data.session_path,
+        proxy=data.proxy,
+        remark=data.remark,
+        account_id=data.account_id,
+        update_existing=data.update_existing,
+    )
+
+    account = result.get("account") if isinstance(result, dict) else None
+    if result.get("ok") and account and account.get("id"):
+        result["runtime_loaded"] = await account_manager.load_account(account["id"])
+
+    return result
+
+
+@app.post("/api/accounts/login/verify")
+async def api_account_login_verify(data: AccountLoginVerify):
+    result = await account_login_manager.verify_code(
+        login_id=data.login_id,
+        code=data.code,
+        password=data.password,
+    )
+
+    account = result.get("account") if isinstance(result, dict) else None
+    if result.get("ok") and account and account.get("id"):
+        result["runtime_loaded"] = await account_manager.load_account(account["id"])
+
+    return result
 
 
 @app.put("/api/accounts/{account_id}")

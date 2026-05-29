@@ -247,6 +247,16 @@ async def send_to_targets(
                     target_delay=delay,
                     skip_initial_delay=skip_initial_delay and index == 0,
                     stop_event=stop_event,
+                    queue_meta={
+                        "source_type": "clone",
+                        "task_id": task.id,
+                        "task_name": task.name,
+                        "source_channel": task.source_channel,
+                        "target_channel": target,
+                        "source_message_id": source_message_id,
+                        "grouped_id": grouped_id,
+                        "message_type": message_type,
+                    },
                 )
 
                 if send_result:

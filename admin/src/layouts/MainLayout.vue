@@ -38,6 +38,7 @@ defineProps({
 const emit = defineEmits(["change-menu"])
 
 const menuItems = [
+  ["home", "首页"],
   ["rules", "监听任务"],
   ["clone", "克隆任务"],
   ["bots", "Bot 管理"],

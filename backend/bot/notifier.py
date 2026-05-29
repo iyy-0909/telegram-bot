@@ -92,7 +92,7 @@ async def send_control_alert(title: str, message: str, level: str = "error", con
         return False
 
     context = context or {}
-    key = f"{title}:{level}:{context.get('task_id')}:{context.get('target')}"
+    key = context.get("alert_key") or f"{title}:{level}:{context.get('task_id')}:{context.get('target')}"
     if not should_send_alert(key):
         return False
 

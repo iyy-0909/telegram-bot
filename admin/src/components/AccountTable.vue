@@ -4,9 +4,14 @@
       <div class="card-header">
         <span>账号管理</span>
 
-        <el-button type="primary" @click="$emit('add')">
-          新增账号
-        </el-button>
+        <div class="header-actions">
+          <el-button @click="$emit('add')">
+            手动新增
+          </el-button>
+          <el-button type="primary" @click="$emit('login')">
+            登录账号
+          </el-button>
+        </div>
       </div>
     </template>
 
@@ -24,7 +29,7 @@
           <CopyText
             v-if="row.username"
             :value="formatUsername(row.username)"
-            :text="formatUsername(row.username)"
+            :text="formatAccountUsername(row)"
             tone="primary"
           />
           <span v-else>-</span>
@@ -42,8 +47,17 @@
 
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
 
-      <el-table-column label="操作" width="220">
+      <el-table-column label="操作" width="300">
         <template #default="{ row }">
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            @click="$emit('relogin', row)"
+          >
+            重新登录
+          </el-button>
+
           <el-button
             size="small"
             @click="$emit('edit', row)"
@@ -88,6 +102,8 @@ const props = defineProps({
 
 const emit = defineEmits([
   "add",
+  "login",
+  "relogin",
   "edit",
   "delete",
   "toggle",
@@ -103,6 +119,10 @@ function formatUsername(username) {
   return value.startsWith("@") ? value : `@${value}`
 }
 
+function formatAccountUsername(row) {
+  return `${formatUsername(row.username)} (#${row.id})`
+}
+
 function toggleAccount(row) {
   row.enabled = !row.enabled
   emit("toggle", row)
@@ -114,6 +134,11 @@ function toggleAccount(row) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 </style>

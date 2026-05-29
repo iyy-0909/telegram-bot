@@ -10,6 +10,14 @@
       :active-menu="activeMenu"
       @change-menu="handleMenuChange"
     >
+    <div v-if="activeMenu === 'home'">
+      <RuntimeDashboard
+        :dashboard="runtimeDashboard"
+        :loading="pageLoading.runtime"
+        @refresh="loadRuntimeDashboard"
+      />
+    </div>
+
     <div v-if="activeMenu === 'rules'">
       <!-- <StatusCards :status="status" /> -->
 
@@ -62,6 +70,8 @@
         :accounts="accounts"
         :loading="pageLoading.accounts"
         @add="openAddAccountDialog"
+        @login="openAccountLoginDialog"
+        @relogin="openAccountReloginDialog"
         @edit="openEditAccountDialog"
         @delete="deleteAccount"
         @toggle="saveAccount"
@@ -141,6 +151,13 @@
       @submit="submitAccount"
     />
 
+    <AccountLoginDialog
+      :visible="accountLoginDialogVisible"
+      :account="loginAccountTarget"
+      @update:visible="accountLoginDialogVisible = $event"
+      @success="handleAccountLoginSuccess"
+    />
+
     <BotDialog
       :visible="botDialogVisible"
       :form="currentBot"
@@ -197,6 +214,7 @@ import ContentTemplateDialog from "./components/ContentTemplateDialog.vue"
 
 import AccountTable from "./components/AccountTable.vue"
 import AccountDialog from "./components/AccountDialog.vue"
+import AccountLoginDialog from "./components/AccountLoginDialog.vue"
 
 import BotTable from "./components/BotTable.vue"
 import BotDialog from "./components/BotDialog.vue"
@@ -205,6 +223,7 @@ import BotBindingDialog from "./components/BotBindingDialog.vue"
 import SupportPanel from "./components/SupportPanel.vue"
 import MyChannelTable from "./components/MyChannelTable.vue"
 import BulkReplacePanel from "./components/BulkReplacePanel.vue"
+import RuntimeDashboard from "./components/RuntimeDashboard.vue"
 
 import CloneTaskTable from "./components/CloneTaskTable.vue"
 import CloneTaskDialog from "./components/CloneTaskDialog.vue"
@@ -275,6 +294,10 @@ import {
   deleteContentTemplateRule,
 } from "./api/contentTemplates"
 
+import {
+  getRuntimeDashboard,
+} from "./api/runtime"
+
 
 
 const status = ref({})
@@ -289,6 +312,7 @@ const botBindings = ref([])
 const cloneTasks = ref([])
 const cloneTaskLogs = ref([])
 const contentTemplates = ref([])
+const runtimeDashboard = ref({})
 const sendSettings = ref({
   global_send_delay: 3,
   send_retry_count: 2,
@@ -302,6 +326,7 @@ const pageLoading = reactive({
   cloneTasks: false,
   cloneLogs: false,
   templates: false,
+  runtime: false,
 })
 
 const MENU_STORAGE_KEY = "clonebot_active_menu"
@@ -311,7 +336,7 @@ const CLONE_TASK_LOG_LIMIT = 50
 const LISTENER_TASK_LOG_LIMIT = 50
 const SEND_LOG_REFRESH_INTERVAL = 5 * 60 * 1000
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "logs", "settings", "templates", "guide"]
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "logs", "settings", "templates", "guide"]
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -325,7 +350,7 @@ function getSavedActiveMenu() {
     return saved
   }
 
-  return "rules"
+  return "home"
 }
 
 const activeMenu = ref(getSavedActiveMenu())
@@ -337,6 +362,8 @@ const isListenerTaskEdit = ref(false)
 
 const accountDialogVisible = ref(false)
 const isAccountEdit = ref(false)
+const accountLoginDialogVisible = ref(false)
+const loginAccountTarget = ref(null)
 
 const botDialogVisible = ref(false)
 const isBotEdit = ref(false)
@@ -677,13 +704,28 @@ async function loadContentTemplates() {
 }
 
 
+async function loadRuntimeDashboard() {
+  pageLoading.runtime = true
+  try {
+    const res = await getRuntimeDashboard()
+    runtimeDashboard.value = res.data || {}
+  } finally {
+    pageLoading.runtime = false
+  }
+}
+
+
 async function handleMenuChange(menu) {
   if (!VALID_MENUS.includes(menu)) {
-    menu = "rules"
+    menu = "home"
   }
 
   activeMenu.value = menu
   window.localStorage.setItem(MENU_STORAGE_KEY, menu)
+
+  if (menu === "home") {
+    await loadRuntimeDashboard()
+  }
 
   if (menu === "rules") {
     await loadStatus()
@@ -1369,6 +1411,18 @@ function openAddAccountDialog() {
 }
 
 
+function openAccountLoginDialog() {
+  loginAccountTarget.value = null
+  accountLoginDialogVisible.value = true
+}
+
+
+function openAccountReloginDialog(row) {
+  loginAccountTarget.value = { ...row }
+  accountLoginDialogVisible.value = true
+}
+
+
 function openEditAccountDialog(row) {
   Object.assign(currentAccount, row)
   isAccountEdit.value = true
@@ -1408,6 +1462,11 @@ async function submitAccount(formData) {
   }
 
   accountDialogVisible.value = false
+  await loadAccounts()
+}
+
+
+async function handleAccountLoginSuccess() {
   await loadAccounts()
 }
 

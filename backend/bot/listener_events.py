@@ -1,10 +1,17 @@
 from db.database import SessionLocal
 from db.models import ListenerSendEvent
 from bot.logger import logger
+from bot.notifier import send_control_alert
 from utils.time_utils import format_app_time
 
 
 MAX_EVENTS = 200
+LISTENER_CONTROL_NOTIFY_SKIP_TYPES = {
+    "success",
+    "received",
+    "prepared",
+    "sending",
+}
 
 
 def event_to_dict(event):
@@ -70,6 +77,75 @@ def apply_event_fields(event, *, task_id, task_name, target, source_message_id,
 
 def normalize_grouped_id(grouped_id):
     return str(grouped_id) if grouped_id else None
+
+
+async def notify_listener_event(event):
+    event_type = (event.get("event_type") or event.get("status") or "").strip()
+
+    if event_type in LISTENER_CONTROL_NOTIFY_SKIP_TYPES:
+        return False
+
+    detail_lines = [
+        f"任务：{event.get('task_name') or '-'}",
+        f"源频道：{event.get('source_channel') or '-'}",
+        f"目标频道：{event.get('target') or '-'}",
+        f"源消息ID：{event.get('source_message_id') or '-'}",
+    ]
+
+    if event.get("grouped_id"):
+        detail_lines.append(f"相册ID：{event.get('grouped_id')}")
+
+    if event.get("source_message_url"):
+        detail_lines.append(f"源链接：{event.get('source_message_url')}")
+
+    if event.get("target_message_url"):
+        detail_lines.append(f"目标链接：{event.get('target_message_url')}")
+
+    if event.get("message"):
+        detail_lines.extend(["", f"说明：{event.get('message')}"])
+
+    if event.get("error"):
+        detail_lines.extend(["", f"错误：{event.get('error')}"])
+
+    level = "error" if event_type in {"failed", "error", "account_error"} else "warning"
+
+    return await send_control_alert(
+        title=f"监听记录：{event_type or '非成功'}",
+        message="\n".join(detail_lines),
+        level=level,
+        context={
+            "alert_key": (
+                f"listener:{event_type}:"
+                f"{event.get('task_id')}:"
+                f"{event.get('target')}:"
+                f"{event.get('source_message_id')}:"
+                f"{event.get('grouped_id')}:"
+                f"{event.get('time')}"
+            ),
+            "module": "listener",
+            "task_id": event.get("task_id"),
+            "channel": event.get("source_channel"),
+            "target": event.get("target"),
+            "bot_name": event.get("bot_name"),
+        },
+    )
+
+
+def notify_listener_event_background(event):
+    try:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(notify_listener_event(event))
+    except RuntimeError:
+        try:
+            import asyncio
+
+            asyncio.run(notify_listener_event(event))
+        except Exception as e:
+            logger.warning(f"监听记录云台通知失败，已忽略 | {e}")
+    except Exception as e:
+        logger.warning(f"监听记录云台通知失败，已忽略 | {e}")
 
 
 def listener_event_content_key(event):
@@ -189,12 +265,14 @@ def add_listener_send_event(
         prune_listener_send_events(db)
         db.commit()
         db.refresh(event)
-        return event_to_dict(event)
+        payload = event_to_dict(event)
+        notify_listener_event_background(payload)
+        return payload
 
     except Exception as e:
         db.rollback()
         logger.warning(f"写入监听发送缓存失败，已忽略 | {e}")
-        return {
+        payload = {
             "time": format_app_time(),
             "task_id": task_id,
             "task_name": task_name,
@@ -218,6 +296,8 @@ def add_listener_send_event(
             "bot_id": bot_id,
             "bot_name": bot_name,
         }
+        notify_listener_event_background(payload)
+        return payload
 
     finally:
         db.close()
