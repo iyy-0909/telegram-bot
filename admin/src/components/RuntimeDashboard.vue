@@ -211,6 +211,7 @@ const recent = computed(() => queue.value.recent || [])
 const nowTick = ref(Date.now())
 let tickTimer = null
 let currentPollingTimer = null
+let pollingItemId = ""
 
 function sourceTypeLabel(value) {
   const map = {
@@ -254,6 +255,7 @@ function stopCurrentPolling() {
     window.clearInterval(currentPollingTimer)
     currentPollingTimer = null
   }
+  pollingItemId = ""
 }
 
 function startCurrentPolling() {
@@ -261,21 +263,24 @@ function startCurrentPolling() {
     return
   }
 
+  pollingItemId = current.value?.id || ""
   currentPollingTimer = window.setInterval(() => {
     emit("refresh")
-  }, 3000)
+  }, 10000)
 }
 
 onMounted(() => {
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
 
+    if (pollingItemId && current.value?.id !== pollingItemId) {
+      stopCurrentPolling()
+    }
+
     if (!current.value) {
       stopCurrentPolling()
       return
     }
-
-    startCurrentPolling()
 
     if (current.value.estimated_send_remaining_seconds == null) {
       return
@@ -289,7 +294,7 @@ onMounted(() => {
 
     if (previous > 0 && current.value.estimated_send_remaining_seconds === 0) {
       emit("refresh")
-      return
+      startCurrentPolling()
     }
   }, 1000)
 })
