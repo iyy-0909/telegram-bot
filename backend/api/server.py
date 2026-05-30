@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -32,6 +32,7 @@ from bot.support_bot import (
     get_token_for_support_bot,
     test_support_bot_config,
 )
+from bot.support_media import save_uploaded_media
 
 from db.crud import (
     get_all_rules,
@@ -118,6 +119,14 @@ from db.crud_my_channels import (
     my_channel_to_dict,
     set_my_channel_check_result,
     update_my_channel,
+)
+from db.crud_clone_channels import (
+    clone_channel_to_dict,
+    create_clone_channel,
+    delete_clone_channel,
+    get_clone_channel,
+    list_clone_channels,
+    update_clone_channel,
 )
 
 from db.crud_templates import (
@@ -524,6 +533,22 @@ class MyChannelUpdate(BaseModel):
     bot_id: Optional[int] = None
     status: Optional[str] = None
     is_default: Optional[bool] = None
+    remark: Optional[str] = None
+
+
+class CloneChannelCreate(BaseModel):
+    title: str = ""
+    channel_link: str
+    group_name: str = ""
+    channel_type: str = ""
+    remark: str = ""
+
+
+class CloneChannelUpdate(BaseModel):
+    title: Optional[str] = None
+    channel_link: Optional[str] = None
+    group_name: Optional[str] = None
+    channel_type: Optional[str] = None
     remark: Optional[str] = None
 
 
@@ -1002,6 +1027,79 @@ def api_delete_my_channel(channel_id: int):
     }
 
 
+@app.get("/api/clone-channels")
+def api_get_clone_channels(
+    keyword: str = "",
+    group_name: str = "",
+    channel_type: str = "",
+):
+    return {
+        "items": [
+            clone_channel_to_dict(channel)
+            for channel in list_clone_channels(
+                keyword=keyword,
+                group_name=group_name,
+                channel_type=channel_type,
+            )
+        ],
+    }
+
+
+@app.get("/api/clone-channels/{channel_id}")
+def api_get_clone_channel(channel_id: int):
+    channel = get_clone_channel(channel_id)
+
+    if not channel:
+        return {
+            "ok": False,
+            "message": "channel not found",
+        }
+
+    return {
+        "ok": True,
+        "item": clone_channel_to_dict(channel),
+    }
+
+
+@app.post("/api/clone-channels")
+def api_create_clone_channel(data: CloneChannelCreate):
+    try:
+        channel = create_clone_channel(data.dict())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return clone_channel_to_dict(channel)
+
+
+@app.put("/api/clone-channels/{channel_id}")
+def api_update_clone_channel(channel_id: int, data: CloneChannelUpdate):
+    try:
+        channel = update_clone_channel(
+            channel_id,
+            data.dict(exclude_unset=True),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not channel:
+        return {
+            "ok": False,
+            "message": "channel not found",
+        }
+
+    return clone_channel_to_dict(channel)
+
+
+@app.delete("/api/clone-channels/{channel_id}")
+def api_delete_clone_channel(channel_id: int):
+    ok = delete_clone_channel(channel_id)
+
+    return {
+        "ok": ok,
+        "message": "ok" if ok else "channel not found",
+    }
+
+
 def parse_optional_datetime(value):
     text = (value or "").strip()
     if not text:
@@ -1383,6 +1481,27 @@ async def api_test_support_bot_item(support_bot_id: int):
             "mode": "polling",
             "message": str(e),
         }
+
+
+@app.post("/api/support/media/upload")
+async def api_upload_support_media(file: UploadFile = File(...)):
+    content = await file.read()
+    max_size = 50 * 1024 * 1024
+
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件不能为空")
+
+    if len(content) > max_size:
+        raise HTTPException(status_code=400, detail="上传文件不能超过 50MB")
+
+    result = save_uploaded_media(file.filename or "welcome-media", content)
+    return {
+        "ok": True,
+        "media_ref": result["media_ref"],
+        "filename": result["filename"],
+        "size": result["size"],
+        "content_type": file.content_type or "",
+    }
 
 
 @app.post("/api/support/bot/test")

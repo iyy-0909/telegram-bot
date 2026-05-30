@@ -353,6 +353,21 @@ class MyChannel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class CloneChannel(Base):
+    """Managed source channel for clone/listener tasks."""
+
+    __tablename__ = "clone_channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, default="")
+    channel_link = Column(String, nullable=False, index=True)
+    group_name = Column(String, default="", index=True)
+    channel_type = Column(String, default="")
+    remark = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SystemSetting(Base):
     """系统级配置"""
 

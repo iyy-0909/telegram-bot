@@ -85,6 +85,16 @@ export function testSupportBotItem(id) {
   return axios.post(`${API}/api/support/bots/${id}/test`)
 }
 
+export function uploadSupportMedia(file) {
+  const formData = new FormData()
+  formData.append("file", file)
+  return axios.post(`${API}/api/support/media/upload`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  })
+}
+
 export function testSupportBot() {
   return axios.post(`${API}/api/support/bot/test`)
 }

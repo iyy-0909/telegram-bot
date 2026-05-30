@@ -5,6 +5,7 @@ from datetime import datetime
 
 from bot.bot_sender import BotApiError, bot_get_me, bot_send_text, request_post
 from bot.logger import logger
+from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
 from db.crud_bot import get_bot
 from db.crud_support import (
     add_support_message,
@@ -559,13 +560,34 @@ async def send_telegram_by_type(
         file_id = payload.get("file_id") or ""
         if not file_id:
             raise BotApiError(f"{message_type} missing file_id")
-        data[field_name] = file_id
+        files = None
+        if is_uploaded_media_ref(file_id):
+            media_path = resolve_uploaded_media_path(file_id)
+            if not media_path or not media_path.exists():
+                raise BotApiError(f"{message_type} uploaded media missing")
+            upload_file = media_path.open("rb")
+            files = {
+                field_name: (media_path.name, upload_file),
+            }
+        else:
+            data[field_name] = file_id
         caption = payload.get("caption") or ""
         if caption and message_type in CAPTION_TYPES:
             data["caption"] = caption[:1024]
 
     try:
-        return await asyncio.to_thread(request_post, token, method, data, None)
+        try:
+            return await asyncio.to_thread(
+                request_post,
+                token,
+                method,
+                data,
+                files if message_type != "text" else None,
+            )
+        finally:
+            if message_type != "text" and files:
+                for file_item in files.values():
+                    file_item[1].close()
     except Exception as e:
         error_data = parse_bot_api_error(e)
         if error_data.get("error_code") == 429 and retry_429:

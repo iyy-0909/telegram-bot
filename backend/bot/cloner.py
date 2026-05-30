@@ -1,6 +1,7 @@
 ﻿import asyncio
 import json
 from bot.send_queue import send_queue, wait_or_stop
+from bot.runtime_queue import runtime_queue_state
 from accounts.manager import account_manager
 from db.crud_clone import update_clone_progress, update_clone_task
 from db.crud_bot import normalize_target_channel
@@ -92,6 +93,46 @@ def should_stop(stop_event):
 def mark_stopped(task_id):
     update_clone_task(task_id, {"status": "stopped"})
     logger.warning(f"克隆任务已停止 | task_id={task_id}")
+
+
+def build_clone_limit_waiting_meta(task, targets, next_item, wait_seconds):
+    messages = next_item.get("messages") or []
+    source_message_id = None
+
+    if messages:
+        source_message_id = max(message.id for message in messages)
+
+    return {
+        "source_type": "clone",
+        "task_id": task.id,
+        "task_name": task.name,
+        "source_channel": task.source_channel,
+        "target_channel": ", ".join(targets),
+        "source_message_id": source_message_id,
+        "grouped_id": next_item.get("grouped_id"),
+        "message_type": next_item.get("type") or "",
+        "reason": "克隆任务限流等待中",
+        "estimated_send_remaining_seconds": wait_seconds,
+    }
+
+
+async def wait_clone_limit_for_next_item(task, targets, next_item, wait_seconds, stop_event=None):
+    if not next_item or wait_seconds <= 0:
+        return False
+
+    queue_item_id = runtime_queue_state.add_waiting(
+        build_clone_limit_waiting_meta(
+            task,
+            targets,
+            next_item,
+            wait_seconds,
+        )
+    )
+
+    try:
+        return await wait_or_stop(wait_seconds, stop_event)
+    finally:
+        runtime_queue_state.remove_waiting(queue_item_id)
 
 
 async def enter_listener_after_clone(task):
@@ -555,7 +596,7 @@ async def clone_task(task, stop_event=None):
             f"原始消息={len(messages)} | 内容组={len(groups)}"
         )
 
-        for item in groups:
+        for index, item in enumerate(groups):
             if should_stop(stop_event):
                 logger.warning(f"克隆停止 | task_id={task.id}")
                 mark_stopped(task.id)
@@ -588,6 +629,7 @@ async def clone_task(task, stop_event=None):
                 return
 
             content_delay = max(int(latest_task.single_delay or 1), 1)
+            next_item = groups[index + 1] if index + 1 < len(groups) else None
 
             try:
                 # =========================
@@ -653,7 +695,13 @@ async def clone_task(task, stop_event=None):
                             f"message_id={message_id}"
                         )
 
-                    if await wait_or_stop(content_delay, stop_event):
+                    if await wait_clone_limit_for_next_item(
+                        latest_task,
+                        targets,
+                        next_item,
+                        content_delay,
+                        stop_event,
+                    ):
                         mark_stopped(task.id)
                         return
 
@@ -728,7 +776,13 @@ async def clone_task(task, stop_event=None):
                             f"last_id={max_id}"
                         )
 
-                    if await wait_or_stop(content_delay, stop_event):
+                    if await wait_clone_limit_for_next_item(
+                        latest_task,
+                        targets,
+                        next_item,
+                        content_delay,
+                        stop_event,
+                    ):
                         mark_stopped(task.id)
                         return
 

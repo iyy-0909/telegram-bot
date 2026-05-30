@@ -10,6 +10,7 @@ from db.database import engine
 from db.models import Account
 from db.models import BotAccount
 from db.models import ChannelRule
+from db.models import CloneChannel
 from db.models import CloneSendEvent
 from db.models import CloneTask
 from db.models import ContentTemplate
@@ -35,6 +36,7 @@ _REGISTERED_MODELS = (
     Account,
     BotAccount,
     ChannelRule,
+    CloneChannel,
     CloneSendEvent,
     CloneTask,
     ContentTemplate,

@@ -116,6 +116,11 @@
         empty-text="暂无排队任务。"
       >
         <el-table-column prop="queued_at" label="排队时间" min-width="150" show-overflow-tooltip />
+        <el-table-column label="预计发送时间" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.estimated_send_at || "-" }}
+          </template>
+        </el-table-column>
         <el-table-column label="来源" width="90">
           <template #default="{ row }">
             <el-tag size="small">{{ sourceTypeLabel(row.source_type) }}</el-tag>
@@ -157,6 +162,7 @@
         :data="recent"
         v-loading="loading"
         border
+        height="360"
         empty-text="暂无最近发送记录。"
       >
         <el-table-column prop="finished_at" label="完成时间" min-width="150" show-overflow-tooltip />

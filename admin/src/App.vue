@@ -334,7 +334,8 @@ const CLONE_TASK_LOG_STORAGE_KEY = "clonebot_clone_task_logs"
 const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
 const CLONE_TASK_LOG_LIMIT = 50
 const LISTENER_TASK_LOG_LIMIT = 50
-const SEND_LOG_REFRESH_INTERVAL = 5 * 60 * 1000
+const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
+const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
 const SECONDS_PER_MINUTE = 60
 const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "logs", "settings", "templates", "guide"]
 
@@ -2106,7 +2107,7 @@ onMounted(async () => {
     } catch (e) {
       console.error("自动刷新克隆任务失败", e)
     }
-  }, 5 * 60 * 1000)
+  }, AUTO_REFRESH_INTERVAL)
 
   cloneLogRefreshTimer = setInterval(async () => {
     try {

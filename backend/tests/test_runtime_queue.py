@@ -55,6 +55,41 @@ class RuntimeQueueStateTest(unittest.TestCase):
         self.assertEqual(snapshot["recent"][0]["status"], "cancelled")
         self.assertEqual(snapshot["recent"][0]["reason"], "发送任务已退出，运行态兜底清理")
 
+    def test_waiting_item_can_show_estimated_send_time_and_be_removed(self):
+        state = RuntimeQueueState(max_recent=5)
+        item_id = state.add_waiting({
+            "source_type": "clone",
+            "task_id": 61,
+            "task_name": "上海源频道历史克隆",
+            "source_channel": "@source_sh",
+            "target_channel": "@target_sh",
+            "source_message_id": 1200,
+            "message_type": "single",
+            "reason": "克隆任务限流等待中",
+            "estimated_send_remaining_seconds": 30,
+        })
+
+        snapshot = state.snapshot()
+        waiting_item = snapshot["waiting"][0]
+        self.assertEqual(waiting_item["id"], item_id)
+        self.assertEqual(waiting_item["reason"], "克隆任务限流等待中")
+        self.assertTrue(waiting_item["estimated_send_at"])
+        self.assertLessEqual(
+            waiting_item["estimated_send_remaining_seconds"],
+            30,
+        )
+        self.assertGreaterEqual(
+            waiting_item["estimated_send_remaining_seconds"],
+            0,
+        )
+
+        removed = state.remove_waiting(item_id)
+        self.assertEqual(removed["id"], item_id)
+
+        final_snapshot = state.snapshot()
+        self.assertEqual(final_snapshot["stats"]["waiting_count"], 0)
+        self.assertEqual(final_snapshot["stats"]["recent_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

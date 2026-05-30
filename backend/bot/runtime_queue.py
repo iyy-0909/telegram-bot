@@ -45,6 +45,7 @@ class RuntimeQueueState:
         item.update(meta or {})
         item["id"] = item_id
         item["status"] = "waiting"
+        self._apply_estimated_send(item)
         self.waiting[item_id] = item
         return item_id
 
@@ -106,19 +107,37 @@ class RuntimeQueueState:
         self.recent.appendleft(item)
         return item
 
+    def remove_waiting(self, item_id):
+        item = self.waiting.pop(item_id, None)
+        if item is None:
+            return None
+
+        item.pop("_queued_monotonic", None)
+        item.pop("_estimated_send_monotonic", None)
+        return item
+
     def update_current(self, **fields):
         if not self.current:
             return None
         if "estimated_send_remaining_seconds" in fields:
             seconds = fields.get("estimated_send_remaining_seconds")
-            self.current["_estimated_send_monotonic"] = (
-                time.monotonic() + max(float(seconds or 0), 0)
-                if seconds is not None
-                else None
-            )
-            self.current["estimated_send_at"] = future_text(seconds) if seconds is not None else ""
+            self._apply_estimated_send(self.current, seconds)
         self.current.update(fields)
         return self.current
+
+    def _apply_estimated_send(self, item, seconds=None):
+        if seconds is None:
+            seconds = item.get("estimated_send_remaining_seconds")
+
+        if seconds is None:
+            item["_estimated_send_monotonic"] = None
+            item["estimated_send_at"] = item.get("estimated_send_at") or ""
+            return
+
+        seconds = max(float(seconds or 0), 0)
+        item["_estimated_send_monotonic"] = time.monotonic() + seconds
+        item["estimated_send_at"] = future_text(seconds)
+        item["estimated_send_remaining_seconds"] = seconds
 
     def snapshot(self):
         waiting = list(self.waiting.values())

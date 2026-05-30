@@ -153,11 +153,30 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="欢迎媒体 file_id">
-          <el-input
-            v-model="form.welcome_media_file_id"
-            placeholder="可为空。填写后 /start 时优先发送媒体，欢迎文本作为 caption"
-          />
+        <el-form-item label="欢迎媒体">
+          <div class="upload-field">
+            <div class="upload-actions">
+              <el-upload
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.7z,.txt"
+                :show-file-list="false"
+                :http-request="uploadWelcomeMedia"
+                :before-upload="beforeWelcomeMediaUpload"
+              >
+                <el-button :loading="uploadingMedia">
+                  上传媒体
+                </el-button>
+              </el-upload>
+              <el-button
+                v-if="form.welcome_media_file_id"
+                @click="clearWelcomeMedia"
+              >
+                清空媒体
+              </el-button>
+            </div>
+            <div class="field-tip">
+              上传后 /start 时优先发送媒体，欢迎文本作为 caption。已配置：{{ welcomeMediaLabel }}
+            </div>
+          </div>
         </el-form-item>
 
         <el-divider content-position="left">非营业时间</el-divider>
@@ -202,6 +221,7 @@ import {
   getSupportBots,
   testSupportBotItem,
   updateSupportBot,
+  uploadSupportMedia,
 } from "../api/support"
 import BotSelect from "./BotSelect.vue"
 import ErrorText from "./ErrorText.vue"
@@ -218,12 +238,18 @@ const items = ref([])
 const dialogVisible = ref(false)
 const loading = ref(false)
 const saving = ref(false)
+const uploadingMedia = ref(false)
 const form = reactive(emptyForm())
 const stats = computed(() => ({
   total: items.value.length,
   polling: items.value.filter((item) => item.polling_enabled).length,
   error: items.value.filter((item) => item.status === "error").length,
 }))
+const welcomeMediaLabel = computed(() => {
+  const value = form.welcome_media_file_id || ""
+  if (!value) return "未上传"
+  return value.replace("support_upload:", "")
+})
 
 onMounted(load)
 
@@ -314,6 +340,50 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+function beforeWelcomeMediaUpload(file) {
+  const maxSize = 50 * 1024 * 1024
+  if (file.size > maxSize) {
+    ElMessage.warning("欢迎媒体不能超过 50MB")
+    return false
+  }
+  form.welcome_media_type = inferWelcomeMediaType(file)
+  return true
+}
+
+function inferWelcomeMediaType(file) {
+  const type = file.type || ""
+  const name = file.name || ""
+  if (type.startsWith("image/")) {
+    return name.toLowerCase().endsWith(".gif") ? "animation" : "photo"
+  }
+  if (type.startsWith("video/")) return "video"
+  if (type.startsWith("audio/")) return "audio"
+  return "document"
+}
+
+async function uploadWelcomeMedia(options) {
+  uploadingMedia.value = true
+  try {
+    const res = await uploadSupportMedia(options.file)
+    form.welcome_media_file_id = res.data.media_ref || ""
+    ElMessage.success("欢迎媒体已上传")
+    options.onSuccess?.(res.data)
+  } catch (error) {
+    const message = error?.response?.data?.detail
+      || error?.response?.data?.message
+      || error?.message
+      || "上传欢迎媒体失败"
+    ElMessage.error(message)
+    options.onError?.(error)
+  } finally {
+    uploadingMedia.value = false
+  }
+}
+
+function clearWelcomeMedia() {
+  form.welcome_media_file_id = ""
 }
 
 async function testBot(row) {
@@ -460,6 +530,18 @@ function botLabel(row) {
   color: #909399;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.upload-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .row {
