@@ -3,7 +3,7 @@
     :model-value="visible"
     @update:model-value="$emit('update:visible', $event)"
     :title="isEdit ? '编辑内容模板规则' : '添加内容模板规则'"
-    width="760px"
+    width="780px"
   >
     <el-form label-width="110px">
       <el-form-item label="规则类型">
@@ -16,7 +16,10 @@
       </el-form-item>
 
       <el-form-item label="规则名称">
-        <el-input v-model="localForm.name" placeholder="例如 A规则 / 上海footer / 通用过滤词" />
+        <el-input
+          v-model="localForm.name"
+          placeholder="例如 A规则 / 上海footer / 通用过滤词"
+        />
       </el-form-item>
 
       <el-form-item label="启用">
@@ -48,7 +51,47 @@
             </div>
           </div>
 
+          <div v-if="showRichToolbar" class="rich-toolbar">
+            <el-button-group>
+              <el-tooltip
+                v-for="action in primaryFormatActions"
+                :key="action.key"
+                :content="action.label"
+                placement="top"
+              >
+                <el-button
+                  size="small"
+                  @click="applyFormat(index, action)"
+                >
+                  {{ action.shortLabel }}
+                </el-button>
+              </el-tooltip>
+            </el-button-group>
+
+            <el-dropdown trigger="click" @command="(key) => applyFormatByKey(index, key)">
+              <el-button size="small">
+                更多格式
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="action in moreFormatActions"
+                    :key="action.key"
+                    :command="action.key"
+                  >
+                    {{ action.label }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+
+            <el-button size="small" @click="clearHtmlTags(index)">
+              清除格式
+            </el-button>
+          </div>
+
           <el-input
+            :ref="(el) => setTextareaRef(el, index)"
             v-model="item.content"
             type="textarea"
             :rows="localForm.type === 'filter' ? 5 : 4"
@@ -70,7 +113,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from "vue"
+import { computed, nextTick, reactive, watch } from "vue"
 
 const props = defineProps({
   visible: Boolean,
@@ -82,6 +125,8 @@ const emit = defineEmits(["update:visible", "submit"])
 
 let localKeySeed = 1
 
+const textareaRefs = reactive({})
+
 const localForm = reactive({
   id: null,
   name: "",
@@ -90,6 +135,85 @@ const localForm = reactive({
   items: [],
 })
 
+const primaryFormatActions = [
+  {
+    key: "bold",
+    label: "加粗",
+    shortLabel: "B",
+    prefix: "<b>",
+    suffix: "</b>",
+    sample: "加粗文字",
+  },
+  {
+    key: "italic",
+    label: "斜体",
+    shortLabel: "I",
+    prefix: "<i>",
+    suffix: "</i>",
+    sample: "斜体文字",
+  },
+  {
+    key: "underline",
+    label: "下划线",
+    shortLabel: "U",
+    prefix: "<u>",
+    suffix: "</u>",
+    sample: "下划线文字",
+  },
+  {
+    key: "strike",
+    label: "删除线",
+    shortLabel: "S",
+    prefix: "<s>",
+    suffix: "</s>",
+    sample: "删除线文字",
+  },
+  {
+    key: "code",
+    label: "行内代码",
+    shortLabel: "code",
+    prefix: "<code>",
+    suffix: "</code>",
+    sample: "代码",
+  },
+]
+
+const moreFormatActions = [
+  {
+    key: "spoiler",
+    label: "隐藏剧透",
+    prefix: "<tg-spoiler>",
+    suffix: "</tg-spoiler>",
+    sample: "隐藏文字",
+  },
+  {
+    key: "link",
+    label: "链接模板",
+    prefix: '<a href="https://t.me/username">',
+    suffix: "</a>",
+    sample: "点击联系",
+  },
+  {
+    key: "pre",
+    label: "预格式文本",
+    prefix: "<pre>",
+    suffix: "</pre>",
+    sample: "预格式文本",
+  },
+  {
+    key: "quote",
+    label: "引用",
+    prefix: "<blockquote>",
+    suffix: "</blockquote>",
+    sample: "引用内容",
+  },
+]
+
+const allFormatActions = [
+  ...primaryFormatActions,
+  ...moreFormatActions,
+]
+
 const contentTitle = computed(() => (
   localForm.type === "filter" ? "过滤关键词" : "规则内容"
 ))
@@ -97,8 +221,10 @@ const contentTitle = computed(() => (
 const contentPlaceholder = computed(() => (
   localForm.type === "filter"
     ? "每行填写一个过滤关键词。任务选择该规则后，任意关键词命中都会跳过整条内容。"
-    : "填写这条模板内容"
+    : "填写这条模板内容，可使用上方富文本格式按钮插入 Telegram HTML 标签。"
 ))
+
+const showRichToolbar = computed(() => localForm.type !== "filter")
 
 watch(
   () => props.form,
@@ -132,10 +258,68 @@ function addItem() {
 
 function removeItem(index) {
   localForm.items.splice(index, 1)
+  delete textareaRefs[index]
 
   if (!localForm.items.length) {
     addItem()
   }
+}
+
+function setTextareaRef(el, index) {
+  if (el) {
+    textareaRefs[index] = el
+  }
+}
+
+function getTextarea(index) {
+  const input = textareaRefs[index]
+  return input?.textarea || input?.$refs?.textarea || null
+}
+
+function applyFormatByKey(index, key) {
+  const action = allFormatActions.find((item) => item.key === key)
+
+  if (action) {
+    applyFormat(index, action)
+  }
+}
+
+async function applyFormat(index, action) {
+  const item = localForm.items[index]
+
+  if (!item) return
+
+  const textarea = getTextarea(index)
+  const value = item.content || ""
+  const start = textarea?.selectionStart ?? value.length
+  const end = textarea?.selectionEnd ?? value.length
+  const selected = value.slice(start, end)
+  const innerText = selected || action.sample
+  const wrapped = `${action.prefix}${innerText}${action.suffix}`
+
+  item.content = `${value.slice(0, start)}${wrapped}${value.slice(end)}`
+
+  await nextTick()
+
+  const nextTextarea = getTextarea(index)
+
+  if (nextTextarea) {
+    const selectStart = start + action.prefix.length
+    const selectEnd = selectStart + innerText.length
+    nextTextarea.focus()
+    nextTextarea.setSelectionRange(selectStart, selectEnd)
+  }
+}
+
+async function clearHtmlTags(index) {
+  const item = localForm.items[index]
+
+  if (!item) return
+
+  item.content = (item.content || "").replace(/<\/?[^>]+>/g, "")
+
+  await nextTick()
+  getTextarea(index)?.focus()
 }
 
 function submit() {
@@ -209,10 +393,21 @@ function toPositiveNumber(value, fallback) {
   color: #303133;
 }
 
-.content-actions {
+.content-actions,
+.rich-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.content-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.rich-toolbar {
+  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 
 .weight-input {

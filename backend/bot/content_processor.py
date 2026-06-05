@@ -1,5 +1,6 @@
 import json
 import re
+from html import escape, unescape
 
 from bot.logger import logger
 from db.crud_templates import get_filter_keywords, pick_template_content
@@ -10,6 +11,20 @@ CAPTION_SAFE_LIMIT = 1024
 URL_PATTERN = re.compile(
     r"(?i)\b(?:https?://|www\.|t\.me/|telegram\.me/)[^\s]+"
 )
+ALLOWED_TEMPLATE_TAG_RE = re.compile(
+    r"</?(?:b|strong|i|em|u|s|strike|del|code|pre|tg-spoiler|blockquote|a)(?:\s[^>]*)?>",
+    re.IGNORECASE,
+)
+SIMPLE_TEMPLATE_TAG_RE = re.compile(
+    r"</?(?:b|strong|i|em|u|s|strike|del|code|pre|tg-spoiler|blockquote)>",
+    re.IGNORECASE,
+)
+LINK_OPEN_TAG_RE = re.compile(
+    r"<a\s+href=(['\"])(?P<url>https?://[^'\"]+|tg://[^'\"]+|t\.me/[^'\"]+|telegram\.me/[^'\"]+)\1>",
+    re.IGNORECASE,
+)
+LINK_CLOSE_TAG_RE = re.compile(r"</a>", re.IGNORECASE)
+HTML_TAG_RE = re.compile(r"</?[^>]+>")
 
 
 def get_message_text(message):
@@ -261,6 +276,38 @@ def join_content_parts(parts) -> str:
     return compact_blank_lines("\n\n".join(clean_parts))
 
 
+def has_template_html(text: str) -> bool:
+    return bool(text and ALLOWED_TEMPLATE_TAG_RE.search(text))
+
+
+def sanitize_template_html(text: str) -> str:
+    text = text or ""
+    placeholders = []
+
+    def stash(tag: str) -> str:
+        key = f"__TG_TEMPLATE_HTML_TAG_{len(placeholders)}__"
+        placeholders.append((key, tag))
+        return key
+
+    def keep_link_open(match):
+        url = escape(match.group("url"), quote=True)
+        return stash(f'<a href="{url}">')
+
+    text = LINK_OPEN_TAG_RE.sub(keep_link_open, text)
+    text = LINK_CLOSE_TAG_RE.sub(lambda _match: stash("</a>"), text)
+    text = SIMPLE_TEMPLATE_TAG_RE.sub(lambda match: stash(match.group(0).lower()), text)
+    text = escape(text)
+
+    for key, tag in placeholders:
+        text = text.replace(escape(key), tag)
+
+    return text
+
+
+def strip_html_tags(text: str) -> str:
+    return unescape(HTML_TAG_RE.sub("", text or ""))
+
+
 def trim_to_telegram_limit(text: str, limit: int = CAPTION_SAFE_LIMIT) -> str:
     text = text or ""
 
@@ -295,6 +342,41 @@ def apply_content_templates(text: str, task) -> str:
     except Exception as e:
         logger.warning(f"内容模板拼接失败，保留原文 | {e}")
         return text or ""
+
+
+def apply_content_templates_with_format(text: str, task):
+    try:
+        head = get_template_part(task, "head")
+        body = get_template_part(task, "body")
+        footer = get_template_part(task, "footer")
+        template_parts = [head, body, footer]
+
+        if any(has_template_html(part) for part in template_parts):
+            html_text = join_content_parts([
+                sanitize_template_html(head),
+                escape(text or ""),
+                sanitize_template_html(body),
+                sanitize_template_html(footer),
+            ])
+            html_text = trim_to_telegram_limit(html_text)
+
+            return {
+                "text": html_text,
+                "plain_text": strip_html_tags(html_text),
+                "parse_mode": "HTML",
+                "html_text": html_text,
+                "format_level": "template_html",
+            }
+
+        return {
+            "text": join_content_parts([head, text, body, footer]),
+        }
+
+    except Exception as e:
+        logger.warning(f"内容模板拼接失败，保留原文 | {e}")
+        return {
+            "text": text or "",
+        }
 
 
 def normalize_collected_text(text: str) -> str:
@@ -361,12 +443,20 @@ def process_content(raw_text: str, task):
             "reason": "empty_after_process",
         }
 
-    text = apply_content_templates(text, task)
+    template_result = apply_content_templates_with_format(text, task)
+    text = template_result.get("text") or ""
     # Old footer function is intentionally disabled.
     # text = append_footer(text, legacy_footer)
-    text = trim_to_telegram_limit(text)
+    if not template_result.get("parse_mode"):
+        text = trim_to_telegram_limit(text)
 
-    return {
+    result = {
         "blocked": False,
         "text": text,
     }
+
+    for key in ("plain_text", "parse_mode", "html_text", "format_level"):
+        if template_result.get(key):
+            result[key] = template_result.get(key)
+
+    return result

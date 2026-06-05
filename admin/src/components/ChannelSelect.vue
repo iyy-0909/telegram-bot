@@ -49,7 +49,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: "璇烽€夋嫨棰戦亾",
+    default: "请选择频道",
   },
   includeDisabled: {
     type: Boolean,
@@ -88,7 +88,7 @@ const groupedChannels = computed(() => {
   })
 
   for (const channel of filtered) {
-    const groupName = channel.group_name || "榛樿鍒嗙粍"
+    const groupName = channel.group_name || "默认分组"
 
     if (!groups.has(groupName)) {
       groups.set(groupName, [])
@@ -123,9 +123,9 @@ function channelValue(channel) {
 }
 
 function channelLabel(channel) {
-  const title = channel.title || `棰戦亾 ${channel.id}`
+  const title = channel.title || `频道 ${channel.id}`
   const value = channel.username || channel.chat_id || ""
-  const group = channel.group_name || "榛樿鍒嗙粍"
+  const group = channel.group_name || "默认分组"
   const status = channel.status || "unknown"
   return [title, value, group, status].filter(Boolean).join(" / ")
 }

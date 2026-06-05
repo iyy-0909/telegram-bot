@@ -447,13 +447,13 @@ def is_outside_business_hours(settings):
 
 def support_group_message_text(customer, conversation, text, message_type):
     username = f"@{customer.username}" if customer.username else "-"
-    preview = text or f"[{message_type}]"
+    customer_name = customer_display_name(customer)
+    preview = text or message_type_label(message_type)
     return (
         "【新客户消息】\n\n"
-        f"客户：{username}\n"
-        f"用户ID：{customer.telegram_user_id}\n"
-        f"来源：{customer.source or '-'}\n"
-        f"会话ID：{conversation.id}\n\n"
+        f"客户：{customer_name}\n"
+        f"用户名：{username}\n"
+        f"用户ID：{customer.telegram_user_id}\n\n"
         "内容：\n"
         f"{preview[:1500]}\n\n"
         "客服在当前话题内直接发送消息，即可回复该客户。"
@@ -461,18 +461,50 @@ def support_group_message_text(customer, conversation, text, message_type):
 
 
 def support_group_caption(customer, conversation, payload):
-    content = payload.get("caption") or payload.get("text") or f"[{payload.get('message_type')}]"
+    message_type = payload.get("message_type") or "other"
+    content = payload.get("caption") or payload.get("text") or message_type_label(message_type)
     return support_group_message_text(
         customer,
         conversation,
         content,
-        payload.get("message_type") or "other",
+        message_type,
     )
 
 
 def build_topic_name(customer, conversation):
-    identity = f"@{customer.username}" if customer.username else customer.telegram_user_id
-    return f"客户 {identity} / 会话ID {conversation.id}"
+    return f"客户 {customer_display_name(customer)}"
+
+
+def customer_display_name(customer):
+    name = " ".join([
+        item
+        for item in [customer.first_name or "", customer.last_name or ""]
+        if item
+    ]).strip()
+
+    if name:
+        return name
+
+    if customer.username:
+        return f"@{customer.username}"
+
+    return str(customer.telegram_user_id or "-")
+
+
+def message_type_label(message_type):
+    labels = {
+        "text": "[文本]",
+        "photo": "[图片]",
+        "video": "[视频]",
+        "document": "[文件]",
+        "voice": "[语音]",
+        "sticker": "[贴纸]",
+        "animation": "[动图]",
+        "audio": "[音频]",
+        "video_note": "[视频消息]",
+        "other": "[其他消息]",
+    }
+    return labels.get(message_type or "other", f"[{message_type}]")
 
 
 def support_user_label(user):

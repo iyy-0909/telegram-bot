@@ -134,9 +134,15 @@
           <ReplaceRulesEditor v-model="localForm.replace_words" />
         </el-form-item>
 
-        <div class="switch-row">
-          <span>删除旧联系方式</span>
-          <el-switch v-model="localForm.remove_contact_lines" />
+        <div class="switch-grid">
+          <div class="switch-row">
+            <span>删除旧联系方式</span>
+            <el-switch v-model="localForm.remove_contact_lines" />
+          </div>
+          <div class="switch-row">
+            <span>过滤二维码图片</span>
+            <el-switch v-model="localForm.filter_qr_code" />
+          </div>
         </div>
       </section>
 
@@ -210,6 +216,7 @@ const localForm = reactive({
   replace_words: "{}",
   footer: "",
   remove_contact_lines: true,
+  filter_qr_code: true,
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
@@ -255,6 +262,7 @@ watch(
       selected_body_template_id: normalizeTemplateId(val.selected_body_template_id),
       selected_footer_template_id: normalizeTemplateId(val.selected_footer_template_id),
       selected_filter_template_group_id: normalizeTemplateId(val.selected_filter_template_group_id),
+      filter_qr_code: val.filter_qr_code ?? true,
     })
     sourceChannels.value = parseChannelItems(val.source_channels || val.source_channel || "")
     targetChannels.value = parseChannelItems(val.target_channels || "[]")
@@ -280,6 +288,7 @@ function applyCopyTask(taskId) {
     replace_words: task.replace_words || "{}",
     footer: "",
     remove_contact_lines: task.remove_contact_lines ?? true,
+    filter_qr_code: task.filter_qr_code ?? true,
     use_random_head: task.use_random_head ?? false,
     use_random_body: task.use_random_body ?? false,
     use_random_footer: task.use_random_footer ?? false,
@@ -330,6 +339,7 @@ function submit() {
     blocked_keywords: normalizeJsonArrayString(localForm.blocked_keywords),
     footer: "",
     selected_filter_template_group_id: normalizeTemplateId(localForm.selected_filter_template_group_id),
+    filter_qr_code: localForm.filter_qr_code,
     selected_head_template_group_id: localForm.use_random_head
       ? normalizeTemplateId(localForm.selected_head_template_group_id)
       : null,
@@ -358,7 +368,7 @@ function enabledTemplateGroupsByType(type) {
 }
 
 function templateLabel(template) {
-  return template.name || `妯℃澘 ${template.id}`
+  return template.name || `模板 ${template.id}`
 }
 
 function parseChannelItems(value) {
@@ -555,6 +565,13 @@ function updateTemplateField({ key, value }) {
 .task-form :deep(.form-section > .el-form-item:last-child),
 .task-form :deep(.form-grid .el-form-item) {
   margin-bottom: 0;
+}
+
+.switch-grid {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .switch-row {

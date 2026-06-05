@@ -37,7 +37,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: "璇烽€夋嫨 Bot",
+    default: "请选择 Bot",
   },
   onlyEnabled: {
     type: Boolean,

@@ -8,14 +8,22 @@
           <div class="card-subtitle">频道历史克隆任务管理</div>
         </div>
 
-        <el-button type="primary" @click="emit('add')">
-          新增任务
-        </el-button>
+        <div class="header-actions">
+          <el-input
+            v-model="keyword"
+            clearable
+            class="task-search"
+            placeholder="搜索任务名 / 源频道 / 目标频道"
+          />
+          <el-button type="primary" @click="emit('add')">
+            新增任务
+          </el-button>
+        </div>
       </div>
     </template>
 
 <el-table
-      :data="tasks"
+      :data="filteredTasks"
       v-loading="loading"
       border
       stripe
@@ -152,13 +160,21 @@
             展示最近发送结果，成功、失败都会显示；建议需要时手动刷新
           </div>
         </div>
-        <el-button :loading="logsLoading" @click="emit('refresh-logs')">
-          刷新
-        </el-button>
+        <div class="header-actions">
+          <el-input
+            v-model="logKeyword"
+            clearable
+            class="task-search"
+            placeholder="搜索任务ID / 目标 / 消息 / 错误"
+          />
+          <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+            刷新
+          </el-button>
+        </div>
       </div>
     </template>
     <el-table
-        :data="taskLogs"
+        :data="filteredTaskLogs"
         v-loading="logsLoading"
         border
         stripe
@@ -214,10 +230,11 @@
 </template>
 
 <script setup>
+import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 
-defineProps({
+const props = defineProps({
   tasks: {
     type: Array,
     required: true,
@@ -234,6 +251,56 @@ defineProps({
     type: Boolean,
     default: false,
   },
+})
+
+const keyword = ref("")
+const logKeyword = ref("")
+
+const filteredTasks = computed(() => {
+  const query = keyword.value.trim().toLowerCase()
+
+  if (!query) return props.tasks
+
+  return props.tasks.filter((task) => {
+    const values = [
+      task.id,
+      task.name,
+      task.source_channel,
+      formatTargets(task.target_channels),
+      task.status,
+      task.last_message_id,
+      task.enable_listener ? "监听 开" : "监听 关",
+    ]
+
+    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+  })
+})
+
+const filteredTaskLogs = computed(() => {
+  const query = logKeyword.value.trim().toLowerCase()
+
+  if (!query) return props.taskLogs
+
+  return props.taskLogs.filter((row) => {
+    const values = [
+      row.time,
+      row.result,
+      row.status,
+      row.event_type,
+      row.task_id,
+      row.task_name,
+      row.target,
+      row.source_message_id,
+      row.grouped_id,
+      row.source_message_url,
+      row.target_message_url,
+      row.message,
+      row.error,
+      row.bot_name,
+    ]
+
+    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+  })
 })
 
 const emit = defineEmits([
@@ -289,6 +356,18 @@ const targetSummary = (value) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.task-search {
+  width: 260px;
 }
 
 .card-title {

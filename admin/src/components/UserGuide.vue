@@ -143,7 +143,7 @@
           </p>
         </el-collapse-item>
 
-        <el-collapse-item title="9. 发送缓存和运行日志" name="send-logs">
+        <el-collapse-item title="9. 发送缓存" name="send-logs">
           <p>
             克隆任务和监听任务页面下方的发送缓存用于快速查看最近执行结果。列表不会频繁自动刷新，
             默认更偏向手动刷新，避免线上页面一直请求接口。

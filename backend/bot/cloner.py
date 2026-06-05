@@ -25,6 +25,7 @@ from bot.sender import (
 from bot.bot_distributor import send_prepared_by_bot
 from bot.logger import logger
 from bot.notifier import notify_error, notify_task_event
+from bot.qr_filter import find_qr_code_files
 from db.crud_listener import sync_clone_task_to_listener_tasks
 from db.crud_my_channels import update_my_channel_clone_status
 
@@ -89,6 +90,25 @@ def get_album_text(messages):
 def should_stop(stop_event):
     """判断是否收到停止信号"""
     return bool(stop_event and stop_event.is_set())
+
+
+def build_processed_text_payload(result):
+    if not result.get("parse_mode"):
+        return result.get("text") or ""
+
+    return {
+        "text": result.get("text") or "",
+        "plain_text": result.get("plain_text") or result.get("text") or "",
+        "parse_mode": result.get("parse_mode"),
+        "html_text": result.get("html_text") or result.get("text") or "",
+        "format_level": result.get("format_level") or "template_html",
+        "kept_entities_count": 0,
+        "dropped_entities_count": 0,
+    }
+
+
+def should_filter_qr_code(task) -> bool:
+    return bool(getattr(task, "filter_qr_code", True))
 
 
 def mark_stopped(task_id):
@@ -233,8 +253,12 @@ async def send_to_targets(
     source_message_url = build_message_url(task.source_channel, source_message_id)
 
     try:
-        formatted_text = format_prepared_text(source_payload, text)
-        send_text = formatted_text.get("text") or ""
+        if isinstance(text, dict):
+            formatted_text = text
+            send_text = formatted_text.get("text") or ""
+        else:
+            formatted_text = format_prepared_text(source_payload, text)
+            send_text = formatted_text.get("text") or ""
 
         # Prepare media only once and reuse it for all targets.
         if message_type == "album":
@@ -249,7 +273,43 @@ async def send_to_targets(
             )
             return False
 
-        prepared["plain_text"] = formatted_text.get("plain_text") or text or ""
+        if should_filter_qr_code(task):
+            qr_files = find_qr_code_files(prepared.get("files") or [])
+
+            if qr_files:
+                logger.warning(
+                    f"二维码过滤，跳过发送 | task_id={task.id} | "
+                    f"source_message_id={source_message_id} | grouped_id={grouped_id} | "
+                    f"files={qr_files}"
+                )
+
+                mark_message_sent(
+                    task_id=task.id,
+                    source_message_id=source_message_id,
+                    grouped_id=grouped_id if message_type == "album" else None,
+                )
+
+                for target in targets:
+                    add_clone_send_event(
+                        task_id=task.id,
+                        target=target,
+                        source_message_id=source_message_id,
+                        grouped_id=grouped_id,
+                        source_message_url=source_message_url,
+                        target_message_url="",
+                        target_chat_id=target,
+                        message_type="caption" if prepared.get("files") else "text",
+                        text="",
+                        caption=prepared.get("text") or "",
+                        bot_id=getattr(task, "bot_id", None),
+                        event_type="filtered",
+                        status="filtered",
+                        message="二维码过滤，已跳过发送",
+                    )
+
+                return "filtered"
+
+        prepared["plain_text"] = formatted_text.get("plain_text") or send_text or ""
         prepared["format_level"] = formatted_text.get("format_level")
         prepared["kept_entities_count"] = formatted_text.get("kept_entities_count", 0)
         prepared["dropped_entities_count"] = formatted_text.get("dropped_entities_count", 0)
@@ -677,7 +737,7 @@ async def clone_task(task, stop_event=None):
                         None,
                         "single",
                         message,
-                        result.get("text") or "",
+                        build_processed_text_payload(result),
                         delay=latest_task.target_delay,
                         stop_event=stop_event,
                         skip_initial_delay=first_send_pending,
@@ -757,7 +817,7 @@ async def clone_task(task, stop_event=None):
                         grouped_id,
                         "album",
                         album_messages,
-                        result.get("text") or "",
+                        build_processed_text_payload(result),
                         delay=latest_task.target_delay,
                         stop_event=stop_event,
                         skip_initial_delay=first_send_pending,
@@ -795,12 +855,12 @@ async def clone_task(task, stop_event=None):
                 )
 
                 # await notify_error(
-                #     title="鍏嬮殕鍗曠粍澶辫触",
+                #     title="克隆单组失败",
                 #     detail=(
-                #         f"浠诲姟ID锛歿task.id}\n"
-                #         f"浠诲姟鍚嶏細{task.name}\n"
-                #         f"婧愰閬擄細{task.source_channel}\n"
-                #         f"閿欒锛歿e}"
+                #         f"任务ID：{task.id}\n"
+                #         f"任务名称：{task.name}\n"
+                #         f"源频道：{task.source_channel}\n"
+                #         f"错误：{e}"
                 #     ),
                 #     task_id=task.id,
                 # )

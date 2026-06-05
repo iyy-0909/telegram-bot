@@ -132,6 +132,62 @@ def main():
         "ALTER TABLE my_channels ADD COLUMN clone_status VARCHAR DEFAULT ''",
     )
 
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "delivery_status",
+        "ALTER TABLE my_channels ADD COLUMN delivery_status VARCHAR DEFAULT ''",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "collection_status",
+        "ALTER TABLE my_channels ADD COLUMN collection_status VARCHAR DEFAULT ''",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "member_count",
+        "ALTER TABLE my_channels ADD COLUMN member_count INTEGER",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "can_view_member_count",
+        "ALTER TABLE my_channels ADD COLUMN can_view_member_count BOOLEAN DEFAULT 0",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "creator_user_id",
+        "ALTER TABLE my_channels ADD COLUMN creator_user_id VARCHAR DEFAULT ''",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "creator_username",
+        "ALTER TABLE my_channels ADD COLUMN creator_username VARCHAR DEFAULT ''",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "creator_name",
+        "ALTER TABLE my_channels ADD COLUMN creator_name VARCHAR DEFAULT ''",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "can_view_creator",
+        "ALTER TABLE my_channels ADD COLUMN can_view_creator BOOLEAN DEFAULT 0",
+    )
+
     # =========================
     # 新系统：Bot 分发端
     # =========================

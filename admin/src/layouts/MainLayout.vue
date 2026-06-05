@@ -47,7 +47,6 @@ const menuItems = [
   ["support", "客服机器人"],
   ["templates", "内容模板规则"],
   ["accounts", "账号管理"],
-  ["logs", "运行日志"],
   ["settings", "系统设置"],
   ["guide", "使用教程"],
 ]

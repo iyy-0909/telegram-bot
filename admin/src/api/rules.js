@@ -20,9 +20,6 @@ export function updateRule(id, data) {
 export function removeRule(id) {
   return axios.delete(`${API}/api/rules/${id}`)
 }
-export function getLogs() {
-  return axios.get(`${API}/api/logs`)
-}
 export function stopCloneTask(id) {
   return axios.post(`${API}/api/clone-tasks/${id}/stop`)
 }

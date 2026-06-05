@@ -219,6 +219,7 @@ class ListenerTaskCreate(BaseModel):
     replace_words: str = "{}"
     footer: str = ""
     remove_contact_lines: bool = True
+    filter_qr_code: bool = True
     use_random_head: bool = False
     use_random_body: bool = False
     use_random_footer: bool = False
@@ -244,6 +245,7 @@ class ListenerTaskUpdate(BaseModel):
     replace_words: Optional[str] = None
     footer: Optional[str] = None
     remove_contact_lines: Optional[bool] = None
+    filter_qr_code: Optional[bool] = None
     use_random_head: Optional[bool] = None
     use_random_body: Optional[bool] = None
     use_random_footer: Optional[bool] = None
@@ -349,6 +351,7 @@ class CloneTaskCreate(BaseModel):
     footer: str = ""
 
     remove_contact_lines: bool = True
+    filter_qr_code: bool = True
     enable_listener: bool = False
 
     use_random_head: bool = False
@@ -382,6 +385,7 @@ class CloneTaskUpdate(BaseModel):
     footer: Optional[str] = None
 
     remove_contact_lines: Optional[bool] = None
+    filter_qr_code: Optional[bool] = None
     enable_listener: Optional[bool] = None
 
     use_random_head: Optional[bool] = None
@@ -519,6 +523,8 @@ class MyChannelCreate(BaseModel):
     tags: str = "[]"
     bot_id: Optional[int] = None
     status: str = "enabled"
+    delivery_status: str = ""
+    collection_status: str = ""
     is_default: bool = False
     remark: str = ""
 
@@ -532,6 +538,8 @@ class MyChannelUpdate(BaseModel):
     tags: Optional[str] = None
     bot_id: Optional[int] = None
     status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    collection_status: Optional[str] = None
     is_default: Optional[bool] = None
     remark: Optional[str] = None
 
@@ -596,6 +604,7 @@ def clone_task_to_dict(task):
         "replace_words": task.replace_words,
         "footer": task.footer,
         "remove_contact_lines": getattr(task, "remove_contact_lines", True),
+        "filter_qr_code": getattr(task, "filter_qr_code", True),
         "enable_listener": getattr(task, "enable_listener", False),
         "use_random_head": getattr(task, "use_random_head", False),
         "use_random_body": getattr(task, "use_random_body", False),
@@ -685,6 +694,7 @@ def listener_task_to_dict(task):
         "replace_words": task.replace_words,
         "footer": task.footer,
         "remove_contact_lines": task.remove_contact_lines,
+        "filter_qr_code": getattr(task, "filter_qr_code", True),
         "use_random_head": getattr(task, "use_random_head", False),
         "use_random_body": getattr(task, "use_random_body", False),
         "use_random_footer": getattr(task, "use_random_footer", False),
@@ -801,6 +811,79 @@ def member_permissions(member):
     }
 
 
+async def fetch_channel_member_count(bot_token, chat_id):
+    try:
+        result = await asyncio.to_thread(
+            request_post,
+            bot_token,
+            "getChatMemberCount",
+            {"chat_id": chat_id},
+            None,
+        )
+        count = result.get("result")
+        return {
+            "member_count": int(count) if count is not None else None,
+            "can_view_member_count": count is not None,
+        }
+    except Exception:
+        return {
+            "member_count": None,
+            "can_view_member_count": False,
+        }
+
+
+async def fetch_channel_creator(bot_token, chat_id):
+    try:
+        result = await asyncio.to_thread(
+            request_post,
+            bot_token,
+            "getChatAdministrators",
+            {"chat_id": chat_id},
+            None,
+        )
+        admins = result.get("result") or []
+        creator = next(
+            (
+                admin.get("user") or {}
+                for admin in admins
+                if admin.get("status") == "creator"
+            ),
+            None,
+        )
+
+        if not creator:
+            return {
+                "creator_user_id": "",
+                "creator_username": "",
+                "creator_name": "",
+                "can_view_creator": False,
+            }
+
+        full_name = " ".join(
+            part
+            for part in [
+                creator.get("first_name") or "",
+                creator.get("last_name") or "",
+            ]
+            if part
+        ).strip()
+        username = creator.get("username") or ""
+
+        return {
+            "creator_user_id": str(creator.get("id") or ""),
+            "creator_username": f"@{username}" if username else "",
+            "creator_name": full_name,
+            "can_view_creator": True,
+        }
+    except Exception:
+        return {
+            "creator_user_id": "",
+            "creator_username": "",
+            "creator_name": "",
+            "can_view_creator": False,
+        }
+
+
 async def check_my_channel_permissions(channel):
     bot = resolve_default_bot(getattr(channel, "bot_id", None))
 
@@ -849,6 +932,11 @@ async def check_my_channel_permissions(channel):
         )
         member = member_result.get("result") or {}
         permissions = member_permissions(member)
+        resolved_chat_id = chat.get("id") or target
+        member_count_info, creator_info = await asyncio.gather(
+            fetch_channel_member_count(bot.token, resolved_chat_id),
+            fetch_channel_creator(bot.token, resolved_chat_id),
+        )
         status = "enabled" if permissions["bot_is_member"] else "error"
         last_error = "" if permissions["bot_is_member"] else "Bot 不在频道或群内"
 
@@ -863,6 +951,8 @@ async def check_my_channel_permissions(channel):
                 "status": status,
                 "last_error": last_error,
                 **permissions,
+                **member_count_info,
+                **creator_info,
             },
         )
         return my_channel_to_dict(updated)
@@ -880,6 +970,12 @@ async def check_my_channel_permissions(channel):
                 "can_edit_messages": False,
                 "can_delete_messages": False,
                 "can_manage_topics": False,
+                "member_count": None,
+                "can_view_member_count": False,
+                "creator_user_id": "",
+                "creator_username": "",
+                "creator_name": "",
+                "can_view_creator": False,
             },
         )
         return my_channel_to_dict(updated)

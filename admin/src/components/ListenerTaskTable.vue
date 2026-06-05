@@ -27,14 +27,22 @@
             <div class="card-subtitle">展示任务运行状态、最近动作、最后监听时间和最后错误。</div>
           </div>
 
-          <el-button type="primary" @click="emit('add')">
-            新增任务
-          </el-button>
+          <div class="header-actions">
+            <el-input
+              v-model="keyword"
+              clearable
+              class="task-search"
+              placeholder="搜索任务名 / 源频道 / 目标频道"
+            />
+            <el-button type="primary" @click="emit('add')">
+              新增任务
+            </el-button>
+          </div>
         </div>
       </template>
 
       <el-table
-        :data="tasks"
+        :data="filteredTasks"
         v-loading="loading"
         border
         stripe
@@ -152,6 +160,12 @@
           </div>
 
           <div class="log-actions">
+            <el-input
+              v-model="eventKeyword"
+              clearable
+              class="event-search"
+              placeholder="搜索任务 / 频道 / 消息 / 错误"
+            />
             <el-select v-model="eventFilter" clearable placeholder="事件筛选" class="event-filter">
               <el-option label="收到" value="received" />
               <el-option label="准备完成" value="prepared" />
@@ -253,11 +267,65 @@ const props = defineProps({
 
 const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup", "refresh-logs"])
 const eventFilter = ref("")
+const eventKeyword = ref("")
+const keyword = ref("")
+
+const filteredTasks = computed(() => {
+  const query = keyword.value.trim().toLowerCase()
+
+  if (!query) return props.tasks
+
+  return props.tasks.filter((task) => {
+    const latest = latestEvent(task.id)
+    const values = [
+      task.id,
+      task.name,
+      task.source_channel,
+      formatTargets(task.target_channels),
+      task.status,
+      task.enabled ? "running" : "stopped",
+      task.account_id,
+      task.bot_id,
+      latest?.message,
+      latest?.error,
+    ]
+
+    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+  })
+})
 
 const runtimeEvents = computed(() => {
-  const list = props.events || []
-  if (!eventFilter.value) return list
-  return list.filter((event) => (event.event_type || event.status) === eventFilter.value)
+  const query = eventKeyword.value.trim().toLowerCase()
+  let list = props.events || []
+
+  if (eventFilter.value) {
+    list = list.filter((event) => (event.event_type || event.status) === eventFilter.value)
+  }
+
+  if (!query) return list
+
+  return list.filter((event) => {
+    const values = [
+      event.time,
+      event.event_type,
+      event.status,
+      event.task_id,
+      event.task_name,
+      event.source_channel,
+      event.target,
+      event.source_message_id,
+      event.target_message_id,
+      event.grouped_id,
+      event.source_message_url,
+      event.target_message_url,
+      event.message_type,
+      event.message,
+      event.error,
+      event.bot_name,
+    ]
+
+    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+  })
 })
 
 const overview = computed(() => {
@@ -266,7 +334,7 @@ const overview = computed(() => {
   const skippedTypes = new Set(["filtered", "empty", "deduped"])
 
   return {
-    running: props.tasks.filter((task) => task.enabled).length,
+    running: filteredTasks.value.filter((task) => task.enabled).length,
     success: events.filter((event) => (event.event_type || event.status) === "success").length,
     skipped: events.filter((event) => skippedTypes.has(event.event_type || event.status)).length,
     failed: events.filter((event) => failedTypes.has(event.event_type || event.status)).length,
@@ -384,6 +452,7 @@ function formatTargets(value) {
 }
 
 .card-header,
+.header-actions,
 .log-actions {
   display: flex;
   align-items: center;
@@ -408,6 +477,14 @@ function formatTargets(value) {
 
 .event-filter {
   width: 160px;
+}
+
+.event-search {
+  width: 240px;
+}
+
+.task-search {
+  width: 260px;
 }
 
 .listener-table,

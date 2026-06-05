@@ -38,6 +38,8 @@ def normalize_channel_data(data):
         "tags": data.get("tags") or "[]",
         "bot_id": data.get("bot_id"),
         "status": data.get("status") or "enabled",
+        "delivery_status": (data.get("delivery_status") or "").strip(),
+        "collection_status": (data.get("collection_status") or "").strip(),
         "is_default": bool(data.get("is_default", False)),
         "remark": data.get("remark") or "",
     }
@@ -77,6 +79,8 @@ def my_channel_to_dict(channel):
         "bot_link": bot_link,
         "status": channel.status or "enabled",
         "clone_status": getattr(channel, "clone_status", "") or "",
+        "delivery_status": getattr(channel, "delivery_status", "") or "",
+        "collection_status": getattr(channel, "collection_status", "") or "",
         "is_default": bool(channel.is_default),
         "remark": channel.remark or "",
         "bot_is_member": bool(channel.bot_is_member),
@@ -85,6 +89,12 @@ def my_channel_to_dict(channel):
         "can_edit_messages": bool(channel.can_edit_messages),
         "can_delete_messages": bool(channel.can_delete_messages),
         "can_manage_topics": bool(channel.can_manage_topics),
+        "member_count": getattr(channel, "member_count", None),
+        "can_view_member_count": bool(getattr(channel, "can_view_member_count", False)),
+        "creator_user_id": getattr(channel, "creator_user_id", "") or "",
+        "creator_username": getattr(channel, "creator_username", "") or "",
+        "creator_name": getattr(channel, "creator_name", "") or "",
+        "can_view_creator": bool(getattr(channel, "can_view_creator", False)),
         "last_check_at": str(channel.last_check_at) if channel.last_check_at else "",
         "last_error": channel.last_error or "",
         "created_at": str(channel.created_at) if channel.created_at else "",
@@ -107,6 +117,9 @@ def list_my_channels(keyword="", status="", group_name="", bot_id=None):
                     MyChannel.username.like(like),
                     MyChannel.chat_id.like(like),
                     MyChannel.group_name.like(like),
+                    MyChannel.delivery_status.like(like),
+                    MyChannel.collection_status.like(like),
+                    MyChannel.clone_status.like(like),
                 )
             )
 

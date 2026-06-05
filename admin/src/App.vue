@@ -36,13 +36,6 @@
       />
     </div>
 
-    <div v-if="activeMenu === 'logs'">
-      <LogPanel
-        :logs="logs"
-        @refresh="loadLogs"
-      />
-    </div>
-
     <div v-if="activeMenu === 'settings'">
       <SendSettingsPanel
         :settings="sendSettings"
@@ -205,7 +198,6 @@ import MainLayout from "./layouts/MainLayout.vue"
 import StatusCards from "./components/StatusCards.vue"
 import ListenerTaskTable from "./components/ListenerTaskTable.vue"
 import ListenerTaskDialog from "./components/ListenerTaskDialog.vue"
-import LogPanel from "./components/LogPanel.vue"
 import SendSettingsPanel from "./components/SendSettingsPanel.vue"
 import UserGuide from "./components/UserGuide.vue"
 import LoginPanel from "./components/LoginPanel.vue"
@@ -245,7 +237,6 @@ import {
   createRule,
   updateRule,
   removeRule,
-  getLogs,
   cloneRule,
   stopCloneTask,
 } from "./api/rules"
@@ -305,7 +296,6 @@ const isAuthenticated = ref(Boolean(localStorage.getItem("admin_token")))
 const rules = ref([])
 const listenerTasks = ref([])
 const listenerTaskLogs = ref([])
-const logs = ref([])
 const accounts = ref([])
 const bots = ref([])
 const botBindings = ref([])
@@ -337,7 +327,7 @@ const LISTENER_TASK_LOG_LIMIT = 50
 const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "logs", "settings", "templates", "guide"]
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "settings", "templates", "guide"]
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -408,6 +398,7 @@ const currentListenerTask = reactive({
   replace_words: "{}",
   footer: "",
   remove_contact_lines: true,
+  filter_qr_code: true,
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
@@ -467,6 +458,7 @@ const currentCloneTask = reactive({
   replace_words: "{}",
   footer: "",
   remove_contact_lines: true,
+  filter_qr_code: true,
   enable_listener: false,
   use_random_head: false,
   use_random_body: false,
@@ -553,12 +545,6 @@ function saveListenerTaskLogs() {
     LISTENER_TASK_LOG_STORAGE_KEY,
     JSON.stringify(listenerTaskLogs.value.slice(0, LISTENER_TASK_LOG_LIMIT)),
   )
-}
-
-
-async function loadLogs() {
-  const res = await getLogs()
-  logs.value = res.data.logs
 }
 
 
@@ -737,10 +723,6 @@ async function handleMenuChange(menu) {
     await loadListenerTaskLogs()
   }
 
-  if (menu === "logs") {
-    await loadLogs()
-  }
-
   if (menu === "accounts") {
     await loadAccounts()
   }
@@ -904,6 +886,7 @@ function resetCurrentListenerTask() {
     replace_words: "{}",
     footer: "",
     remove_contact_lines: true,
+    filter_qr_code: true,
     use_random_head: false,
     use_random_body: false,
     use_random_footer: false,
@@ -947,6 +930,7 @@ async function openEditListenerTaskDialog(row) {
     replace_words: row.replace_words || "{}",
     footer: row.footer || "",
     remove_contact_lines: row.remove_contact_lines ?? true,
+    filter_qr_code: row.filter_qr_code ?? true,
     use_random_head: row.use_random_head ?? false,
     use_random_body: row.use_random_body ?? false,
     use_random_footer: row.use_random_footer ?? false,
@@ -1103,6 +1087,7 @@ async function submitListenerTask(formData) {
     replace_words: currentListenerTask.replace_words || "{}",
     footer: "",
     remove_contact_lines: currentListenerTask.remove_contact_lines,
+    filter_qr_code: currentListenerTask.filter_qr_code,
     use_random_head: currentListenerTask.use_random_head,
     use_random_body: currentListenerTask.use_random_body,
     use_random_footer: currentListenerTask.use_random_footer,
@@ -1734,6 +1719,7 @@ function resetCurrentCloneTask() {
     replace_words: "{}",
     footer: "",
     remove_contact_lines: true,
+    filter_qr_code: true,
     enable_listener: false,
     use_random_head: false,
     use_random_body: false,
@@ -1781,6 +1767,7 @@ async function openEditCloneTaskDialog(row) {
     replace_words: row.replace_words || "{}",
     footer: row.footer || "",
     remove_contact_lines: row.remove_contact_lines ?? true,
+    filter_qr_code: row.filter_qr_code ?? true,
     enable_listener: row.enable_listener ?? false,
     use_random_head: row.use_random_head ?? false,
     use_random_body: row.use_random_body ?? false,
@@ -1891,6 +1878,7 @@ async function submitCloneTask(formData) {
     replace_words: currentCloneTask.replace_words || "{}",
     footer: currentCloneTask.footer || "",
     remove_contact_lines: currentCloneTask.remove_contact_lines,
+    filter_qr_code: currentCloneTask.filter_qr_code,
     enable_listener: currentCloneTask.enable_listener,
     use_random_head: currentCloneTask.use_random_head,
     use_random_body: currentCloneTask.use_random_body,

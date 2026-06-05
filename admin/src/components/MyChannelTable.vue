@@ -97,26 +97,22 @@
                 <StatusTag :status="row.status" />
               </template>
             </el-table-column>
+            <el-table-column prop="delivery_status" label="投放状态" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.delivery_status || "-" }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="collection_status" label="收录状态" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.collection_status || "-" }}
+              </template>
+            </el-table-column>
             <el-table-column label="克隆状态" min-width="190" show-overflow-tooltip>
               <template #default="{ row }">
                 <el-tag v-if="row.clone_status" size="small" type="success">
                   {{ row.clone_status }}
                 </el-tag>
                 <span v-else>-</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="权限" min-width="220">
-              <template #default="{ row }">
-                <div class="perm">
-                  <el-tag size="small" :type="row.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(row.bot_is_member) }}</el-tag>
-                  <el-tag size="small" :type="row.bot_is_admin ? 'success' : 'info'">管理员 {{ yesNo(row.bot_is_admin) }}</el-tag>
-                  <el-tag size="small" :type="row.can_post_messages ? 'success' : 'warning'">发帖 {{ yesNo(row.can_post_messages) }}</el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="最后检测" min-width="160">
-              <template #default="{ row }">
-                {{ formatDateTime(row.last_check_at) }}
               </template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
@@ -127,7 +123,7 @@
                     <el-icon><Edit /></el-icon>
                     编辑
                   </el-button>
-                  <el-button size="small" @click="check(row)">
+                  <el-button size="small" :loading="checkingId === row.id" @click="check(row)">
                     <el-icon><Connection /></el-icon>
                     检测
                   </el-button>
@@ -243,6 +239,12 @@
             <el-option label="异常" value="error" />
           </el-select>
         </el-form-item>
+        <el-form-item label="投放状态">
+          <el-input v-model="form.delivery_status" placeholder="例如：投放中 / 暂停 / 待投放" />
+        </el-form-item>
+        <el-form-item label="收录状态">
+          <el-input v-model="form.collection_status" placeholder="例如：已收录 / 未收录 / 待确认" />
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="3" />
         </el-form-item>
@@ -274,6 +276,51 @@
       <template #footer>
         <el-button @click="cloneDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="cloneSaving" @click="saveClone">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="checkDialogVisible" title="频道检测信息" width="720px">
+      <el-descriptions v-if="checkInfo" :column="2" border>
+        <el-descriptions-item label="频道名称">{{ checkInfo.title || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <StatusTag :status="checkInfo.status" />
+        </el-descriptions-item>
+        <el-descriptions-item label="username">{{ checkInfo.username || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="chat_id">{{ checkInfo.chat_id || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="频道类型">{{ checkInfo.channel_type || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="分组">{{ checkInfo.group_name || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="绑定 Bot">{{ botUsername(checkInfo) || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="最后检测">{{ formatDateTime(checkInfo.last_check_at) }}</el-descriptions-item>
+        <el-descriptions-item label="投放状态">{{ checkInfo.delivery_status || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="收录状态">{{ checkInfo.collection_status || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="成员数">
+          {{ formatMemberCount(checkInfo) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="频道创建者">
+          {{ formatCreator(checkInfo) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="权限" :span="2">
+          <div class="detail-tags">
+            <el-tag size="small" :type="checkInfo.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(checkInfo.bot_is_member) }}</el-tag>
+            <el-tag size="small" :type="checkInfo.bot_is_admin ? 'success' : 'info'">管理员 {{ yesNo(checkInfo.bot_is_admin) }}</el-tag>
+            <el-tag size="small" :type="checkInfo.can_post_messages ? 'success' : 'warning'">发帖 {{ yesNo(checkInfo.can_post_messages) }}</el-tag>
+            <el-tag size="small" :type="checkInfo.can_edit_messages ? 'success' : 'info'">编辑 {{ yesNo(checkInfo.can_edit_messages) }}</el-tag>
+            <el-tag size="small" :type="checkInfo.can_delete_messages ? 'success' : 'info'">删除 {{ yesNo(checkInfo.can_delete_messages) }}</el-tag>
+            <el-tag size="small" :type="checkInfo.can_manage_topics ? 'success' : 'info'">话题 {{ yesNo(checkInfo.can_manage_topics) }}</el-tag>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="查看能力" :span="2">
+          <div class="detail-tags">
+            <el-tag size="small" :type="checkInfo.can_view_member_count ? 'success' : 'warning'">频道人数 {{ checkInfo.can_view_member_count ? "可查看" : "不可查看" }}</el-tag>
+            <el-tag size="small" :type="checkInfo.can_view_creator ? 'success' : 'warning'">频道创建者 {{ checkInfo.can_view_creator ? "可查看" : "不可查看" }}</el-tag>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="最近错误" :span="2">
+          {{ checkInfo.last_error || "-" }}
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button type="primary" @click="checkDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -324,6 +371,9 @@ const loading = ref(false)
 const cloneLoading = ref(false)
 const saving = ref(false)
 const cloneSaving = ref(false)
+const checkingId = ref(null)
+const checkDialogVisible = ref(false)
+const checkInfo = ref(null)
 const filters = reactive({
   keyword: "",
   status: "",
@@ -352,6 +402,8 @@ function emptyForm() {
     group_name: "",
     bot_id: null,
     status: "enabled",
+    delivery_status: "",
+    collection_status: "",
     remark: "",
     tags: "[]",
   }
@@ -402,6 +454,8 @@ function openEdit(row) {
     group_name: row.group_name || "",
     bot_id: row.bot_id || null,
     status: row.status || "enabled",
+    delivery_status: row.delivery_status || "",
+    collection_status: row.collection_status || "",
     remark: row.remark || "",
     tags: row.tags || "[]",
   })
@@ -477,13 +531,20 @@ async function saveClone() {
 }
 
 async function check(row) {
-  const res = await checkMyChannel(row.id)
-  if (res.data.ok) {
-    ElMessage.success("检测完成")
-  } else {
-    ElMessage.warning(res.data.message || "检测失败")
+  checkingId.value = row.id
+  try {
+    const res = await checkMyChannel(row.id)
+    checkInfo.value = res.data.item || row
+    checkDialogVisible.value = true
+    if (res.data.ok) {
+      ElMessage.success("检测完成")
+    } else {
+      ElMessage.warning(res.data.message || "检测失败")
+    }
+    await load()
+  } finally {
+    checkingId.value = null
   }
-  await load()
 }
 
 async function batchCheck() {
@@ -582,6 +643,29 @@ function formatDateTime(value) {
 
 function yesNo(value) {
   return value ? "是" : "否"
+}
+
+function formatMemberCount(row) {
+  if (!row?.can_view_member_count) {
+    return "不可查看"
+  }
+
+  return row.member_count === null || row.member_count === undefined
+    ? "不可查看"
+    : String(row.member_count)
+}
+
+function formatCreator(row) {
+  if (!row?.can_view_creator) {
+    return "不可查看"
+  }
+
+  const username = row.creator_username || ""
+  const name = row.creator_name || ""
+  const userId = row.creator_user_id || ""
+  const parts = [name, username, userId ? `ID：${userId}` : ""].filter(Boolean)
+
+  return parts.length ? parts.join(" / ") : "不可查看"
 }
 
 function readError(error, fallback) {
@@ -702,5 +786,11 @@ function readError(error, fallback) {
 
 .row-actions .el-button {
   margin-left: 0;
+}
+
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 </style>

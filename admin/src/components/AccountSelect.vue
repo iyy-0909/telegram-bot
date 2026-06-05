@@ -37,7 +37,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: "璇烽€夋嫨閲囬泦璐﹀彿",
+    default: "请选择采集账号",
   },
   onlyEnabled: {
     type: Boolean,
@@ -54,7 +54,7 @@ const options = computed(() => (
 function accountLabel(account) {
   const username = account.username ? ` @${String(account.username).replace(/^@/, "")}` : ""
   const phone = account.phone ? ` ${account.phone}` : ""
-  return `${account.name || "璐﹀彿"}${username}${phone} (#${account.id})`
+  return `${account.name || "账号"}${username}${phone} (#${account.id})`
 }
 </script>
 

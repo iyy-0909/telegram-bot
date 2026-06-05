@@ -10,6 +10,7 @@ from bot.entity_formatter import format_prepared_text
 from bot.listener_events import add_listener_send_event
 from bot.logger import logger
 from bot.message_links import build_message_url
+from bot.qr_filter import find_qr_code_files
 from bot.sender import (
     cleanup_prepared,
     prepare_album,
@@ -115,6 +116,10 @@ def target_already_sent(task_id, target, source_message_id, grouped_id=None):
     return is_listener_message_sent(task_id, target, source_message_id)
 
 
+def should_filter_qr_code(task) -> bool:
+    return bool(getattr(task, "filter_qr_code", True))
+
+
 async def send_prepared_to_tasks(
     prepared,
     tasks,
@@ -133,6 +138,32 @@ async def send_prepared_to_tasks(
                 last_error="target_channels empty",
             )
             continue
+
+        if should_filter_qr_code(task):
+            qr_files = find_qr_code_files(prepared.get("files") or [])
+
+            if qr_files:
+                for target in targets:
+                    add_listener_send_event(
+                        task_id=task.id,
+                        task_name=task.name,
+                        event_type="filtered",
+                        source_channel=task.source_channel,
+                        target=target,
+                        account_id=task.account_id,
+                        source_message_id=source_message_id,
+                        grouped_id=grouped_id,
+                        source_message_url=task_source_url(task, source_message_id),
+                        status="filtered",
+                        message="二维码过滤，已跳过发送",
+                    )
+
+                logger.warning(
+                    f"监听二维码过滤，跳过发送 | task_id={task.id} | "
+                    f"message_id={source_message_id} | grouped_id={grouped_id} | "
+                    f"files={qr_files}"
+                )
+                continue
 
         raw_text = prepared.get("_raw_text") or ""
         result = process_content(raw_text, task)
@@ -197,39 +228,54 @@ async def send_prepared_to_tasks(
                 continue
 
             send_payload = dict(prepared)
-            formatted_text = format_prepared_text(
-                send_payload.get("_source_payload"),
-                result.get("text") or "",
-            )
-            send_payload["text"] = formatted_text.get("text") or ""
-            send_payload["plain_text"] = (
-                formatted_text.get("plain_text")
-                or result.get("text")
-                or ""
-            )
 
-            if formatted_text.get("parse_mode"):
-                send_payload["parse_mode"] = formatted_text.get("parse_mode")
-            else:
-                send_payload.pop("parse_mode", None)
-
-            if formatted_text.get("entities"):
-                send_payload["entities"] = formatted_text.get("entities")
-            else:
+            if result.get("parse_mode"):
+                send_payload["text"] = result.get("text") or ""
+                send_payload["plain_text"] = (
+                    result.get("plain_text")
+                    or result.get("text")
+                    or ""
+                )
+                send_payload["parse_mode"] = result.get("parse_mode")
+                send_payload["html_text"] = result.get("html_text") or result.get("text") or ""
+                send_payload["format_level"] = result.get("format_level") or "template_html"
+                send_payload["kept_entities_count"] = 0
+                send_payload["dropped_entities_count"] = 0
                 send_payload.pop("entities", None)
+            else:
+                formatted_text = format_prepared_text(
+                    send_payload.get("_source_payload"),
+                    result.get("text") or "",
+                )
+                send_payload["text"] = formatted_text.get("text") or ""
+                send_payload["plain_text"] = (
+                    formatted_text.get("plain_text")
+                    or result.get("text")
+                    or ""
+                )
 
-            if formatted_text.get("html_text"):
-                send_payload["html_text"] = formatted_text.get("html_text")
+                if formatted_text.get("parse_mode"):
+                    send_payload["parse_mode"] = formatted_text.get("parse_mode")
+                else:
+                    send_payload.pop("parse_mode", None)
 
-            send_payload["format_level"] = formatted_text.get("format_level")
-            send_payload["kept_entities_count"] = formatted_text.get(
-                "kept_entities_count",
-                0,
-            )
-            send_payload["dropped_entities_count"] = formatted_text.get(
-                "dropped_entities_count",
-                0,
-            )
+                if formatted_text.get("entities"):
+                    send_payload["entities"] = formatted_text.get("entities")
+                else:
+                    send_payload.pop("entities", None)
+
+                if formatted_text.get("html_text"):
+                    send_payload["html_text"] = formatted_text.get("html_text")
+
+                send_payload["format_level"] = formatted_text.get("format_level")
+                send_payload["kept_entities_count"] = formatted_text.get(
+                    "kept_entities_count",
+                    0,
+                )
+                send_payload["dropped_entities_count"] = formatted_text.get(
+                    "dropped_entities_count",
+                    0,
+                )
 
             try:
                 add_listener_send_event(

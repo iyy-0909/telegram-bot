@@ -124,9 +124,15 @@
           <ReplaceRulesEditor v-model="localForm.replace_words" />
         </el-form-item>
 
-        <div class="switch-row">
-          <span>删除旧联系方式</span>
-          <el-switch v-model="localForm.remove_contact_lines" />
+        <div class="switch-grid">
+          <div class="switch-row">
+            <span>删除旧联系方式</span>
+            <el-switch v-model="localForm.remove_contact_lines" />
+          </div>
+          <div class="switch-row">
+            <span>过滤二维码图片</span>
+            <el-switch v-model="localForm.filter_qr_code" />
+          </div>
         </div>
       </section>
 
@@ -203,6 +209,7 @@ const localForm = reactive({
   footer: "",
   enabled: true,
   enable_listener: false,
+  filter_qr_code: true,
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
@@ -270,6 +277,7 @@ watch(
       selected_body_template_id: normalizeTemplateId(val.selected_body_template_id),
       selected_footer_template_id: normalizeTemplateId(val.selected_footer_template_id),
       selected_filter_template_group_id: normalizeTemplateId(val.selected_filter_template_group_id),
+      filter_qr_code: val.filter_qr_code ?? true,
     })
   },
   { immediate: true, deep: true },
@@ -288,6 +296,7 @@ function submit() {
     target_delay: toPositiveNumber(localForm.target_delay, 2),
     blocked_keywords: normalizeJsonArrayString(localForm.blocked_keywords),
     footer: "",
+    filter_qr_code: localForm.filter_qr_code,
     selected_filter_template_group_id: normalizeTemplateId(localForm.selected_filter_template_group_id),
     selected_head_template_group_id: localForm.use_random_head
       ? normalizeTemplateId(localForm.selected_head_template_group_id)

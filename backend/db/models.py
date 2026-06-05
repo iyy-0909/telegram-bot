@@ -74,6 +74,7 @@ class CloneTask(Base):
     replace_words = Column(Text, default="{}")
     footer = Column(Text, default="")
     remove_contact_lines = Column(Boolean, default=True)
+    filter_qr_code = Column(Boolean, default=True)
     enabled = Column(Boolean, default=True)
 
     use_random_head = Column(Boolean, default=False)
@@ -141,6 +142,7 @@ class ListenerTask(Base):
     replace_words = Column(Text, default="{}")
     footer = Column(Text, default="")
     remove_contact_lines = Column(Boolean, default=True)
+    filter_qr_code = Column(Boolean, default=True)
     use_random_head = Column(Boolean, default=False)
     use_random_body = Column(Boolean, default=False)
     use_random_footer = Column(Boolean, default=False)
@@ -339,6 +341,8 @@ class MyChannel(Base):
     bot_id = Column(Integer, nullable=True, index=True)
     status = Column(String, default="enabled", index=True)
     clone_status = Column(String, default="", index=True)
+    delivery_status = Column(String, default="")
+    collection_status = Column(String, default="")
     is_default = Column(Boolean, default=False)
     remark = Column(Text, default="")
 
@@ -348,6 +352,12 @@ class MyChannel(Base):
     can_edit_messages = Column(Boolean, default=False)
     can_delete_messages = Column(Boolean, default=False)
     can_manage_topics = Column(Boolean, default=False)
+    member_count = Column(Integer, nullable=True)
+    can_view_member_count = Column(Boolean, default=False)
+    creator_user_id = Column(String, default="")
+    creator_username = Column(String, default="")
+    creator_name = Column(String, default="")
+    can_view_creator = Column(Boolean, default=False)
 
     last_check_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
