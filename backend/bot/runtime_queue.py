@@ -140,7 +140,10 @@ class RuntimeQueueState:
         item["estimated_send_remaining_seconds"] = seconds
 
     def snapshot(self):
-        waiting = list(self.waiting.values())
+        waiting = sorted(
+            self.waiting.values(),
+            key=self._waiting_sort_key,
+        )
         recent = list(self.recent)
 
         return {
@@ -157,6 +160,15 @@ class RuntimeQueueState:
                 ]),
             },
         }
+
+    def _waiting_sort_key(self, item):
+        estimated_monotonic = item.get("_estimated_send_monotonic")
+        queued_monotonic = item.get("_queued_monotonic") or 0
+        return (
+            estimated_monotonic is None,
+            estimated_monotonic if estimated_monotonic is not None else float("inf"),
+            queued_monotonic,
+        )
 
     def _public_item(self, item):
         payload = dict(item)

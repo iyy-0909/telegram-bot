@@ -118,6 +118,20 @@ def main():
         "ALTER TABLE channel_rules ADD COLUMN remove_contact_lines BOOLEAN DEFAULT 1",
     )
 
+    add_column_if_missing(
+        cur,
+        "listener_tasks",
+        "last_received_at",
+        "ALTER TABLE listener_tasks ADD COLUMN last_received_at DATETIME",
+    )
+
+    add_column_if_missing(
+        cur,
+        "my_channels",
+        "clone_status",
+        "ALTER TABLE my_channels ADD COLUMN clone_status VARCHAR DEFAULT ''",
+    )
+
     # =========================
     # 新系统：Bot 分发端
     # =========================

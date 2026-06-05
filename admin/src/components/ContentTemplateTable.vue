@@ -21,6 +21,7 @@
       border
       stripe
       row-key="id"
+      height="492"
       class="template-table"
       empty-text="暂无内容模板规则，请点击“添加规则”创建 head/body/footer/过滤关键词规则。"
     >

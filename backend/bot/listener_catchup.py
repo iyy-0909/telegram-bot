@@ -58,6 +58,51 @@ async def get_latest_source_messages(client, channel):
     return messages or [latest]
 
 
+async def get_recent_source_content_items(client, channel, limit=1):
+    await ensure_client_connected(client)
+
+    limit = max(min(int(limit or 1), 100), 1)
+    fetch_limit = max(limit * 20, 20)
+    recent_messages = []
+
+    async for message in client.iter_messages(channel, limit=fetch_limit):
+        recent_messages.append(message)
+
+    items = []
+    seen_grouped_ids = set()
+
+    for message in recent_messages:
+        grouped_id = getattr(message, "grouped_id", None)
+
+        if grouped_id:
+            grouped_key = str(grouped_id)
+
+            if grouped_key in seen_grouped_ids:
+                continue
+
+            seen_grouped_ids.add(grouped_key)
+            messages = [
+                item
+                for item in recent_messages
+                if getattr(item, "grouped_id", None) == grouped_id
+            ]
+            messages.sort(key=lambda item: item.id)
+        else:
+            messages = [message]
+
+        items.append({
+            "messages": messages,
+            "source_message_id": max(item.id for item in messages),
+            "grouped_id": grouped_id,
+        })
+
+        if len(items) >= limit:
+            break
+
+    items.sort(key=lambda item: item["source_message_id"])
+    return items
+
+
 def compare_latest_content(source_text, source_has_media, target_text, target_has_media):
     if source_text != target_text:
         return False, "源频道和目标频道最新文本不一致"
@@ -72,8 +117,8 @@ async def check_latest_content_consistency(task):
     """
     Check whether the latest source content matches the latest target content.
 
-    Media binary comparison is not attempted. Empty media-only messages are
-    treated as inconsistent to avoid false positives.
+    Kept for API compatibility. The admin catchup flow no longer depends on
+    this check before asking the user for a catchup count.
     """
     client = account_manager.get_client(task.account_id)
 
@@ -179,7 +224,11 @@ async def check_latest_content_consistency(task):
     return {
         "ok": True,
         "consistent": all_consistent,
-        "message": "源频道和目标频道最新内容一致" if all_consistent else "存在目标频道最新内容不一致",
+        "message": (
+            "源频道和目标频道最新内容一致"
+            if all_consistent
+            else "存在目标频道最新内容不一致"
+        ),
         "source_channel": task.source_channel,
         "source_message_id": source_message.id,
         "source_has_media": source_has_media,
@@ -187,7 +236,7 @@ async def check_latest_content_consistency(task):
     }
 
 
-async def catchup_latest_listener_message(task, force=False):
+async def catchup_latest_listener_message(task, force=True, limit=1):
     client = account_manager.get_client(task.account_id)
 
     if not client:
@@ -205,7 +254,11 @@ async def catchup_latest_listener_message(task, force=False):
         }
 
     try:
-        messages = await get_latest_source_messages(client, task.source_channel)
+        content_items = await get_recent_source_content_items(
+            client,
+            task.source_channel,
+            limit=limit,
+        )
     except Exception as e:
         logger.warning(
             f"监听补齐失败：读取源频道异常 | "
@@ -216,70 +269,102 @@ async def catchup_latest_listener_message(task, force=False):
             "message": f"读取源频道失败：{e}",
         }
 
-    if not messages:
+    if not content_items:
         return {
             "ok": False,
             "message": "源频道没有可读取内容",
         }
 
-    raw_text = ""
+    from bot.handlers import send_prepared_to_tasks
 
-    for message in messages:
-        text = get_message_text(message)
-        if text:
-            raw_text = text
-            break
+    requested_limit = max(min(int(limit or 1), 100), 1)
+    sent_count = 0
+    failed_count = 0
+    results = []
+    force_send = True
 
-    prepared = None
-    source_message_id = max(message.id for message in messages)
-    grouped_id = getattr(messages[-1], "grouped_id", None)
+    for item in content_items:
+        messages = item["messages"]
+        source_message_id = item["source_message_id"]
+        grouped_id = item["grouped_id"]
+        prepared = None
+        raw_text = ""
 
-    try:
-        if grouped_id and len(messages) > 1:
-            prepared = await prepare_album(messages, raw_text)
-            source_payload = messages
-        else:
-            prepared = await prepare_single_message(messages[-1], raw_text)
-            source_payload = messages[-1]
+        for message in messages:
+            text = get_message_text(message)
+            if text:
+                raw_text = text
+                break
 
-        if not prepared or not prepared.get("ok"):
-            return {
-                "ok": False,
-                "message": "最新内容准备失败，未发送",
+        try:
+            if grouped_id and len(messages) > 1:
+                prepared = await prepare_album(messages, raw_text)
+                source_payload = messages
+            else:
+                prepared = await prepare_single_message(messages[-1], raw_text)
+                source_payload = messages[-1]
+
+            if not prepared or not prepared.get("ok"):
+                failed_count += 1
+                results.append({
+                    "source_message_id": source_message_id,
+                    "grouped_id": str(grouped_id) if grouped_id else None,
+                    "ok": False,
+                    "message": "内容准备失败，未发送",
+                })
+                continue
+
+            prepared["_raw_text"] = raw_text
+            prepared["_source_payload"] = source_payload
+
+            sent = await send_prepared_to_tasks(
+                prepared=prepared,
+                tasks=[task],
+                source_message_id=source_message_id,
+                grouped_id=grouped_id,
+                force=force_send,
+            )
+
+            if sent:
+                sent_count += 1
+            else:
+                failed_count += 1
+
+            results.append({
                 "source_message_id": source_message_id,
-            }
+                "grouped_id": str(grouped_id) if grouped_id else None,
+                "ok": bool(sent),
+                "message": "已补齐发送" if sent else "未发送，可能发送失败或内容被过滤",
+            })
 
-        prepared["_raw_text"] = raw_text
-        prepared["_source_payload"] = source_payload
+        except Exception as e:
+            failed_count += 1
+            logger.exception(
+                f"listener catchup failed | task_id={task.id} | "
+                f"source_message_id={source_message_id} | {e}"
+            )
+            results.append({
+                "source_message_id": source_message_id,
+                "grouped_id": str(grouped_id) if grouped_id else None,
+                "ok": False,
+                "message": f"补齐失败：{e}",
+            })
 
-        from bot.handlers import send_prepared_to_tasks
+        finally:
+            if prepared:
+                cleanup_prepared(prepared)
 
-        sent = await send_prepared_to_tasks(
-            prepared=prepared,
-            tasks=[task],
-            source_message_id=source_message_id,
-            grouped_id=grouped_id,
-            force=force,
-        )
-
-        return {
-            "ok": bool(sent),
-            "message": "最新一条已补齐发送" if sent else "最新一条未发送，可能已去重或发送失败",
-            "source_message_id": source_message_id,
-            "grouped_id": str(grouped_id) if grouped_id else None,
-            "force": bool(force),
-        }
-
-    except Exception as e:
-        logger.exception(
-            f"监听补齐最新一条失败 | task_id={task.id} | {e}"
-        )
-        return {
-            "ok": False,
-            "message": f"补齐失败：{e}",
-            "source_message_id": source_message_id,
-        }
-
-    finally:
-        if prepared:
-            cleanup_prepared(prepared)
+    return {
+        "ok": sent_count > 0 and failed_count == 0,
+        "message": (
+            f"已补齐发送 {sent_count} 条"
+            if failed_count == 0
+            else f"补齐完成：成功 {sent_count} 条，失败 {failed_count} 条"
+        ),
+        "requested": requested_limit,
+        "processed": len(content_items),
+        "sent_count": sent_count,
+        "failed_count": failed_count,
+        "force": force_send,
+        "results": results,
+    }

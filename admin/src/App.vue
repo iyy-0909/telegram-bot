@@ -1227,35 +1227,35 @@ async function checkListenerCatchupHandler(id) {
 
 
 async function checkListenerCatchupHandlerV2(id) {
-  const res = await checkListenerCatchup(id)
-  const data = res.data || {}
-  const force = Boolean(data.consistent)
-  const confirmMessage = force
-    ? `${data.message || "源频道和目标频道最新内容一致"}，是否仍然强行补齐源频道最新一条内容？强行补齐会重复发送。`
-    : `${data.message || "源频道和目标频道最新内容不一致"}，是否补齐源频道最新一条内容？`
-
   try {
-    await ElMessageBox.confirm(
-      confirmMessage,
-      force ? "确认强行补齐" : "确认补齐",
+    const { value } = await ElMessageBox.prompt(
+      "请输入需要补齐的内容条数。补齐会跳过去重逻辑，可能重复发送已发过的内容。",
+      "确认补齐",
       {
         type: "warning",
-        confirmButtonText: force ? "强行补齐最新一条" : "补齐最新一条",
+        inputValue: "1",
+        inputPattern: /^[1-9]\d*$/,
+        inputErrorMessage: "请输入大于 0 的整数",
+        confirmButtonText: "开始补齐",
         cancelButtonText: "取消",
       },
     )
+
+    const limit = Math.min(Math.max(Number(value || 1), 1), 100)
+    const catchupRes = await catchupLatestListenerMessage(id, {
+      force: true,
+      limit,
+    })
+    const catchupData = catchupRes.data || {}
+
+    if (catchupData.ok) {
+      ElMessage.success(catchupData.message || `已补齐发送 ${catchupData.sent_count || 0} 条`)
+    } else {
+      ElMessage.warning(catchupData.message || "补齐失败")
+    }
   } catch {
     await loadListenerTaskLogs()
     return
-  }
-
-  const catchupRes = await catchupLatestListenerMessage(id, { force })
-  const catchupData = catchupRes.data || {}
-
-  if (catchupData.ok) {
-    ElMessage.success(catchupData.message || "最新一条已补齐发送")
-  } else {
-    ElMessage.warning(catchupData.message || "补齐失败")
   }
 
   await loadListenerTaskLogs()

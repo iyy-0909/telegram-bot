@@ -25,6 +25,7 @@
         border
         stripe
         size="large"
+        height="492"
         style="width: 100%"
         empty-text="暂无 Bot，请点击“新增 Bot”添加分发机器人。"
       >

@@ -128,6 +128,7 @@
         v-loading="previewLoading"
         border
         stripe
+        height="492"
         empty-text="暂无命中记录，请选择频道并输入旧内容后扫描。"
       >
         <el-table-column prop="source_type" label="来源" width="90" />
@@ -167,7 +168,7 @@
         </div>
       </template>
 
-      <el-table :data="jobResult.items || []" border stripe>
+      <el-table :data="jobResult.items || []" border stripe height="492">
         <el-table-column prop="source_type" label="来源" width="90" />
         <el-table-column prop="target_message_id" label="消息ID" width="100" />
         <el-table-column prop="message_type" label="类型" width="110" />
@@ -364,8 +365,10 @@ function resultTagType(status) {
 }
 
 .text-cell {
-  white-space: pre-wrap;
-  word-break: break-word;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reason {

@@ -19,6 +19,7 @@
       v-loading="loading"
       border
       stripe
+      height="492"
       class="clone-table"
       empty-text="暂无克隆任务，请点击“新增任务”创建历史克隆任务。"
     >
@@ -161,7 +162,7 @@
         v-loading="logsLoading"
         border
         stripe
-        height="320"
+        height="492"
         class="clone-log-table"
         empty-text="暂无发送结果，任务发送后会显示最近记录。"
       >

@@ -7,7 +7,7 @@
       </div>
     </template>
 
-    <el-table :data="rules" border style="width: 100%">
+    <el-table :data="rules" border height="492" style="width: 100%">
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="source" label="源频道" />
       <el-table-column prop="target" label="目标频道" />

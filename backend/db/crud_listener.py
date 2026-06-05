@@ -349,6 +349,31 @@ def update_listener_status(task_id: int, enabled=None, status=None, last_error=N
         db.close()
 
 
+def update_listener_last_received(task_ids):
+    if not task_ids:
+        return 0
+
+    db = SessionLocal()
+
+    try:
+        now = datetime.utcnow()
+        count = (
+            db.query(ListenerTask)
+            .filter(ListenerTask.id.in_(task_ids))
+            .update(
+                {
+                    ListenerTask.last_received_at: now,
+                    ListenerTask.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        return count
+    finally:
+        db.close()
+
+
 def is_listener_message_sent(task_id: int, target_channel: str, source_message_id: int):
     db = SessionLocal()
 

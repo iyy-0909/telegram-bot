@@ -154,6 +154,7 @@ class ListenerTask(Base):
 
     album_wait_seconds = Column(Integer, default=3)
     last_error = Column(Text, default="")
+    last_received_at = Column(DateTime, nullable=True)
     clone_task_id = Column(Integer, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -337,6 +338,7 @@ class MyChannel(Base):
     tags = Column(Text, default="[]")
     bot_id = Column(Integer, nullable=True, index=True)
     status = Column(String, default="enabled", index=True)
+    clone_status = Column(String, default="", index=True)
     is_default = Column(Boolean, default=False)
     remark = Column(Text, default="")
 

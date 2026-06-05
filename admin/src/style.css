@@ -175,6 +175,22 @@ select {
   margin-left: 0;
 }
 
+.el-table .el-table__cell {
+  padding: 8px 0;
+}
+
+.el-table .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 22px;
+}
+
+.el-table .cell .row-actions,
+.el-table .cell .action-buttons {
+  flex-wrap: nowrap;
+}
+
 .mono-text,
 .code-pill {
   font-family: var(--mono);

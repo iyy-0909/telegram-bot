@@ -65,6 +65,7 @@
             v-loading="loading"
             border
             stripe
+            height="492"
             empty-text="暂无频道，请点击“新增频道”添加你的目标频道。"
           >
             <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
@@ -94,6 +95,14 @@
             <el-table-column prop="status" label="状态" width="100">
               <template #default="{ row }">
                 <StatusTag :status="row.status" />
+              </template>
+            </el-table-column>
+            <el-table-column label="克隆状态" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-tag v-if="row.clone_status" size="small" type="success">
+                  {{ row.clone_status }}
+                </el-tag>
+                <span v-else>-</span>
               </template>
             </el-table-column>
             <el-table-column label="权限" min-width="220">
@@ -173,6 +182,7 @@
             v-loading="cloneLoading"
             border
             stripe
+            height="492"
             empty-text="暂无克隆频道，请点击“新增克隆频道”添加源频道。"
           >
             <el-table-column prop="title" label="频道名" min-width="170" show-overflow-tooltip />

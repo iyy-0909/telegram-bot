@@ -26,6 +26,7 @@ from bot.bot_distributor import send_prepared_by_bot
 from bot.logger import logger
 from bot.notifier import notify_error, notify_task_event
 from db.crud_listener import sync_clone_task_to_listener_tasks
+from db.crud_my_channels import update_my_channel_clone_status
 
 
 def get_targets(task):
@@ -815,7 +816,16 @@ async def clone_task(task, stop_event=None):
         if not listener_result.get("consistent"):
             update_clone_task(task.id, {"status": "done"})
 
+        updated_channels = update_my_channel_clone_status(
+            targets,
+            task.source_channel,
+        )
+
         logger.info(f"克隆完成 | task_id={task.id}")
+        logger.info(
+            f"我的频道克隆状态已更新 | task_id={task.id} | "
+            f"source={task.source_channel} | count={updated_channels}"
+        )
 
         await notify_task_event(
             title="克隆任务完成",

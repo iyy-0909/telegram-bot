@@ -573,7 +573,8 @@ class BulkReplaceExecuteRequest(BaseModel):
 
 
 class ListenerCatchupRequest(BaseModel):
-    force: bool = False
+    force: bool = True
+    limit: int = 1
 
 def clone_task_to_dict(task):
     return {
@@ -696,6 +697,7 @@ def listener_task_to_dict(task):
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
         "album_wait_seconds": task.album_wait_seconds,
         "last_error": task.last_error,
+        "last_received_at": str(task.last_received_at) if getattr(task, "last_received_at", None) else "",
         "clone_task_id": getattr(task, "clone_task_id", None),
         "created_at": str(task.created_at) if task.created_at else "",
         "updated_at": str(task.updated_at) if task.updated_at else "",
@@ -1750,7 +1752,8 @@ async def api_listener_catchup_latest(
 
     return await catchup_latest_listener_message(
         task,
-        force=bool(payload.force) if payload else False,
+        force=bool(payload.force) if payload else True,
+        limit=payload.limit if payload else 1,
     )
 
 

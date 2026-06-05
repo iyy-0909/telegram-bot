@@ -24,7 +24,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">监听任务</div>
-            <div class="card-subtitle">展示任务运行状态、最近处理动作和最后错误。</div>
+            <div class="card-subtitle">展示任务运行状态、最近动作、最后监听时间和最后错误。</div>
           </div>
 
           <el-button type="primary" @click="emit('add')">
@@ -38,6 +38,7 @@
         v-loading="loading"
         border
         stripe
+        height="492"
         class="listener-table"
         empty-text="暂无监听任务，请点击“新增任务”创建实时监听任务。"
       >
@@ -84,6 +85,12 @@
               </span>
               <span v-else>-</span>
             </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="最后监听" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ formatLastReceived(row.last_received_at) }}
           </template>
         </el-table-column>
 
@@ -141,23 +148,25 @@
         <div class="card-header">
           <div>
             <div class="card-title">监听执行记录</div>
-            <div class="card-subtitle">展示最近 50 条监听执行结果；自动刷新已放慢，建议需要时手动刷新。</div>
+            <div class="card-subtitle">展示最近 50 条监听执行结果；建议需要时手动刷新。</div>
           </div>
 
-          <el-select v-model="eventFilter" clearable placeholder="事件筛选" class="event-filter">
-            <el-option label="收到" value="received" />
-            <el-option label="准备完成" value="prepared" />
-            <el-option label="发送中" value="sending" />
-            <el-option label="成功" value="success" />
-            <el-option label="过滤" value="filtered" />
-            <el-option label="空内容" value="empty" />
-            <el-option label="去重" value="deduped" />
-            <el-option label="失败" value="failed" />
-            <el-option label="账号异常" value="account_error" />
-          </el-select>
-          <el-button :loading="logsLoading" @click="emit('refresh-logs')">
-            刷新
-          </el-button>
+          <div class="log-actions">
+            <el-select v-model="eventFilter" clearable placeholder="事件筛选" class="event-filter">
+              <el-option label="收到" value="received" />
+              <el-option label="准备完成" value="prepared" />
+              <el-option label="发送中" value="sending" />
+              <el-option label="成功" value="success" />
+              <el-option label="过滤" value="filtered" />
+              <el-option label="空内容" value="empty" />
+              <el-option label="去重" value="deduped" />
+              <el-option label="失败" value="failed" />
+              <el-option label="账号异常" value="account_error" />
+            </el-select>
+            <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+              刷新
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -166,7 +175,7 @@
         v-loading="logsLoading"
         border
         stripe
-        height="460"
+        height="492"
         class="listener-log-table"
         empty-text="暂无监听执行记录，监听收到消息后会在这里显示处理过程。"
       >
@@ -266,16 +275,47 @@ const overview = computed(() => {
 
 const latestEventMap = computed(() => {
   const map = new Map()
+
   for (const event of props.events || []) {
     if (!map.has(event.task_id)) {
       map.set(event.task_id, event)
     }
   }
+
   return map
 })
 
 function latestEvent(taskId) {
   return latestEventMap.value.get(taskId)
+}
+
+function formatLastReceived(value) {
+  if (!value) return "-"
+
+  const raw = String(value)
+  const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
+    ? raw
+    : `${raw.replace(" ", "T")}Z`
+  const time = new Date(normalized)
+
+  if (Number.isNaN(time.getTime())) {
+    return value
+  }
+
+  const seconds = Math.max(Math.floor((Date.now() - time.getTime()) / 1000), 0)
+
+  if (seconds < 60) return "刚刚"
+
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} 天前`
+
+  return value
 }
 
 function formatTargets(value) {
@@ -336,18 +376,22 @@ function formatTargets(value) {
 
 .listener-card,
 .listener-log-card {
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .listener-log-card {
   margin-top: 14px;
 }
 
-.card-header {
+.card-header,
+.log-actions {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 16px;
+}
+
+.card-header {
+  justify-content: space-between;
 }
 
 .card-title {
@@ -394,7 +438,7 @@ function formatTargets(value) {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .action-buttons .el-button {

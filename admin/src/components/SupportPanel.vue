@@ -41,6 +41,7 @@
         v-loading="loading"
         border
         stripe
+        height="492"
         empty-text="暂无客服 Bot，请点击“新增客服 Bot”创建客服接待配置。"
       >
         <el-table-column prop="name" label="名称" min-width="150" />

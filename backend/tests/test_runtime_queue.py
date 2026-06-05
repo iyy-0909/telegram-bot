@@ -90,6 +90,28 @@ class RuntimeQueueStateTest(unittest.TestCase):
         self.assertEqual(final_snapshot["stats"]["waiting_count"], 0)
         self.assertEqual(final_snapshot["stats"]["recent_count"], 0)
 
+    def test_waiting_items_are_sorted_by_estimated_send_time(self):
+        state = RuntimeQueueState(max_recent=5)
+        later_id = state.add_waiting({
+            "task_id": 1,
+            "reason": "等待全局发送队列",
+            "estimated_send_remaining_seconds": 60,
+        })
+        earlier_id = state.add_waiting({
+            "task_id": 2,
+            "reason": "克隆任务限流等待中",
+            "estimated_send_remaining_seconds": 10,
+        })
+        no_estimate_id = state.add_waiting({
+            "task_id": 3,
+            "reason": "等待全局发送队列",
+        })
+
+        snapshot = state.snapshot()
+        waiting_ids = [item["id"] for item in snapshot["waiting"]]
+
+        self.assertEqual(waiting_ids, [earlier_id, later_id, no_estimate_id])
+
 
 if __name__ == "__main__":
     unittest.main()

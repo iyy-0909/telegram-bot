@@ -41,6 +41,7 @@
           <div class="stat-help">可用采集账号</div>
         </div>
       </div>
+      
     </el-card>
 
     <el-card class="page-card">
@@ -110,9 +111,11 @@
       </template>
 
       <el-table
+        class="queue-table"
         :data="waiting"
         v-loading="loading"
         border
+        height="492"
         empty-text="暂无排队任务。"
       >
         <el-table-column prop="queued_at" label="排队时间" min-width="150" show-overflow-tooltip />
@@ -121,30 +124,28 @@
             {{ row.estimated_send_at || "-" }}
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="90">
+        <el-table-column label="来源" min-width="80">
           <template #default="{ row }">
             <el-tag size="small">{{ sourceTypeLabel(row.source_type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="任务" min-width="220" show-overflow-tooltip>
+        <el-table-column label="任务" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            <div class="task-cell">
-              <strong>{{ row.task_name || formatTask(row) }}</strong>
-              <span>#{{ row.task_id || "-" }}</span>
+            <div class="single-line-cell">
+              {{ formatTaskLine(row) }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="频道" min-width="220" show-overflow-tooltip>
+        <el-table-column label="频道" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
-            <div class="channel-cell">
-              <span>源：{{ row.source_channel || "-" }}</span>
-              <span>目标：{{ row.target_channel || "-" }}</span>
+            <div class="single-line-cell">
+              {{ formatChannelLine(row) }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="source_message_id" label="源消息ID" width="110" />
-        <el-table-column prop="message_type" label="内容类型" width="100" />
-        <el-table-column label="状态" width="110">
+        <el-table-column prop="source_message_id" label="源消息ID" min-width="100" />
+        <el-table-column prop="message_type" label="内容类型" min-width="100" />
+        <el-table-column label="状态" min-width="100">
           <template #default="{ row }">
             <StatusTag :status="row.status" />
           </template>
@@ -235,6 +236,18 @@ function formatTask(row) {
     return "-"
   }
   return `#${row.task_id}`
+}
+
+function formatTaskLine(row) {
+  const name = row?.task_name || formatTask(row)
+  const id = row?.task_id ? `#${row.task_id}` : ""
+  return [name, id].filter(Boolean).join(" ")
+}
+
+function formatChannelLine(row) {
+  const source = row?.source_channel ? `源：${row.source_channel}` : ""
+  const target = row?.target_channel ? `目标：${row.target_channel}` : ""
+  return [source, target].filter(Boolean).join(" / ") || "-"
 }
 
 function formatCountdown(row) {
@@ -526,6 +539,20 @@ onUnmounted(() => {
 .task-cell span {
   font-size: 12px;
   color: #909399;
+}
+
+.queue-table :deep(.el-table__row) {
+  height: 44px;
+}
+
+.queue-table :deep(.el-table__cell) {
+  padding: 6px 0;
+}
+
+.single-line-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 1024px) {

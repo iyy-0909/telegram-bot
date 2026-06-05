@@ -22,6 +22,7 @@ from db.crud_listener import (
     is_listener_message_sent,
     mark_listener_message_sent,
     parse_target_channels,
+    update_listener_last_received,
     update_listener_status,
 )
 import bot.runtime as runtime
@@ -493,6 +494,8 @@ async def process_message(message, tasks, source):
             f"历史补齐中，跳过实时消息 | message_id={message.id}"
         )
         return
+
+    update_listener_last_received([task.id for task in tasks])
 
     grouped_id = message.grouped_id
 

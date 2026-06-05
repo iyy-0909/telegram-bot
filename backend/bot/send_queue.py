@@ -60,6 +60,40 @@ class SendQueue:
         self.started = True
         logger.info("全局发送调度器已启动")
 
+    def estimate_global_wait_seconds(self, send_delay):
+        send_delay = max(float(send_delay or 0), 0)
+        base_remaining = 0
+
+        if self.last_sent_at and send_delay > 0:
+            base_remaining = max(self.last_sent_at + send_delay - time.monotonic(), 0)
+
+        if self.lock.locked() and send_delay > 0:
+            base_remaining += send_delay
+
+        waiting_global_count = len([
+            item
+            for item in runtime_queue_state.waiting.values()
+            if item.get("queue_kind") == "global_send"
+        ])
+
+        return base_remaining + waiting_global_count * send_delay
+
+    def build_waiting_meta(self, meta, task_id, target, send_delay, skip_initial_delay):
+        payload = dict(meta or {
+            "task_id": task_id,
+            "target_channel": target,
+        })
+        payload.setdefault("reason", "等待全局发送队列")
+        payload["queue_kind"] = "global_send"
+
+        if not skip_initial_delay:
+            payload.setdefault(
+                "estimated_send_remaining_seconds",
+                self.estimate_global_wait_seconds(send_delay),
+            )
+
+        return payload
+
     async def send(
         self,
         sender_func,
@@ -72,10 +106,20 @@ class SendQueue:
         queue_meta=None,
         **kwargs,
     ):
-        queue_item_id = runtime_queue_state.add_waiting(queue_meta or {
-            "task_id": task_id,
-            "target_channel": target,
-        })
+        settings = get_send_settings()
+        global_delay = settings["global_send_delay"]
+        retry_count = settings["send_retry_count"]
+        retry_delay = settings["send_retry_delay"]
+        send_delay = max(global_delay, int(target_delay or 0))
+        queue_item_id = runtime_queue_state.add_waiting(
+            self.build_waiting_meta(
+                queue_meta,
+                task_id,
+                target,
+                send_delay,
+                skip_initial_delay,
+            )
+        )
 
         try:
             async with self.lock:
@@ -86,12 +130,6 @@ class SendQueue:
                     )
                     runtime_queue_state.cancel(queue_item_id, "任务已停止")
                     return False
-
-                settings = get_send_settings()
-                global_delay = settings["global_send_delay"]
-                retry_count = settings["send_retry_count"]
-                retry_delay = settings["send_retry_delay"]
-                send_delay = max(global_delay, int(target_delay or 0))
 
                 logger.info(
                     f"进入全局发送队列 | task_id={task_id} | target={target} | "

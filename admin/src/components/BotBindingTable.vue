@@ -17,6 +17,7 @@
       :data="bindings"
       border
       stripe
+      height="492"
       style="width: 100%"
       empty-text="暂无绑定"
     >

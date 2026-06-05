@@ -76,6 +76,7 @@ def my_channel_to_dict(channel):
         "bot_username": bot_username,
         "bot_link": bot_link,
         "status": channel.status or "enabled",
+        "clone_status": getattr(channel, "clone_status", "") or "",
         "is_default": bool(channel.is_default),
         "remark": channel.remark or "",
         "bot_is_member": bool(channel.bot_is_member),
@@ -245,6 +246,56 @@ def set_my_channel_check_result(channel_id, data):
         db.commit()
         db.refresh(channel)
         return channel
+    finally:
+        db.close()
+
+
+def update_my_channel_clone_status(targets, source_channel, status_text=None):
+    normalized_targets = []
+
+    for target in targets or []:
+        normalized = normalize_target_channel(target)
+
+        if normalized:
+            normalized_targets.append(normalized)
+
+    if not normalized_targets:
+        return 0
+
+    clone_status = status_text or f"克隆完成--源频道{source_channel}"
+    db = SessionLocal()
+
+    try:
+        count = 0
+
+        for target in normalized_targets:
+            username = normalize_username(target) if target.startswith("@") else ""
+            chat_id = target if target.startswith("-100") else ""
+
+            filters = []
+            if username:
+                filters.append(MyChannel.username == username)
+            if chat_id:
+                filters.append(MyChannel.chat_id == chat_id)
+
+            if not filters:
+                continue
+
+            updated = (
+                db.query(MyChannel)
+                .filter(or_(*filters))
+                .update(
+                    {
+                        MyChannel.clone_status: clone_status,
+                        MyChannel.updated_at: datetime.utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+            )
+            count += updated
+
+        db.commit()
+        return count
     finally:
         db.close()
 

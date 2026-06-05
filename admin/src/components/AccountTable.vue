@@ -19,6 +19,7 @@
       :data="accounts"
       v-loading="loading"
       border
+      height="492"
       empty-text="暂无采集账号，请运行 login_account.py 登录或点击新增账号。"
     >
       <el-table-column prop="id" label="ID" width="80" />
