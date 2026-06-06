@@ -5,6 +5,7 @@ from datetime import datetime
 
 from bot.bot_sender import BotApiError, bot_get_me, request_post
 from bot.logger import logger
+from bot.notifier import notify_text
 from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
 from db.crud_bot import get_bot
 from db.crud_support import (
@@ -120,6 +121,34 @@ def normalize_welcome_text_type(value):
     return "html" if str(value or "").strip().lower() == "html" else "plain"
 
 
+async def notify_support_warning(title, detail="", context=None):
+    context = context or {}
+    lines = [
+        f"【客服机器人警告】{title}",
+        f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+    ]
+
+    for label, key in [
+        ("SupportBot ID", "support_bot_id"),
+        ("客户ID", "customer_id"),
+        ("会话ID", "conversation_id"),
+        ("客服群", "group_chat_id"),
+        ("线程", "thread_id"),
+        ("方法", "method"),
+    ]:
+        value = context.get(key)
+        if value not in (None, ""):
+            lines.append(f"{label}：{value}")
+
+    if detail:
+        lines.extend(["", "详情：", str(detail)[:3000]])
+
+    try:
+        return await notify_text("\n".join(lines))
+    except Exception:
+        return False
+
+
 def parse_error_code(error_data):
     try:
         return int(error_data.get("error_code") or 0)
@@ -165,6 +194,14 @@ async def request_post_with_retry(
                 f"Bot API 临时错误，准备重试 | method={method} | "
                 f"error_code={error_code} | attempt={attempt}/{max_attempts} | "
                 f"sleep={retry_after}s | context={context or '-'}"
+            )
+            await notify_support_warning(
+                "Bot API 临时错误，准备重试",
+                (
+                    f"error_code={error_code} | attempt={attempt}/{max_attempts} | "
+                    f"sleep={retry_after}s | context={context or '-'}"
+                ),
+                context={"method": method},
             )
             rewind_request_files(files)
             await asyncio.sleep(max(retry_after, 1))
@@ -727,14 +764,34 @@ async def send_group_notice(text, token=None, settings=None, message_thread_id=N
             message_thread_id=message_thread_id,
         )
     except Exception as e:
-        logger.warning(f"客服群提示发送失败 | {e}")
+        detail = f"客服群提示发送失败 | {e}"
+        logger.warning(detail)
+        await notify_support_warning(
+            "客服群提示发送失败",
+            detail,
+            context={
+                "support_bot_id": settings.get("_support_bot_id"),
+                "group_chat_id": group_chat_id,
+                "thread_id": message_thread_id,
+            },
+        )
         return None
 
 
 async def forward_customer_message_to_group(customer, conversation, message, payload, support_message, token, settings):
     group_chat_id = (settings.get("support_group_chat_id") or "").strip()
     if not token or not group_chat_id:
-        logger.warning("客服群未配置，客户消息只入库不转发")
+        detail = "客服群未配置，客户消息只入库不转发"
+        logger.warning(detail)
+        await notify_support_warning(
+            "客服群未配置",
+            detail,
+            context={
+                "support_bot_id": settings.get("_support_bot_id"),
+                "customer_id": getattr(customer, "id", None),
+                "conversation_id": getattr(conversation, "id", None),
+            },
+        )
         return None
 
     message_type = payload.get("message_type") or "text"
@@ -743,9 +800,20 @@ async def forward_customer_message_to_group(customer, conversation, message, pay
     try:
         thread_id = await ensure_conversation_topic(token, group_chat_id, customer, conversation)
     except Exception as e:
-        logger.warning(
+        detail = (
             f"创建客户话题失败，降级发送到 General | "
             f"conversation_id={conversation.id} | customer_id={customer.id} | {e}"
+        )
+        logger.warning(detail)
+        await notify_support_warning(
+            "创建客户话题失败",
+            detail,
+            context={
+                "support_bot_id": settings.get("_support_bot_id"),
+                "customer_id": customer.id,
+                "conversation_id": conversation.id,
+                "group_chat_id": group_chat_id,
+            },
         )
         await send_text_to_chat(
             token,
@@ -772,10 +840,21 @@ async def forward_customer_message_to_group(customer, conversation, message, pay
     if group_message_id:
         update_support_message_group_message_id(support_message.id, group_message_id)
     else:
-        logger.warning(
+        detail = (
             "客服群消息发送成功但未返回 message_id，无法建立会话映射 | "
             f"conversation_id={conversation.id} | customer_id={customer.id} | "
             f"support_message_id={support_message.id}"
+        )
+        logger.warning(detail)
+        await notify_support_warning(
+            "客服群消息未返回 message_id",
+            detail,
+            context={
+                "support_bot_id": settings.get("_support_bot_id"),
+                "customer_id": customer.id,
+                "conversation_id": conversation.id,
+                "group_chat_id": group_chat_id,
+            },
         )
     return group_message_id
 
@@ -829,7 +908,17 @@ async def maybe_send_auto_message(customer, conversation, text, token, settings,
             send_status="success",
         )
     except Exception as e:
-        logger.warning(f"客服自动回复失败，已忽略 | customer_id={customer.id} | {e}")
+        detail = f"客服自动回复失败，已忽略 | customer_id={customer.id} | {e}"
+        logger.warning(detail)
+        await notify_support_warning(
+            "客服自动回复失败",
+            detail,
+            context={
+                "support_bot_id": settings.get("_support_bot_id"),
+                "customer_id": customer.id,
+                "conversation_id": conversation.id,
+            },
+        )
 
 
 async def handle_private_customer_message(message, settings, token):
@@ -895,7 +984,17 @@ async def handle_private_customer_message(message, settings, token):
             settings,
         )
     except Exception as e:
-        logger.warning(f"客户消息转发客服群失败 | customer_id={customer.id} | {e}")
+        detail = f"客户消息转发客服群失败 | customer_id={customer.id} | {e}"
+        logger.warning(detail)
+        await notify_support_warning(
+            "客户消息转发客服群失败",
+            detail,
+            context={
+                "support_bot_id": support_bot_id,
+                "customer_id": customer.id,
+                "conversation_id": conversation.id,
+            },
+        )
 
     if is_start:
         await maybe_send_auto_message(
@@ -1162,7 +1261,13 @@ async def handle_support_update(update, token=None, settings=None):
         try:
             await maybe_send_group_chat_id_notice(token, message)
         except Exception as e:
-            logger.warning(f"客服群 chat_id 自动提示发送失败 | {e}")
+            detail = f"客服群 chat_id 自动提示发送失败 | {e}"
+            logger.warning(detail)
+            await notify_support_warning(
+                "客服群 chat_id 自动提示发送失败",
+                detail,
+                context={"support_bot_id": settings.get("_support_bot_id")},
+            )
 
     if chat.get("type") == "private":
         await handle_private_customer_message(message, settings, token)
@@ -1183,7 +1288,13 @@ async def support_polling_worker(config):
         try:
             latest_config = get_support_bot_config(support_bot_id)
             if not latest_config:
-                logger.warning(f"Support Bot config removed, worker exit | support_bot_id={support_bot_id}")
+                detail = f"Support Bot config removed, worker exit | support_bot_id={support_bot_id}"
+                logger.warning(detail)
+                await notify_support_warning(
+                    "Support Bot 配置已删除，worker 退出",
+                    detail,
+                    context={"support_bot_id": support_bot_id},
+                )
                 return
 
             settings = support_bot_settings(latest_config)
@@ -1222,6 +1333,11 @@ async def support_polling_worker(config):
                         f"Support Bot update handling failed | "
                         f"support_bot_id={support_bot_id} | {e}"
                     )
+                    await notify_support_warning(
+                        "Support Bot update 处理失败",
+                        f"support_bot_id={support_bot_id} | {e}",
+                        context={"support_bot_id": support_bot_id},
+                    )
 
             update_support_bot_error(support_bot_id, "")
 
@@ -1239,14 +1355,28 @@ async def support_polling_worker(config):
                         "containers/local processes, or disable support polling in one "
                         f"instance | support_bot_id={support_bot_id} | {description}"
                     )
+                    await notify_support_warning(
+                        "Support Bot polling 冲突",
+                        (
+                            "another getUpdates instance is running with the same Bot token | "
+                            f"support_bot_id={support_bot_id} | {description}"
+                        ),
+                        context={"support_bot_id": support_bot_id},
+                    )
                 update_support_bot_error(support_bot_id, description)
                 await asyncio.sleep(60)
                 continue
 
             update_support_bot_error(support_bot_id, str(e)[:1000])
-            logger.warning(
+            detail = (
                 f"Support Bot polling error, retry later | "
                 f"support_bot_id={support_bot_id} | {e}"
+            )
+            logger.warning(detail)
+            await notify_support_warning(
+                "Support Bot polling 异常",
+                detail,
+                context={"support_bot_id": support_bot_id},
             )
             await asyncio.sleep(5)
 
@@ -1273,7 +1403,9 @@ async def support_polling_manager():
                 )
 
         except Exception as e:
-            logger.warning(f"Support Bot polling manager error | {e}")
+            detail = f"Support Bot polling manager error | {e}"
+            logger.warning(detail)
+            await notify_support_warning("Support Bot polling manager 异常", detail)
 
         await asyncio.sleep(10)
 
