@@ -186,8 +186,8 @@ def list_support_bots(include_disabled=True, include_secret=False):
         query = db.query(SupportBot)
         if not include_disabled:
             query = query.filter(
-                SupportBot.status == "enabled",
                 SupportBot.polling_enabled == True,
+                SupportBot.status != "disabled",
             )
         return [
             support_bot_to_dict(bot, include_secret=include_secret)
