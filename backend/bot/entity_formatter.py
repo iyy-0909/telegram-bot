@@ -3,6 +3,16 @@ from difflib import SequenceMatcher
 from html import escape
 
 from bot.logger import logger
+from bot.link_rules import (
+    ACTION_DELETE,
+    ACTION_DOWNGRADE,
+    ACTION_KEEP,
+    ACTION_REPLACE,
+    ACTION_TARGET_LINK,
+    find_target_message_url,
+    get_link_rules,
+    get_rule_key_for_url,
+)
 
 
 FORMAT_LEVEL_ENTITIES = "entities"
@@ -42,6 +52,12 @@ TELETHON_TO_BOT_TYPES = {
     "MessageEntityCustomEmoji": "custom_emoji",
     "MessageEntityBlockquote": "blockquote",
     "MessageEntityExpandableBlockquote": "expandable_blockquote",
+}
+
+BOT_ENTITY_TYPES = {
+    *TELETHON_TO_BOT_TYPES.values(),
+    "text_link",
+    "url",
 }
 
 
@@ -199,6 +215,26 @@ def get_entity_type(entity):
     return TELETHON_TO_BOT_TYPES.get(type(entity).__name__)
 
 
+def is_link_entity(entity):
+    return type(entity).__name__ in {"MessageEntityTextUrl", "MessageEntityUrl"}
+
+
+def link_entity_url(original_text: str, entity):
+    if type(entity).__name__ == "MessageEntityTextUrl":
+        return str(getattr(entity, "url", "") or "")
+
+    if type(entity).__name__ == "MessageEntityUrl":
+        start, end = entity_to_py_range(original_text, entity)
+        return (original_text or "")[start:end]
+
+    return ""
+
+
+def short_text(value, limit=80):
+    text = str(value or "").replace("\n", "\\n")
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
 def entity_extra_fields(entity, bot_type: str):
     extra = {}
 
@@ -245,7 +281,7 @@ def validate_bot_entity(text: str, entity: dict) -> bool:
         return False
 
     bot_type = entity.get("type")
-    if bot_type not in set(TELETHON_TO_BOT_TYPES.values()):
+    if bot_type not in BOT_ENTITY_TYPES:
         return False
 
     if bot_type == "text_link" and not entity.get("url"):
@@ -334,6 +370,189 @@ def map_entities_to_bot(original_text: str, processed_text: str, entities):
     ), dropped
 
 
+def remove_ranges(text: str, ranges):
+    if not ranges:
+        return text or "", []
+
+    merged = []
+    for start, end in sorted(ranges):
+        start = max(0, min(start, len(text or "")))
+        end = max(start, min(end, len(text or "")))
+        if start >= end:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    parts = []
+    cursor = 0
+    for start, end in merged:
+        parts.append((text or "")[cursor:start])
+        cursor = end
+    parts.append((text or "")[cursor:])
+    return "".join(parts), merged
+
+
+def map_index_after_deletions(index: int, delete_ranges):
+    shift = 0
+    for start, end in delete_ranges or []:
+        if index >= end:
+            shift += end - start
+        elif index > start:
+            return None
+    return index - shift
+
+
+def map_range_after_deletions(start: int, end: int, delete_ranges):
+    new_start = map_index_after_deletions(start, delete_ranges)
+    new_end = map_index_after_deletions(end, delete_ranges)
+
+    if new_start is None or new_end is None or new_start >= new_end:
+        return None
+
+    return new_start, new_end
+
+
+def resolve_link_action(task, target, rules, url):
+    rule_key, parsed = get_rule_key_for_url(url, task, target)
+    action = rules.get(rule_key, ACTION_DOWNGRADE)
+    resolved_url = ""
+
+    if action == ACTION_TARGET_LINK:
+        if parsed.get("kind") == "message_link":
+            resolved_url = find_target_message_url(
+                getattr(task, "id", None),
+                parsed.get("message_id"),
+                target,
+            )
+
+        if resolved_url:
+            return ACTION_TARGET_LINK, resolved_url, rule_key
+
+        missing_action = rules.get("missing_mapping", ACTION_DOWNGRADE)
+        if missing_action == ACTION_REPLACE:
+            replacement_url = str(
+                rules.get("missing_mapping_replacement") or ""
+            ).strip()
+            if replacement_url:
+                return ACTION_REPLACE, replacement_url, "missing_mapping"
+            return ACTION_DOWNGRADE, "", "missing_mapping"
+
+        return missing_action, "", "missing_mapping"
+
+    if action == ACTION_REPLACE:
+        replacement_url = str(rules.get(f"{rule_key}_replacement") or "").strip()
+        if replacement_url:
+            return ACTION_REPLACE, replacement_url, rule_key
+        return ACTION_DOWNGRADE, "", rule_key
+
+    return action, "", rule_key
+
+
+def apply_link_rules_to_text(original_text: str, processed_text: str, entities, task=None, target=None):
+    selected_group_id = getattr(task, "selected_link_template_group_id", None) if task else None
+    rules = get_link_rules(selected_group_id)
+
+    if not rules:
+        return processed_text or "", None
+
+    task_id = getattr(task, "id", None) if task else None
+    link_entity_count = sum(1 for entity in entities or [] if is_link_entity(entity))
+    logger.info(
+        f"链接规则开始处理 | task_id={task_id} | target={target} | "
+        f"group_id={selected_group_id} | original_len={len(original_text or '')} | "
+        f"processed_len={len(processed_text or '')} | entities={len(entities or [])} | "
+        f"link_entities={link_entity_count}"
+    )
+
+    if not link_entity_count:
+        logger.info(
+            f"链接规则未发现链接实体 | task_id={task_id} | target={target} | "
+            f"text={short_text(original_text)}"
+        )
+
+    link_decisions = []
+    delete_ranges = []
+
+    for entity in entities or []:
+        if not is_link_entity(entity):
+            continue
+
+        original_start, original_end = entity_to_py_range(original_text, entity)
+        mapped = map_range_by_diff(
+            original_text,
+            processed_text,
+            original_start,
+            original_end,
+        )
+        if not mapped:
+            logger.info(
+                f"链接实体位置映射失败 | task_id={task_id} | target={target} | "
+                f"entity_type={type(entity).__name__} | "
+                f"range={original_start}-{original_end} | "
+                f"text={short_text((original_text or '')[original_start:original_end])}"
+            )
+            continue
+
+        url = link_entity_url(original_text, entity)
+        action, resolved_url, rule_key = resolve_link_action(task, target, rules, url)
+        logger.info(
+            f"链接规则决策 | task_id={task_id} | target={target} | "
+            f"entity_type={type(entity).__name__} | rule={rule_key} | "
+            f"action={action} | text={short_text((original_text or '')[original_start:original_end])} | "
+            f"url={short_text(url, 140)} | resolved_url={short_text(resolved_url, 140)}"
+        )
+
+        if action == ACTION_DELETE:
+            delete_ranges.append(mapped)
+            continue
+
+        if action in {ACTION_KEEP, ACTION_TARGET_LINK, ACTION_REPLACE}:
+            link_decisions.append(
+                {
+                    "range": mapped,
+                    "url": resolved_url or url,
+                    "rule_key": rule_key,
+                }
+            )
+
+    final_text, merged_delete_ranges = remove_ranges(processed_text, delete_ranges)
+    link_entities = []
+
+    for decision in link_decisions:
+        mapped = map_range_after_deletions(
+            decision["range"][0],
+            decision["range"][1],
+            merged_delete_ranges,
+        )
+        if not mapped:
+            continue
+
+        offset, length = py_range_to_bot_entity_range(final_text, mapped[0], mapped[1])
+        entity = {
+            "type": "text_link",
+            "offset": offset,
+            "length": length,
+            "url": decision["url"],
+        }
+        if validate_bot_entity(final_text, entity):
+            link_entities.append(entity)
+        else:
+            logger.info(
+                f"链接实体生成后校验失败 | task_id={task_id} | target={target} | "
+                f"offset={offset} | length={length} | url={short_text(decision['url'], 140)}"
+            )
+
+    logger.info(
+        f"链接规则处理完成 | task_id={task_id} | target={target} | "
+        f"delete_ranges={len(delete_ranges)} | generated_link_entities={len(link_entities)} | "
+        f"final_len={len(final_text or '')}"
+    )
+
+    return final_text, link_entities
+
+
 def html_tag_for_entity(entity: dict):
     bot_type = entity.get("type")
 
@@ -398,7 +617,7 @@ def render_entities_as_html(text: str, entities) -> str:
     return render_bot_entities_as_html(text, bot_entities) if bot_entities else escape(text)
 
 
-def format_prepared_text(source, processed_text: str):
+def format_prepared_text(source, processed_text: str, task=None, target=None):
     plain_text = processed_text or ""
 
     if not plain_text:
@@ -414,13 +633,26 @@ def format_prepared_text(source, processed_text: str):
         message = pick_source_message(source)
         original_text = get_message_text(message) if message else ""
         original_entities = get_message_entities(message) if message else []
+        plain_text, link_entities = apply_link_rules_to_text(
+            original_text,
+            plain_text,
+            original_entities,
+            task=task,
+            target=target,
+        )
         text_edits = build_text_edits(original_text, plain_text)
 
         bot_entities, dropped = map_entities_to_bot(
             original_text,
             plain_text,
-            original_entities,
+            [
+                entity
+                for entity in original_entities
+                if not (link_entities is not None and is_link_entity(entity))
+            ],
         )
+        if link_entities is not None:
+            bot_entities = dedupe_entities([*bot_entities, *link_entities])
 
         if bot_entities:
             html_text = render_bot_entities_as_html(plain_text, bot_entities)

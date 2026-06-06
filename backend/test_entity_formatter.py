@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import bot.entity_formatter as entity_formatter
 from bot.entity_formatter import (
     format_prepared_text,
     utf16_len,
@@ -141,6 +144,126 @@ def test_text_link_downgrades_and_blockquote_keeps():
     assert "https://example.com" not in result.get("text", "")
 
 
+def test_link_rule_keep_preserves_text_link():
+    original_get_link_rules = entity_formatter.get_link_rules
+    entity_formatter.get_link_rules = lambda _group_id: {
+        "external_url": "keep",
+        "missing_mapping": "downgrade",
+    }
+
+    try:
+        text = "visit link"
+        start = text.index("link")
+        link = MessageEntityTextUrl(
+            utf16_len(text[:start]),
+            utf16_len("link"),
+            url="https://example.com",
+        )
+        msg = Message(text, [link])
+        result = format_prepared_text(
+            msg,
+            text,
+            task=SimpleNamespace(id=1, source_channel="@source", selected_link_template_group_id=9),
+            target="@target",
+        )
+    finally:
+        entity_formatter.get_link_rules = original_get_link_rules
+
+    entity = assert_entity(result, "text_link", "link")
+    assert entity["url"] == "https://example.com"
+
+
+def test_link_rule_delete_removes_link_text():
+    original_get_link_rules = entity_formatter.get_link_rules
+    entity_formatter.get_link_rules = lambda _group_id: {
+        "external_url": "delete",
+        "missing_mapping": "downgrade",
+    }
+
+    try:
+        text = "visit link now"
+        start = text.index("link")
+        link = MessageEntityTextUrl(
+            utf16_len(text[:start]),
+            utf16_len("link"),
+            url="https://example.com",
+        )
+        msg = Message(text, [link])
+        result = format_prepared_text(
+            msg,
+            text,
+            task=SimpleNamespace(id=1, source_channel="@source", selected_link_template_group_id=9),
+            target="@target",
+        )
+    finally:
+        entity_formatter.get_link_rules = original_get_link_rules
+
+    assert result["plain_text"] == "visit  now"
+    assert not result.get("entities")
+
+
+def test_link_rule_replace_username_link_url():
+    original_get_link_rules = entity_formatter.get_link_rules
+    entity_formatter.get_link_rules = lambda _group_id: {
+        "username_link": "replace",
+        "username_link_replacement": "https://t.me/new_user",
+        "missing_mapping": "downgrade",
+    }
+
+    try:
+        text = "contact user"
+        start = text.index("user")
+        link = MessageEntityTextUrl(
+            utf16_len(text[:start]),
+            utf16_len("user"),
+            url="https://t.me/old_user",
+        )
+        msg = Message(text, [link])
+        result = format_prepared_text(
+            msg,
+            text,
+            task=SimpleNamespace(id=1, source_channel="@source", selected_link_template_group_id=9),
+            target="@target",
+        )
+    finally:
+        entity_formatter.get_link_rules = original_get_link_rules
+
+    assert result["plain_text"] == "contact user"
+    entity = assert_entity(result, "text_link", "user")
+    assert entity["url"] == "https://t.me/new_user"
+
+
+def test_link_rule_replace_external_url():
+    original_get_link_rules = entity_formatter.get_link_rules
+    entity_formatter.get_link_rules = lambda _group_id: {
+        "external_url": "replace",
+        "external_url_replacement": "https://example.org/replaced",
+        "missing_mapping": "downgrade",
+    }
+
+    try:
+        text = "visit website"
+        start = text.index("website")
+        link = MessageEntityTextUrl(
+            utf16_len(text[:start]),
+            utf16_len("website"),
+            url="https://example.com",
+        )
+        msg = Message(text, [link])
+        result = format_prepared_text(
+            msg,
+            text,
+            task=SimpleNamespace(id=1, source_channel="@source", selected_link_template_group_id=9),
+            target="@target",
+        )
+    finally:
+        entity_formatter.get_link_rules = original_get_link_rules
+
+    assert result["plain_text"] == "visit website"
+    entity = assert_entity(result, "text_link", "website")
+    assert entity["url"] == "https://example.org/replaced"
+
+
 def run_all():
     tests = [
         test_unmodified_emoji_bold,
@@ -153,6 +276,10 @@ def run_all():
         test_truncate_shrinks_or_drops,
         test_html_escape_fallback,
         test_text_link_downgrades_and_blockquote_keeps,
+        test_link_rule_keep_preserves_text_link,
+        test_link_rule_delete_removes_link_text,
+        test_link_rule_replace_username_link_url,
+        test_link_rule_replace_external_url,
     ]
 
     for test in tests:

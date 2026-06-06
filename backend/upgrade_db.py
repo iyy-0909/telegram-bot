@@ -127,6 +127,27 @@ def main():
 
     add_column_if_missing(
         cur,
+        "clone_tasks",
+        "selected_link_template_group_id",
+        "ALTER TABLE clone_tasks ADD COLUMN selected_link_template_group_id INTEGER",
+    )
+
+    add_column_if_missing(
+        cur,
+        "listener_tasks",
+        "selected_link_template_group_id",
+        "ALTER TABLE listener_tasks ADD COLUMN selected_link_template_group_id INTEGER",
+    )
+
+    add_column_if_missing(
+        cur,
+        "support_bots",
+        "welcome_text_type",
+        "ALTER TABLE support_bots ADD COLUMN welcome_text_type VARCHAR DEFAULT 'plain'",
+    )
+
+    add_column_if_missing(
+        cur,
         "my_channels",
         "clone_status",
         "ALTER TABLE my_channels ADD COLUMN clone_status VARCHAR DEFAULT ''",

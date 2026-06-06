@@ -6,7 +6,7 @@ from db.models import ContentTemplate
 from bot.logger import logger
 
 
-VALID_TEMPLATE_TYPES = {"head", "body", "footer", "filter"}
+VALID_TEMPLATE_TYPES = {"head", "body", "footer", "filter", "link"}
 
 
 def normalize_template_type(value):

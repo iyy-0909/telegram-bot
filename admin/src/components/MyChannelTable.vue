@@ -107,14 +107,6 @@
                 {{ row.collection_status || "-" }}
               </template>
             </el-table-column>
-            <el-table-column label="克隆状态" min-width="190" show-overflow-tooltip>
-              <template #default="{ row }">
-                <el-tag v-if="row.clone_status" size="small" type="success">
-                  {{ row.clone_status }}
-                </el-tag>
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
             <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
@@ -215,40 +207,70 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="620px">
-      <el-form label-width="110px">
-        <el-form-item label="频道名称">
-          <el-input v-model="form.title" />
-        </el-form-item>
-        <el-form-item label="username">
-          <el-input v-model="form.username" placeholder="@channel_username" />
-        </el-form-item>
-        <el-form-item label="chat_id">
-          <el-input v-model="form.chat_id" placeholder="-100xxxxxxxxxx，可选" />
-        </el-form-item>
-        <el-form-item label="分组">
-          <el-input v-model="form.group_name" />
-        </el-form-item>
-        <el-form-item label="默认 Bot">
-          <BotSelect v-model="form.bot_id" :bots="props.bots" placeholder="不选则使用系统默认 Bot" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="form.status">
+    <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="720px">
+      <el-descriptions :column="2" border>
+        <el-descriptions-item label="频道名称">
+          <el-input v-model="form.title" class="description-field" />
+        </el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-select v-model="form.status" class="description-field">
             <el-option label="正常" value="enabled" />
             <el-option label="已禁用" value="disabled" />
             <el-option label="异常" value="error" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="投放状态">
-          <el-input v-model="form.delivery_status" placeholder="例如：投放中 / 暂停 / 待投放" />
-        </el-form-item>
-        <el-form-item label="收录状态">
-          <el-input v-model="form.collection_status" placeholder="例如：已收录 / 未收录 / 待确认" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="form.remark" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
+        </el-descriptions-item>
+        <el-descriptions-item label="username">
+          <el-input v-model="form.username" class="description-field" placeholder="@channel_username" />
+        </el-descriptions-item>
+        <el-descriptions-item label="chat_id">
+          <el-input v-model="form.chat_id" class="description-field" placeholder="-100xxxxxxxxxx，可选" />
+        </el-descriptions-item>
+        <el-descriptions-item label="频道类型">
+          <el-input v-model="form.channel_type" class="description-field" placeholder="例如：channel / supergroup" />
+        </el-descriptions-item>
+        <el-descriptions-item label="分组">
+          <el-input v-model="form.group_name" class="description-field" />
+        </el-descriptions-item>
+        <el-descriptions-item label="绑定 Bot">
+          <BotSelect v-model="form.bot_id" :bots="props.bots" class="description-field" placeholder="不选则使用系统默认 Bot" />
+        </el-descriptions-item>
+        <el-descriptions-item label="最后检测">{{ formatDateTime(editing?.last_check_at) }}</el-descriptions-item>
+        <el-descriptions-item label="投放状态">
+          <el-input v-model="form.delivery_status" class="description-field" placeholder="例如：投放中 / 暂停 / 待投放" />
+        </el-descriptions-item>
+        <el-descriptions-item label="收录状态">
+          <el-input v-model="form.collection_status" class="description-field" placeholder="例如：已收录 / 未收录 / 待确认" />
+        </el-descriptions-item>
+        <el-descriptions-item label="克隆状态" :span="2">{{ editing?.clone_status || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="成员数">
+          {{ formatMemberCount(editing) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="频道创建者">
+          {{ formatCreator(editing) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="权限" :span="2">
+          <div class="detail-tags">
+            <el-tag size="small" :type="editing?.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(editing?.bot_is_member) }}</el-tag>
+            <el-tag size="small" :type="editing?.bot_is_admin ? 'success' : 'info'">管理员 {{ yesNo(editing?.bot_is_admin) }}</el-tag>
+            <el-tag size="small" :type="editing?.can_post_messages ? 'success' : 'warning'">发帖 {{ yesNo(editing?.can_post_messages) }}</el-tag>
+            <el-tag size="small" :type="editing?.can_edit_messages ? 'success' : 'info'">编辑 {{ yesNo(editing?.can_edit_messages) }}</el-tag>
+            <el-tag size="small" :type="editing?.can_delete_messages ? 'success' : 'info'">删除 {{ yesNo(editing?.can_delete_messages) }}</el-tag>
+            <el-tag size="small" :type="editing?.can_manage_topics ? 'success' : 'info'">话题 {{ yesNo(editing?.can_manage_topics) }}</el-tag>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="查看能力" :span="2">
+          <div class="detail-tags">
+            <el-tag size="small" :type="editing?.can_view_member_count ? 'success' : 'warning'">频道人数 {{ editing?.can_view_member_count ? "可查看" : "不可查看" }}</el-tag>
+            <el-tag size="small" :type="editing?.can_view_creator ? 'success' : 'warning'">频道创建者 {{ editing?.can_view_creator ? "可查看" : "不可查看" }}</el-tag>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="备注" :span="2">
+          <el-input v-model="form.remark" class="description-field" type="textarea" :rows="3" />
+        </el-descriptions-item>
+        <el-descriptions-item label="最近错误" :span="2">
+          {{ editing?.last_error || "-" }}
+        </el-descriptions-item>
+      </el-descriptions>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
@@ -293,6 +315,7 @@
         <el-descriptions-item label="最后检测">{{ formatDateTime(checkInfo.last_check_at) }}</el-descriptions-item>
         <el-descriptions-item label="投放状态">{{ checkInfo.delivery_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="收录状态">{{ checkInfo.collection_status || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="克隆状态" :span="2">{{ checkInfo.clone_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="成员数">
           {{ formatMemberCount(checkInfo) }}
         </el-descriptions-item>
@@ -399,6 +422,7 @@ function emptyForm() {
     title: "",
     username: "",
     chat_id: "",
+    channel_type: "",
     group_name: "",
     bot_id: null,
     status: "enabled",
@@ -451,6 +475,7 @@ function openEdit(row) {
     title: row.title || "",
     username: row.username || "",
     chat_id: row.chat_id || "",
+    channel_type: row.channel_type || "",
     group_name: row.group_name || "",
     bot_id: row.bot_id || null,
     status: row.status || "enabled",
@@ -646,6 +671,10 @@ function yesNo(value) {
 }
 
 function formatMemberCount(row) {
+  if (!row) {
+    return "-"
+  }
+
   if (!row?.can_view_member_count) {
     return "不可查看"
   }
@@ -656,6 +685,10 @@ function formatMemberCount(row) {
 }
 
 function formatCreator(row) {
+  if (!row) {
+    return "-"
+  }
+
   if (!row?.can_view_creator) {
     return "不可查看"
   }
@@ -792,5 +825,9 @@ function readError(error, fallback) {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.description-field {
+  width: 100%;
 }
 </style>

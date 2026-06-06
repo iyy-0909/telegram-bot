@@ -120,6 +120,29 @@ def should_filter_qr_code(task) -> bool:
     return bool(getattr(task, "filter_qr_code", True))
 
 
+def describe_qr_filter(qr_files):
+    if not qr_files:
+        return "二维码过滤：检测到二维码"
+
+    names = [
+        str(path).replace("\\", "/").rsplit("/", 1)[-1]
+        for path in qr_files[:3]
+    ]
+    suffix = " 等" if len(qr_files) > 3 else ""
+    return f"二维码过滤：检测到二维码文件 {', '.join(names)}{suffix}"
+
+
+def describe_content_filter(result):
+    detail = result.get("filter_detail") or ""
+    if detail:
+        return f"监听消息被过滤：{detail}"
+
+    if result.get("reason") == "empty_after_process":
+        return "内容处理后为空，已跳过"
+
+    return "监听消息被过滤"
+
+
 async def send_prepared_to_tasks(
     prepared,
     tasks,
@@ -143,6 +166,7 @@ async def send_prepared_to_tasks(
             qr_files = find_qr_code_files(prepared.get("files") or [])
 
             if qr_files:
+                event_message = describe_qr_filter(qr_files)
                 for target in targets:
                     add_listener_send_event(
                         task_id=task.id,
@@ -155,13 +179,13 @@ async def send_prepared_to_tasks(
                         grouped_id=grouped_id,
                         source_message_url=task_source_url(task, source_message_id),
                         status="filtered",
-                        message="二维码过滤，已跳过发送",
+                        message=event_message,
                     )
 
                 logger.warning(
                     f"监听二维码过滤，跳过发送 | task_id={task.id} | "
                     f"message_id={source_message_id} | grouped_id={grouped_id} | "
-                    f"files={qr_files}"
+                    f"detail={event_message} | files={qr_files}"
                 )
                 continue
 
@@ -172,11 +196,7 @@ async def send_prepared_to_tasks(
             reason = result.get("reason") or "filtered"
             is_empty_after_process = reason == "empty_after_process"
             event_type = "empty" if is_empty_after_process else "filtered"
-            event_message = (
-                "内容处理后为空，已跳过"
-                if is_empty_after_process
-                else "监听消息被过滤"
-            )
+            event_message = describe_content_filter(result)
 
             for target in targets:
                 add_listener_send_event(
@@ -196,7 +216,7 @@ async def send_prepared_to_tasks(
             logger.warning(
                 f"{event_message} | task_id={task.id} | "
                 f"message_id={source_message_id} | grouped_id={grouped_id} | "
-                f"reason={reason}"
+                f"reason={reason} | keyword={result.get('filter_keyword') or ''}"
             )
             continue
 
@@ -246,6 +266,8 @@ async def send_prepared_to_tasks(
                 formatted_text = format_prepared_text(
                     send_payload.get("_source_payload"),
                     result.get("text") or "",
+                    task=task,
+                    target=target,
                 )
                 send_payload["text"] = formatted_text.get("text") or ""
                 send_payload["plain_text"] = (
@@ -596,14 +618,18 @@ async def process_message(message, tasks, source):
             )
 
         prepared = await prepare_single_message(message, raw_text)
-        prepared["_raw_text"] = raw_text
-        prepared["_source_payload"] = message
 
         if not prepared or not prepared.get("ok"):
+            error = ""
+            if prepared:
+                error = prepared.get("error_message") or prepared.get("error") or ""
             logger.warning(
-                f"监听单条准备失败 | message_id={message.id}"
+                f"监听单条准备失败 | message_id={message.id} | reason={error or '-'}"
             )
             return
+
+        prepared["_raw_text"] = raw_text
+        prepared["_source_payload"] = message
 
         for task in tasks:
             add_listener_send_event(

@@ -40,6 +40,10 @@ def as_bool(value):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def normalize_welcome_text_type(value):
+    return "html" if str(value or "").strip().lower() == "html" else "plain"
+
+
 def set_support_setting(key, value, remark=""):
     db = SessionLocal()
     try:
@@ -104,6 +108,7 @@ def support_bot_to_dict(bot, include_secret=False):
         "support_group_chat_id": bot.support_group_chat_id or "",
         "polling_enabled": bool(bot.polling_enabled),
         "welcome_message": bot.welcome_message or "",
+        "welcome_text_type": bot.welcome_text_type or "plain",
         "welcome_media_type": bot.welcome_media_type or "text",
         "welcome_media_file_id": bot.welcome_media_file_id or "",
         "off_hours_message": bot.off_hours_message or "",
@@ -142,6 +147,7 @@ def legacy_settings_to_support_bot_data():
         "support_group_chat_id": settings.get("support_group_chat_id") or "",
         "polling_enabled": as_bool(settings.get("support_polling_enabled")),
         "welcome_message": settings.get("welcome_message") or "",
+        "welcome_text_type": "plain",
         "welcome_media_type": "text",
         "welcome_media_file_id": "",
         "off_hours_message": settings.get("off_hours_message") or "",
@@ -210,6 +216,7 @@ def create_support_bot(data):
             support_group_chat_id=str(data.get("support_group_chat_id") or "").strip(),
             polling_enabled=bool(data.get("polling_enabled", False)),
             welcome_message=data.get("welcome_message") or "",
+            welcome_text_type=normalize_welcome_text_type(data.get("welcome_text_type")),
             welcome_media_type=data.get("welcome_media_type") or "text",
             welcome_media_file_id=data.get("welcome_media_file_id") or "",
             off_hours_message=data.get("off_hours_message") or "",
@@ -245,6 +252,8 @@ def update_support_bot(support_bot_id, data):
                 continue
             if key in bool_fields:
                 value = bool(value)
+            elif key == "welcome_text_type":
+                value = normalize_welcome_text_type(value)
             elif key in int_fields and value != "":
                 value = int(value)
             elif key in int_fields:

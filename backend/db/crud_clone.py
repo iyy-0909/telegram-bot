@@ -15,6 +15,7 @@ OPTIONAL_NUMERIC_FIELDS = {
     "selected_body_template_group_id",
     "selected_footer_template_group_id",
     "selected_filter_template_group_id",
+    "selected_link_template_group_id",
     "selected_head_template_id",
     "selected_body_template_id",
     "selected_footer_template_id",

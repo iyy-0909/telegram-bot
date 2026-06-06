@@ -12,6 +12,7 @@
           <el-option label="正文 body" value="body" />
           <el-option label="底部 footer" value="footer" />
           <el-option label="过滤关键词 filter" value="filter" />
+          <el-option label="链接配置 link" value="link" />
         </el-select>
       </el-form-item>
 
@@ -28,7 +29,38 @@
 
       <el-divider content-position="left">{{ contentTitle }}</el-divider>
 
-      <div class="content-list">
+      <el-descriptions
+        v-if="localForm.type === 'link'"
+        :column="1"
+        border
+        class="link-rules-descriptions"
+      >
+        <el-descriptions-item
+          v-for="field in linkRuleFields"
+          :key="field.key"
+          :label="field.label"
+        >
+          <div class="link-rule-control">
+            <el-select v-model="linkConfig[field.key]" class="link-action-select">
+              <el-option
+                v-for="option in linkActionOptionsFor(field.key)"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+            <el-input
+              v-if="linkConfig[field.key] === 'replace'"
+              v-model="linkConfig[replacementKey(field.key)]"
+              class="link-replacement-input"
+              placeholder="替换为，例如 https://t.me/username"
+              clearable
+            />
+          </div>
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <div v-else class="content-list">
         <div
           v-for="(item, index) in localForm.items"
           :key="item.local_key"
@@ -100,7 +132,7 @@
         </div>
       </div>
 
-      <el-button class="add-content-button" @click="addItem">
+      <el-button v-if="localForm.type !== 'link'" class="add-content-button" @click="addItem">
         添加一条{{ localForm.type === "filter" ? "关键词组" : "内容" }}
       </el-button>
     </el-form>
@@ -134,6 +166,46 @@ const localForm = reactive({
   enabled: true,
   items: [],
 })
+
+const DEFAULT_LINK_CONFIG = {
+  source_message_link: "target_link",
+  missing_mapping: "downgrade",
+  missing_mapping_replacement: "",
+  target_channel_link: "keep",
+  target_channel_link_replacement: "",
+  external_channel_link: "downgrade",
+  external_channel_link_replacement: "",
+  username_link: "downgrade",
+  username_link_replacement: "",
+  bot_link: "downgrade",
+  bot_link_replacement: "",
+  external_url: "downgrade",
+  external_url_replacement: "",
+  invite_link: "downgrade",
+  invite_link_replacement: "",
+  source_message_link_replacement: "",
+}
+
+const linkActionOptions = [
+  { label: "目标链接", value: "target_link" },
+  { label: "降级文本", value: "downgrade" },
+  { label: "保留", value: "keep" },
+  { label: "直接删除", value: "delete" },
+  { label: "替换链接", value: "replace" },
+]
+
+const linkConfig = reactive({ ...DEFAULT_LINK_CONFIG })
+
+const linkRuleFields = [
+  { key: "source_message_link", label: "源频道内部消息链接" },
+  { key: "missing_mapping", label: "找不到映射时" },
+  { key: "target_channel_link", label: "目标频道链接" },
+  { key: "external_channel_link", label: "外部频道链接" },
+  { key: "username_link", label: "用户名链接" },
+  { key: "bot_link", label: "Bot 链接" },
+  { key: "external_url", label: "普通外部网址" },
+  { key: "invite_link", label: "邀请链接" },
+]
 
 const primaryFormatActions = [
   {
@@ -215,7 +287,11 @@ const allFormatActions = [
 ]
 
 const contentTitle = computed(() => (
-  localForm.type === "filter" ? "过滤关键词" : "规则内容"
+  localForm.type === "filter"
+    ? "过滤关键词"
+    : localForm.type === "link"
+      ? "链接处理配置"
+      : "规则内容"
 ))
 
 const contentPlaceholder = computed(() => (
@@ -224,7 +300,15 @@ const contentPlaceholder = computed(() => (
     : "填写这条模板内容，可使用上方富文本格式按钮插入 Telegram HTML 标签。"
 ))
 
-const showRichToolbar = computed(() => localForm.type !== "filter")
+const showRichToolbar = computed(() => !["filter", "link"].includes(localForm.type))
+
+function linkActionOptionsFor(fieldKey) {
+  return linkActionOptions
+}
+
+function replacementKey(fieldKey) {
+  return `${fieldKey}_replacement`
+}
 
 watch(
   () => props.form,
@@ -242,6 +326,8 @@ watch(
     if (!localForm.items.length) {
       addItem()
     }
+
+    Object.assign(linkConfig, parseLinkConfig(localForm.items[0]?.content))
   },
   { immediate: true, deep: true },
 )
@@ -323,19 +409,58 @@ async function clearHtmlTags(index) {
 }
 
 function submit() {
+  const items = localForm.type === "link"
+    ? [{
+        id: normalizeTemplateId(localForm.items[0]?.id),
+        name: "链接配置",
+        content: JSON.stringify(normalizeLinkConfig(linkConfig), null, 2),
+        enabled: true,
+        weight: 1,
+      }]
+    : localForm.items.map((item, index) => ({
+        id: normalizeTemplateId(item.id),
+        name: `${localForm.type === "filter" ? "关键词组" : "内容"} ${index + 1}`,
+        content: item.content || "",
+        enabled: item.enabled ?? true,
+        weight: toPositiveNumber(item.weight, 1),
+      }))
+
   emit("submit", {
     id: localForm.id,
     name: (localForm.name || "").trim(),
     type: localForm.type,
     enabled: localForm.enabled,
-    items: localForm.items.map((item, index) => ({
-      id: normalizeTemplateId(item.id),
-      name: `${localForm.type === "filter" ? "关键词组" : "内容"} ${index + 1}`,
-      content: item.content || "",
-      enabled: item.enabled ?? true,
-      weight: toPositiveNumber(item.weight, 1),
-    })),
+    items,
   })
+}
+
+function parseLinkConfig(value) {
+  try {
+    return normalizeLinkConfig(JSON.parse(value || "{}"))
+  } catch {
+    return { ...DEFAULT_LINK_CONFIG }
+  }
+}
+
+function normalizeLinkConfig(value) {
+  const allowed = new Set(linkActionOptions.map((option) => option.value))
+  const result = { ...DEFAULT_LINK_CONFIG }
+
+  for (const field of linkRuleFields) {
+    const nextValue = value?.[field.key]
+    if (allowed.has(nextValue)) {
+      result[field.key] = nextValue
+    }
+  }
+
+  for (const field of linkRuleFields) {
+    const key = replacementKey(field.key)
+    result[key] = result[field.key] === "replace"
+      ? String(value?.[key] || "").trim()
+      : ""
+  }
+
+  return result
 }
 
 function normalizeItems(items) {
@@ -416,5 +541,43 @@ function toPositiveNumber(value, fallback) {
 
 .add-content-button {
   margin-top: 12px;
+}
+
+.link-rules-descriptions :deep(.el-descriptions__label) {
+  width: 180px;
+  white-space: nowrap;
+}
+
+.link-rule-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.link-action-select {
+  width: 150px;
+  flex: 0 0 150px;
+}
+
+.link-replacement-input {
+  min-width: 260px;
+  flex: 1 1 320px;
+}
+
+@media (max-width: 820px) {
+  .link-rule-control {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .link-action-select,
+  .link-replacement-input {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
 }
 </style>

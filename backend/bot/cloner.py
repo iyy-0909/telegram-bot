@@ -111,6 +111,31 @@ def should_filter_qr_code(task) -> bool:
     return bool(getattr(task, "filter_qr_code", True))
 
 
+def describe_qr_filter(qr_files):
+    if not qr_files:
+        return "二维码过滤：检测到二维码"
+
+    names = [
+        str(path).replace("\\", "/").rsplit("/", 1)[-1]
+        for path in qr_files[:3]
+    ]
+    suffix = " 等" if len(qr_files) > 3 else ""
+    return f"二维码过滤：检测到二维码文件 {', '.join(names)}{suffix}"
+
+
+def describe_clone_content_filter(result, *, album=False):
+    detail = result.get("filter_detail") or ""
+
+    if detail:
+        prefix = "克隆跳过：相册消息被过滤" if album else "克隆跳过：消息被过滤"
+        return f"{prefix}：{detail}"
+
+    if result.get("reason") == "empty_after_process":
+        return "克隆跳过：相册内容处理后为空" if album else "克隆跳过：内容处理后为空"
+
+    return "克隆跳过：相册关键词过滤" if album else "克隆跳过：关键词过滤"
+
+
 def mark_stopped(task_id):
     update_clone_task(task_id, {"status": "stopped"})
     logger.warning(f"克隆任务已停止 | task_id={task_id}")
@@ -277,10 +302,11 @@ async def send_to_targets(
             qr_files = find_qr_code_files(prepared.get("files") or [])
 
             if qr_files:
+                filter_message = describe_qr_filter(qr_files)
                 logger.warning(
                     f"二维码过滤，跳过发送 | task_id={task.id} | "
                     f"source_message_id={source_message_id} | grouped_id={grouped_id} | "
-                    f"files={qr_files}"
+                    f"detail={filter_message} | files={qr_files}"
                 )
 
                 mark_message_sent(
@@ -304,24 +330,10 @@ async def send_to_targets(
                         bot_id=getattr(task, "bot_id", None),
                         event_type="filtered",
                         status="filtered",
-                        message="二维码过滤，已跳过发送",
+                        message=filter_message,
                     )
 
                 return "filtered"
-
-        prepared["plain_text"] = formatted_text.get("plain_text") or send_text or ""
-        prepared["format_level"] = formatted_text.get("format_level")
-        prepared["kept_entities_count"] = formatted_text.get("kept_entities_count", 0)
-        prepared["dropped_entities_count"] = formatted_text.get("dropped_entities_count", 0)
-
-        if formatted_text.get("entities"):
-            prepared["entities"] = formatted_text.get("entities")
-
-        if formatted_text.get("html_text"):
-            prepared["html_text"] = formatted_text.get("html_text")
-
-        if formatted_text.get("parse_mode"):
-            prepared["parse_mode"] = formatted_text.get("parse_mode")
 
         for index, target in enumerate(targets):
             target_label = "主目标" if index == 0 else "附加目标"
@@ -339,10 +351,46 @@ async def send_to_targets(
                     f"target={target} | source_message_id={source_message_id}"
                 )
 
+                target_prepared = dict(prepared)
+                target_formatted_text = (
+                    formatted_text
+                    if isinstance(text, dict)
+                    else format_prepared_text(source_payload, text, task=task, target=target)
+                )
+                target_send_text = target_formatted_text.get("text") or ""
+                target_prepared["text"] = target_send_text
+                target_prepared["plain_text"] = (
+                    target_formatted_text.get("plain_text") or target_send_text or ""
+                )
+                target_prepared["format_level"] = target_formatted_text.get("format_level")
+                target_prepared["kept_entities_count"] = target_formatted_text.get(
+                    "kept_entities_count",
+                    0,
+                )
+                target_prepared["dropped_entities_count"] = target_formatted_text.get(
+                    "dropped_entities_count",
+                    0,
+                )
+
+                if target_formatted_text.get("entities"):
+                    target_prepared["entities"] = target_formatted_text.get("entities")
+                else:
+                    target_prepared.pop("entities", None)
+
+                if target_formatted_text.get("html_text"):
+                    target_prepared["html_text"] = target_formatted_text.get("html_text")
+                else:
+                    target_prepared.pop("html_text", None)
+
+                if target_formatted_text.get("parse_mode"):
+                    target_prepared["parse_mode"] = target_formatted_text.get("parse_mode")
+                else:
+                    target_prepared.pop("parse_mode", None)
+
                 send_result = await send_queue.send(
                     send_prepared_by_bot,
                     target,
-                    prepared,
+                    target_prepared,
                     bot_id=getattr(task, "bot_id", None),
                     task_id=task.id,
                     target=target,
@@ -391,8 +439,8 @@ async def send_to_targets(
                         target_chat_id=target,
                         target_message_id=target_message_ids[0] if target_message_ids else None,
                         message_type="caption" if prepared.get("files") else "text",
-                        text=(prepared.get("text") or "") if not prepared.get("files") else "",
-                        caption=(prepared.get("text") or "") if prepared.get("files") else "",
+                        text=(target_prepared.get("text") or "") if not prepared.get("files") else "",
+                        caption=(target_prepared.get("text") or "") if prepared.get("files") else "",
                         bot_id=send_result.get("bot_id") if isinstance(send_result, dict) else getattr(task, "bot_id", None),
                         bot_name=send_result.get("bot_name") if isinstance(send_result, dict) else "",
                         event_type="success",
@@ -717,14 +765,11 @@ async def clone_task(task, stop_event=None):
                         mark_message_sent(task.id, message_id, None)
 
                         reason = result.get("reason") or "filtered"
-                        skip_message = (
-                            "克隆跳过：内容处理后为空"
-                            if reason == "empty_after_process"
-                            else "克隆跳过：关键词过滤"
-                        )
+                        skip_message = describe_clone_content_filter(result)
                         logger.warning(
                             f"{skip_message} | task_id={task.id} | "
-                            f"message_id={message_id} | reason={reason}"
+                            f"message_id={message_id} | reason={reason} | "
+                            f"keyword={result.get('filter_keyword') or ''}"
                         )
 
                         continue
@@ -797,14 +842,11 @@ async def clone_task(task, stop_event=None):
                         mark_message_sent(task.id, max_id, grouped_id)
 
                         reason = result.get("reason") or "filtered"
-                        skip_message = (
-                            "克隆跳过：相册内容处理后为空"
-                            if reason == "empty_after_process"
-                            else "克隆跳过：相册关键词过滤"
-                        )
+                        skip_message = describe_clone_content_filter(result, album=True)
                         logger.warning(
                             f"{skip_message} | task_id={task.id} | "
-                            f"grouped_id={grouped_id} | last_id={max_id} | reason={reason}"
+                            f"grouped_id={grouped_id} | last_id={max_id} | reason={reason} | "
+                            f"keyword={result.get('filter_keyword') or ''}"
                         )
 
                         continue

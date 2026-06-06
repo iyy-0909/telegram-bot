@@ -227,6 +227,7 @@ class ListenerTaskCreate(BaseModel):
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
+    selected_link_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -253,6 +254,7 @@ class ListenerTaskUpdate(BaseModel):
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
+    selected_link_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -361,6 +363,7 @@ class CloneTaskCreate(BaseModel):
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
+    selected_link_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -395,6 +398,7 @@ class CloneTaskUpdate(BaseModel):
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
+    selected_link_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -438,6 +442,7 @@ class SupportBotCreate(BaseModel):
     support_group_chat_id: str = ""
     polling_enabled: bool = False
     welcome_message: str = ""
+    welcome_text_type: str = "plain"
     welcome_media_type: str = "text"
     welcome_media_file_id: str = ""
     off_hours_message: str = ""
@@ -455,6 +460,7 @@ class SupportBotUpdate(BaseModel):
     support_group_chat_id: Optional[str] = None
     polling_enabled: Optional[bool] = None
     welcome_message: Optional[str] = None
+    welcome_text_type: Optional[str] = None
     welcome_media_type: Optional[str] = None
     welcome_media_file_id: Optional[str] = None
     off_hours_message: Optional[str] = None
@@ -613,6 +619,7 @@ def clone_task_to_dict(task):
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
         "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
+        "selected_link_template_group_id": getattr(task, "selected_link_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
@@ -702,6 +709,7 @@ def listener_task_to_dict(task):
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
         "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
+        "selected_link_template_group_id": getattr(task, "selected_link_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),

@@ -409,6 +409,7 @@ const currentListenerTask = reactive({
   selected_body_template_id: null,
   selected_footer_template_id: null,
   selected_filter_template_group_id: null,
+  selected_link_template_group_id: null,
   album_wait_seconds: 3,
 })
 
@@ -470,6 +471,7 @@ const currentCloneTask = reactive({
   selected_body_template_id: null,
   selected_footer_template_id: null,
   selected_filter_template_group_id: null,
+  selected_link_template_group_id: null,
   enabled: true,
   status: "idle",
   last_message_id: 0,
@@ -802,7 +804,7 @@ function openEditContentTemplateDialog(row) {
 async function submitContentTemplate(formData) {
   Object.assign(currentContentTemplate, formData)
 
-  if (!["head", "body", "footer", "filter"].includes(currentContentTemplate.type)) {
+  if (!["head", "body", "footer", "filter", "link"].includes(currentContentTemplate.type)) {
     ElMessage.error("模板类型不正确")
     return
   }
@@ -897,6 +899,7 @@ function resetCurrentListenerTask() {
     selected_body_template_id: null,
     selected_footer_template_id: null,
     selected_filter_template_group_id: null,
+    selected_link_template_group_id: null,
     album_wait_seconds: 3,
   })
 }
@@ -941,6 +944,7 @@ async function openEditListenerTaskDialog(row) {
     selected_body_template_id: normalizeTemplateId(row.selected_body_template_id),
     selected_footer_template_id: normalizeTemplateId(row.selected_footer_template_id),
     selected_filter_template_group_id: normalizeTemplateId(row.selected_filter_template_group_id),
+    selected_link_template_group_id: normalizeTemplateId(row.selected_link_template_group_id),
     album_wait_seconds: toPositiveNumber(row.album_wait_seconds, 3),
   })
 
@@ -1111,6 +1115,9 @@ async function submitListenerTask(formData) {
       : null,
     selected_filter_template_group_id: normalizeTemplateId(
       currentListenerTask.selected_filter_template_group_id,
+    ),
+    selected_link_template_group_id: normalizeTemplateId(
+      currentListenerTask.selected_link_template_group_id,
     ),
     album_wait_seconds: toPositiveNumber(currentListenerTask.album_wait_seconds, 3),
   }
@@ -1731,6 +1738,7 @@ function resetCurrentCloneTask() {
     selected_body_template_id: null,
     selected_footer_template_id: null,
     selected_filter_template_group_id: null,
+    selected_link_template_group_id: null,
     enabled: true,
     status: "idle",
     last_message_id: 0,
@@ -1779,6 +1787,7 @@ async function openEditCloneTaskDialog(row) {
     selected_body_template_id: normalizeTemplateId(row.selected_body_template_id),
     selected_footer_template_id: normalizeTemplateId(row.selected_footer_template_id),
     selected_filter_template_group_id: normalizeTemplateId(row.selected_filter_template_group_id),
+    selected_link_template_group_id: normalizeTemplateId(row.selected_link_template_group_id),
     enabled: row.enabled ?? true,
     status: row.status || "idle",
     last_message_id: row.last_message_id || 0,
@@ -1903,6 +1912,9 @@ async function submitCloneTask(formData) {
       : null,
     selected_filter_template_group_id: normalizeTemplateId(
       currentCloneTask.selected_filter_template_group_id,
+    ),
+    selected_link_template_group_id: normalizeTemplateId(
+      currentCloneTask.selected_link_template_group_id,
     ),
     enabled: currentCloneTask.enabled,
   }

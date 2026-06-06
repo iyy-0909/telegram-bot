@@ -74,6 +74,14 @@
         </el-table-column>
         <el-table-column label="欢迎语" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
+            <el-tag
+              v-if="row.welcome_message"
+              size="small"
+              effect="plain"
+              class="welcome-type-tag"
+            >
+              {{ welcomeTextTypeLabel(row.welcome_text_type) }}
+            </el-tag>
             {{ row.welcome_message || row.welcome_media_file_id || "-" }}
           </template>
         </el-table-column>
@@ -140,6 +148,16 @@
 
         <el-form-item label="欢迎文本">
           <el-input v-model="form.welcome_message" type="textarea" :rows="3" />
+        </el-form-item>
+
+        <el-form-item label="文本类型">
+          <el-select v-model="form.welcome_text_type">
+            <el-option label="纯文本" value="plain" />
+            <el-option label="HTML 富文本" value="html" />
+          </el-select>
+          <div class="field-tip">
+            HTML 富文本支持 b、i、u、s、code、pre、a 等 Telegram Bot API 标签。
+          </div>
         </el-form-item>
 
         <el-form-item label="欢迎媒体类型">
@@ -264,6 +282,7 @@ function emptyForm() {
     support_group_chat_id: "",
     polling_enabled: false,
     welcome_message: "您好，欢迎咨询，请直接发送您的问题，客服会尽快回复您。",
+    welcome_text_type: "plain",
     welcome_media_type: "text",
     welcome_media_file_id: "",
     off_hours_message: "您好，当前客服不在线，我们会尽快回复您。",
@@ -318,6 +337,7 @@ async function save() {
     ...form,
     name: form.name.trim(),
     support_group_chat_id: form.support_group_chat_id.trim(),
+    welcome_text_type: normalizeWelcomeTextType(form.welcome_text_type),
   }
 
   if (form.bot_token.trim()) {
@@ -427,6 +447,14 @@ function botLabel(row) {
   if (bot) return `${bot.name} (#${bot.id})`
   return row.has_bot_token ? "自定义 Token" : "-"
 }
+
+function normalizeWelcomeTextType(value) {
+  return value === "html" ? "html" : "plain"
+}
+
+function welcomeTextTypeLabel(value) {
+  return normalizeWelcomeTextType(value) === "html" ? "HTML" : "纯文本"
+}
 </script>
 
 <style scoped>
@@ -513,6 +541,10 @@ function botLabel(row) {
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   color: #606266;
+}
+
+.welcome-type-tag {
+  margin-right: 6px;
 }
 
 .row-actions {

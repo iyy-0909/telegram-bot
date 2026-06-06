@@ -275,7 +275,7 @@ def update_my_channel_clone_status(targets, source_channel, status_text=None):
     if not normalized_targets:
         return 0
 
-    clone_status = status_text or f"克隆完成--源频道{source_channel}"
+    clone_status = status_text or f"完成-源频道{source_channel}"
     db = SessionLocal()
 
     try:

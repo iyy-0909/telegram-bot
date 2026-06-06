@@ -31,8 +31,22 @@ def test_skip_when_original_text_removed_before_templates():
     assert result["blocked"] is True
     assert result["reason"] == "empty_after_process"
     assert result["text"] == ""
+    assert "联系方式" in result["filter_detail"]
+
+
+def test_keyword_filter_reports_matched_keyword():
+    result = content_processor.process_content(
+        "这是一条广告消息",
+        make_task(blocked_keywords='["广告", "招聘"]'),
+    )
+
+    assert result["blocked"] is True
+    assert result["reason"] == "keyword"
+    assert result["filter_keyword"] == "广告"
+    assert "广告" in result["filter_detail"]
 
 
 if __name__ == "__main__":
     test_skip_when_original_text_removed_before_templates()
+    test_keyword_filter_reports_matched_keyword()
     print("ok")

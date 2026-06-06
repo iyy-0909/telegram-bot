@@ -111,6 +111,7 @@ function getTypeTag(type) {
     body: "warning",
     footer: "info",
     filter: "danger",
+    link: "primary",
   }
 
   return map[type] || "info"
@@ -122,6 +123,7 @@ function typeLabel(type) {
     body: "正文",
     footer: "底部",
     filter: "过滤",
+    link: "链接",
   }
 
   return map[type] || type || "-"

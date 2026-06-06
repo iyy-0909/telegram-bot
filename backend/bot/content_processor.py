@@ -241,17 +241,32 @@ def remove_lines_by_keywords(text: str, keywords: list) -> str:
     return compact_blank_lines("\n".join(clean_lines))
 
 
-def is_blocked(text: str, blocked_keywords: list) -> bool:
+def find_blocked_keyword(text: str, blocked_keywords: list) -> str:
     if not text or not blocked_keywords:
-        return False
+        return ""
 
     for keyword in blocked_keywords:
         keyword = str(keyword).strip()
 
         if keyword and keyword in text:
-            return True
+            return keyword
 
-    return False
+    return ""
+
+
+def is_blocked(text: str, blocked_keywords: list) -> bool:
+    return bool(find_blocked_keyword(text, blocked_keywords))
+
+
+def blocked_keyword_result(text: str, keyword: str, stage: str):
+    return {
+        "blocked": True,
+        "text": text,
+        "reason": "keyword",
+        "filter_keyword": keyword,
+        "filter_stage": stage,
+        "filter_detail": f"命中关键词“{keyword}”",
+    }
 
 
 def append_footer(text: str, footer: str) -> str:
@@ -415,32 +430,54 @@ def process_content(raw_text: str, task):
     # participates in sending. Use content_templates footer instead.
     # legacy_footer = getattr(task, "footer", "") or ""
 
-    if is_blocked(text, blocked_keywords):
-        return {
-            "blocked": True,
-            "text": text,
-        }
+    matched_keyword = find_blocked_keyword(text, blocked_keywords)
+    if matched_keyword:
+        return blocked_keyword_result(text, matched_keyword, "before_cleanup")
 
     if getattr(task, "remove_contact_lines", True):
+        before_contact_cleanup = text
         text = remove_contact_lines(text)
+        contact_cleanup_changed = text != before_contact_cleanup
+    else:
+        contact_cleanup_changed = False
 
+    before_url_cleanup = text
     text = remove_standalone_url_lines(text)
+    url_cleanup_changed = text != before_url_cleanup
 
-    if is_blocked(text, blocked_keywords):
-        return {
-            "blocked": True,
-            "text": text,
-        }
+    matched_keyword = find_blocked_keyword(text, blocked_keywords)
+    if matched_keyword:
+        return blocked_keyword_result(text, matched_keyword, "after_cleanup")
 
+    before_delete_lines = text
     text = remove_lines_by_keywords(text, delete_lines)
+    delete_lines_changed = text != before_delete_lines
+
+    before_replace = text
     text = apply_replace_words(text, replace_words)
+    replace_changed = text != before_replace
     text = compact_blank_lines(text)
 
     if not text.strip():
+        cleanup_reasons = []
+        if contact_cleanup_changed:
+            cleanup_reasons.append("联系方式/链接清理")
+        if url_cleanup_changed:
+            cleanup_reasons.append("独立链接清理")
+        if delete_lines_changed:
+            cleanup_reasons.append("删除行规则")
+        if replace_changed:
+            cleanup_reasons.append("替换规则")
+
         return {
             "blocked": True,
             "text": "",
             "reason": "empty_after_process",
+            "filter_detail": (
+                f"{'、'.join(cleanup_reasons)}后无可发送文本"
+                if cleanup_reasons
+                else "内容处理后无可发送文本"
+            ),
         }
 
     template_result = apply_content_templates_with_format(text, task)

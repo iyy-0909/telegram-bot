@@ -46,6 +46,14 @@ def get_media_size(message: Message):
     return None
 
 
+def has_downloadable_media(message: Message) -> bool:
+    return bool(
+        getattr(message, "file", None)
+        or getattr(message, "document", None)
+        or getattr(message, "photo", None)
+    )
+
+
 def is_media_too_large(size) -> bool:
     return bool(size and size > MAX_MEDIA_SIZE)
 
@@ -125,7 +133,13 @@ async def prepare_single_message(message: Message, text: str = "") -> Dict[str, 
 
     batch_dir = DOWNLOAD_DIR / f"single_{message.id}_{uuid.uuid4().hex}"
 
-    if message.media:
+    if message.media and not has_downloadable_media(message):
+        logger.info(
+            f"消息包含非文件媒体，按文本处理 | "
+            f"message_id={message.id} | media_type={type(message.media).__name__}"
+        )
+
+    if message.media and has_downloadable_media(message):
         media_size = get_media_size(message)
 
         if is_media_too_large(media_size):
@@ -138,6 +152,12 @@ async def prepare_single_message(message: Message, text: str = "") -> Dict[str, 
 
             return {
                 "ok": False,
+                "error": "media_too_large",
+                "error_message": (
+                    f"单媒体超过大小限制，跳过整条内容 | "
+                    f"size={format_size(media_size)} | "
+                    f"limit={format_size(MAX_MEDIA_SIZE)}"
+                ),
                 "type": "single",
                 "text": text or "",
                 "files": [],
@@ -153,6 +173,11 @@ async def prepare_single_message(message: Message, text: str = "") -> Dict[str, 
         except MediaTooLargeError:
             return {
                 "ok": False,
+                "error": "media_too_large_after_download",
+                "error_message": (
+                    f"媒体下载后超过大小限制，跳过整条内容 | "
+                    f"limit={format_size(MAX_MEDIA_SIZE)}"
+                ),
                 "type": "single",
                 "text": text or "",
                 "files": [],
@@ -165,6 +190,8 @@ async def prepare_single_message(message: Message, text: str = "") -> Dict[str, 
         else:
             return {
                 "ok": False,
+                "error": "media_download_failed",
+                "error_message": "媒体下载失败或下载结果为空",
                 "type": "single",
                 "text": text or "",
                 "files": [],
@@ -207,6 +234,13 @@ async def prepare_album(messages: List[Message], text: str = "") -> Dict[str, An
 
     for message in messages:
         if not message.media:
+            continue
+
+        if not has_downloadable_media(message):
+            logger.info(
+                f"相册消息包含非文件媒体，跳过下载 | "
+                f"message_id={message.id} | media_type={type(message.media).__name__}"
+            )
             continue
 
         media_size = get_media_size(message)

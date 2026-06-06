@@ -3,7 +3,7 @@ import ast
 from collections import OrderedDict
 from datetime import datetime
 
-from bot.bot_sender import BotApiError, bot_get_me, bot_send_text, request_post
+from bot.bot_sender import BotApiError, bot_get_me, request_post
 from bot.logger import logger
 from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
 from db.crud_bot import get_bot
@@ -34,6 +34,7 @@ _deleted_webhook_tokens = set()
 _recent_group_chats = OrderedDict()
 _group_join_notice_sent = set()
 _last_polling_conflict_log_at = 0
+TRANSIENT_BOT_API_ERROR_CODES = {500, 502, 503, 504}
 
 
 class SupportBotConfigError(Exception):
@@ -104,6 +105,7 @@ def support_bot_settings(config):
         "support_group_chat_id": config.get("support_group_chat_id") or "",
         "support_backend_base_url": config.get("backend_base_url") or "",
         "welcome_message": config.get("welcome_message") or "",
+        "welcome_text_type": config.get("welcome_text_type") or "plain",
         "welcome_media_type": config.get("welcome_media_type") or "text",
         "welcome_media_file_id": config.get("welcome_media_file_id") or "",
         "off_hours_message": config.get("off_hours_message") or "",
@@ -114,16 +116,70 @@ def support_bot_settings(config):
     }
 
 
+def normalize_welcome_text_type(value):
+    return "html" if str(value or "").strip().lower() == "html" else "plain"
+
+
+def parse_error_code(error_data):
+    try:
+        return int(error_data.get("error_code") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def rewind_request_files(files):
+    for file_item in (files or {}).values():
+        try:
+            file_item[1].seek(0)
+        except Exception:
+            pass
+
+
+async def request_post_with_retry(
+    token,
+    method,
+    data=None,
+    files=None,
+    *,
+    max_attempts=3,
+    context="",
+):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await asyncio.to_thread(request_post, token, method, data, files)
+        except Exception as e:
+            error_data = parse_bot_api_error(e)
+            error_code = parse_error_code(error_data)
+            should_retry = error_code == 429 or error_code in TRANSIENT_BOT_API_ERROR_CODES
+
+            if not should_retry or attempt >= max_attempts:
+                raise
+
+            retry_after = 0
+            if error_code == 429:
+                retry_after = int((error_data.get("parameters") or {}).get("retry_after") or 3)
+            else:
+                retry_after = min(2 * attempt, 8)
+
+            logger.warning(
+                f"Bot API 临时错误，准备重试 | method={method} | "
+                f"error_code={error_code} | attempt={attempt}/{max_attempts} | "
+                f"sleep={retry_after}s | context={context or '-'}"
+            )
+            rewind_request_files(files)
+            await asyncio.sleep(max(retry_after, 1))
+
+
 async def ensure_polling_mode(token):
     if not token or token in _deleted_webhook_tokens:
         return
 
-    await asyncio.to_thread(
-        request_post,
+    await request_post_with_retry(
         token,
         "deleteWebhook",
         {"drop_pending_updates": False},
         None,
+        context="support_delete_webhook",
     )
     _deleted_webhook_tokens.add(token)
     logger.info("客服 Bot 已切换到 polling 模式：deleteWebhook ok")
@@ -516,15 +572,12 @@ def support_user_label(user):
 
 
 async def send_text_with_retry(token, chat_id, text, *, retry_429=True):
-    try:
-        return await bot_send_text(token, chat_id, text)
-    except Exception as e:
-        data = parse_bot_api_error(e)
-        if data.get("error_code") == 429 and retry_429:
-            retry_after = int((data.get("parameters") or {}).get("retry_after") or 3)
-            await asyncio.sleep(min(max(retry_after, 1), 30))
-            return await send_text_with_retry(token, chat_id, text, retry_429=False)
-        raise
+    return await send_text_to_chat(
+        token,
+        chat_id,
+        text,
+        retry_429=retry_429,
+    )
 
 
 async def send_text_to_chat(token, chat_id, text, message_thread_id=None, *, retry_429=True):
@@ -535,21 +588,14 @@ async def send_text_to_chat(token, chat_id, text, message_thread_id=None, *, ret
     }
     if message_thread_id:
         data["message_thread_id"] = int(message_thread_id)
-    try:
-        return await asyncio.to_thread(request_post, token, "sendMessage", data, None)
-    except Exception as e:
-        error_data = parse_bot_api_error(e)
-        if error_data.get("error_code") == 429 and retry_429:
-            retry_after = int((error_data.get("parameters") or {}).get("retry_after") or 3)
-            await asyncio.sleep(min(max(retry_after, 1), 30))
-            return await send_text_to_chat(
-                token,
-                chat_id,
-                text,
-                message_thread_id=message_thread_id,
-                retry_429=False,
-            )
-        raise
+    return await request_post_with_retry(
+        token,
+        "sendMessage",
+        data,
+        None,
+        max_attempts=3 if retry_429 else 1,
+        context=f"send_text chat_id={chat_id}",
+    )
 
 
 SEND_METHOD_BY_TYPE = {
@@ -588,6 +634,9 @@ async def send_telegram_by_type(
     if message_type == "text":
         data["text"] = payload.get("text") or payload.get("caption") or ""
         data["disable_web_page_preview"] = True
+        parse_mode = payload.get("parse_mode") or ""
+        if parse_mode:
+            data["parse_mode"] = parse_mode
     else:
         file_id = payload.get("file_id") or ""
         if not file_id:
@@ -606,40 +655,27 @@ async def send_telegram_by_type(
         caption = payload.get("caption") or ""
         if caption and message_type in CAPTION_TYPES:
             data["caption"] = caption[:1024]
+            parse_mode = payload.get("parse_mode") or ""
+            if parse_mode:
+                data["parse_mode"] = parse_mode
 
     try:
-        try:
-            return await asyncio.to_thread(
-                request_post,
-                token,
-                method,
-                data,
-                files if message_type != "text" else None,
-            )
-        finally:
-            if message_type != "text" and files:
-                for file_item in files.values():
-                    file_item[1].close()
-    except Exception as e:
-        error_data = parse_bot_api_error(e)
-        if error_data.get("error_code") == 429 and retry_429:
-            retry_after = int((error_data.get("parameters") or {}).get("retry_after") or 3)
-            await asyncio.sleep(min(max(retry_after, 1), 30))
-            return await send_telegram_by_type(
-                token,
-                chat_id,
-                message_type,
-                payload,
-                message_thread_id=message_thread_id,
-                reply_to_message_id=reply_to_message_id,
-                retry_429=False,
-            )
-        raise
+        return await request_post_with_retry(
+            token,
+            method,
+            data,
+            files if message_type != "text" else None,
+            max_attempts=3 if retry_429 else 1,
+            context=f"send_{message_type} chat_id={chat_id}",
+        )
+    finally:
+        if message_type != "text" and files:
+            for file_item in files.values():
+                file_item[1].close()
 
 
 async def create_forum_topic(token, chat_id, name):
-    result = await asyncio.to_thread(
-        request_post,
+    result = await request_post_with_retry(
         token,
         "createForumTopic",
         {
@@ -647,6 +683,7 @@ async def create_forum_topic(token, chat_id, name):
             "name": name[:128],
         },
         None,
+        context=f"create_forum_topic chat_id={chat_id}",
     )
     topic = result.get("result") or {}
     return topic.get("message_thread_id")
@@ -743,9 +780,10 @@ async def forward_customer_message_to_group(customer, conversation, message, pay
     return group_message_id
 
 
-async def maybe_send_auto_message(customer, conversation, text, token, settings):
+async def maybe_send_auto_message(customer, conversation, text, token, settings, text_type="plain"):
     media_type = settings.get("welcome_media_type") or "text"
     media_file_id = settings.get("welcome_media_file_id") or ""
+    parse_mode = "HTML" if normalize_welcome_text_type(text_type) == "html" else ""
 
     if not (text.strip() or media_file_id) or customer.blocked:
         return
@@ -756,6 +794,8 @@ async def maybe_send_auto_message(customer, conversation, text, token, settings)
                 "caption": text,
                 "text": text,
             }
+            if parse_mode and text:
+                payload["parse_mode"] = parse_mode
             result = await send_telegram_by_type(
                 token,
                 customer.telegram_chat_id,
@@ -764,7 +804,15 @@ async def maybe_send_auto_message(customer, conversation, text, token, settings)
             )
             message_type = media_type
         else:
-            result = await send_support_message(customer.telegram_chat_id, text, token=token)
+            payload = {"text": text}
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+            result = await send_telegram_by_type(
+                token,
+                customer.telegram_chat_id,
+                "text",
+                payload,
+            )
             message_type = "text"
         telegram_message_id = (result.get("result") or {}).get("message_id")
         add_support_message(
@@ -850,7 +898,14 @@ async def handle_private_customer_message(message, settings, token):
         logger.warning(f"客户消息转发客服群失败 | customer_id={customer.id} | {e}")
 
     if is_start:
-        await maybe_send_auto_message(customer, conversation, settings.get("welcome_message") or "", token, settings)
+        await maybe_send_auto_message(
+            customer,
+            conversation,
+            settings.get("welcome_message") or "",
+            token,
+            settings,
+            text_type=settings.get("welcome_text_type") or "plain",
+        )
         return
 
     if is_outside_business_hours(settings):
@@ -1150,12 +1205,12 @@ async def support_polling_worker(config):
             if _offsets.get(support_bot_id) is not None:
                 data["offset"] = _offsets[support_bot_id]
 
-            result = await asyncio.to_thread(
-                request_post,
+            result = await request_post_with_retry(
                 token,
                 "getUpdates",
                 data,
                 None,
+                context=f"support_get_updates support_bot_id={support_bot_id}",
             )
             updates = result.get("result") or []
             for update in updates:
