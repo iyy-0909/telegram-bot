@@ -5,7 +5,7 @@ from datetime import datetime
 
 from bot.bot_sender import BotApiError, bot_get_me, request_post
 from bot.logger import logger
-from bot.notifier import notify_text
+from bot.notifier import send_ack_required_alert
 from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
 from db.crud_bot import get_bot
 from db.crud_support import (
@@ -123,30 +123,19 @@ def normalize_welcome_text_type(value):
 
 async def notify_support_warning(title, detail="", context=None):
     context = context or {}
-    lines = [
-        f"【客服机器人警告】{title}",
-        f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-    ]
-
-    for label, key in [
-        ("SupportBot ID", "support_bot_id"),
-        ("客户ID", "customer_id"),
-        ("会话ID", "conversation_id"),
-        ("客服群", "group_chat_id"),
-        ("线程", "thread_id"),
-        ("方法", "method"),
-    ]:
-        value = context.get(key)
-        if value not in (None, ""):
-            lines.append(f"{label}：{value}")
-
-    if detail:
-        lines.extend(["", "详情：", str(detail)[:3000]])
-
-    try:
-        return await notify_text("\n".join(lines))
-    except Exception:
-        return False
+    support_bot_id = context.get("support_bot_id") or "global"
+    method = context.get("method") or ""
+    alert_key = context.get("alert_key") or f"support:{support_bot_id}:{title}:{method}"
+    return await send_ack_required_alert(
+        alert_key=alert_key,
+        title=title,
+        detail=detail,
+        module="客服机器人",
+        context={
+            **context,
+            "module": "客服机器人",
+        },
+    )
 
 
 def parse_error_code(error_data):

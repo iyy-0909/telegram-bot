@@ -540,3 +540,28 @@ class SupportBot(Base):
     last_error = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ControlAckAlert(Base):
+    """Control bot alert that must be acknowledged by an admin."""
+
+    __tablename__ = "control_ack_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_key = Column(String, nullable=False, unique=True, index=True)
+    module = Column(String, default="", index=True)
+    title = Column(String, default="")
+    detail = Column(Text, default="")
+    status = Column(String, default="pending", index=True)
+    support_bot_id = Column(Integer, nullable=True, index=True)
+    customer_id = Column(Integer, nullable=True, index=True)
+    conversation_id = Column(Integer, nullable=True, index=True)
+    last_message_chat_id = Column(String, default="")
+    last_message_id = Column(Integer, nullable=True)
+    repeat_count = Column(Integer, default=0)
+    first_sent_at = Column(DateTime, nullable=True)
+    last_sent_at = Column(DateTime, nullable=True, index=True)
+    acknowledged_by = Column(String, default="")
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)

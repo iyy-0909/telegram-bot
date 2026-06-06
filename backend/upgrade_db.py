@@ -146,6 +146,37 @@ def main():
         "ALTER TABLE support_bots ADD COLUMN welcome_text_type VARCHAR DEFAULT 'plain'",
     )
 
+    create_table_if_missing(
+        cur,
+        "control_ack_alerts",
+        """
+        CREATE TABLE control_ack_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_key VARCHAR NOT NULL UNIQUE,
+            module VARCHAR DEFAULT '',
+            title VARCHAR DEFAULT '',
+            detail TEXT DEFAULT '',
+            status VARCHAR DEFAULT 'pending',
+            support_bot_id INTEGER,
+            customer_id INTEGER,
+            conversation_id INTEGER,
+            last_message_chat_id VARCHAR DEFAULT '',
+            last_message_id INTEGER,
+            repeat_count INTEGER DEFAULT 0,
+            first_sent_at DATETIME,
+            last_sent_at DATETIME,
+            acknowledged_by VARCHAR DEFAULT '',
+            acknowledged_at DATETIME,
+            created_at DATETIME,
+            updated_at DATETIME
+        )
+        """,
+    )
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_control_ack_alerts_alert_key ON control_ack_alerts (alert_key)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_status ON control_ack_alerts (status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_support_bot_id ON control_ack_alerts (support_bot_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_last_sent_at ON control_ack_alerts (last_sent_at)")
+
     add_column_if_missing(
         cur,
         "my_channels",

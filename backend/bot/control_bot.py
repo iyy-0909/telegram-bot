@@ -9,6 +9,7 @@ from bot.clone_manager import clone_manager
 from bot.control_config import control_config
 from bot.handlers import reload_handlers
 from bot.logger import logger
+from bot.notifier import ack_alert
 from db.crud import get_all_accounts
 from db.crud_clone import (
     create_clone_task,
@@ -40,19 +41,39 @@ def get_text_message(update):
     return update.get("message") or update.get("channel_post") or {}
 
 
+def get_callback_query(update):
+    return update.get("callback_query") or {}
+
+
 def update_chat_id(update):
+    callback = get_callback_query(update)
+    if callback:
+        message = callback.get("message") or {}
+        chat = message.get("chat") or {}
+        return str(chat.get("id") or "")
+
     message = get_text_message(update)
     chat = message.get("chat") or {}
     return str(chat.get("id") or "")
 
 
 def update_thread_id(update):
+    callback = get_callback_query(update)
+    if callback:
+        message = callback.get("message") or {}
+        value = message.get("message_thread_id")
+        return str(value) if value is not None else ""
+
     message = get_text_message(update)
     value = message.get("message_thread_id")
     return str(value) if value is not None else ""
 
 
 def update_user(update):
+    callback = get_callback_query(update)
+    if callback:
+        return callback.get("from") or {}
+
     message = get_text_message(update)
     return message.get("from") or {}
 
@@ -114,6 +135,28 @@ async def send_control_text(text, thread_id=""):
     return await asyncio.to_thread(request_post, config["token"], "sendMessage", data, None)
 
 
+async def answer_callback_query(callback_query_id, text="", show_alert=False):
+    config = control_config()
+    if not callback_query_id:
+        return None
+    data = {
+        "callback_query_id": callback_query_id,
+        "text": text[:180],
+        "show_alert": "true" if show_alert else "false",
+    }
+    return await asyncio.to_thread(request_post, config["token"], "answerCallbackQuery", data, None)
+
+
+async def edit_message_reply_markup(chat_id, message_id, reply_markup=None):
+    config = control_config()
+    data = {
+        "chat_id": chat_id,
+        "message_id": int(message_id),
+        "reply_markup": reply_markup or json.dumps({"inline_keyboard": []}),
+    }
+    return await asyncio.to_thread(request_post, config["token"], "editMessageReplyMarkup", data, None)
+
+
 async def ensure_control_polling_mode():
     global _webhook_deleted
     config = control_config()
@@ -148,6 +191,10 @@ def is_allowed_chat(update):
     config = control_config()
     if update_chat_id(update) != str(config["chat_id"]):
         return False
+
+    if get_callback_query(update):
+        alert_thread_id = str(config.get("alert_thread_id") or "")
+        return not alert_thread_id or update_thread_id(update) == alert_thread_id
 
     command_thread_id = str(config.get("command_thread_id") or "")
     if command_thread_id and update_thread_id(update) != command_thread_id:
@@ -640,6 +687,11 @@ async def handle_command(update):
 
 async def process_update(update):
     config = control_config()
+    callback = get_callback_query(update)
+    if callback:
+        await process_callback_query(update)
+        return
+
     text = update_text(update)
     if not text.startswith("/"):
         return
@@ -652,6 +704,50 @@ async def process_update(update):
 
     response = await handle_command(update)
     await send_control_text(response, thread_id=update_thread_id(update))
+
+
+async def process_callback_query(update):
+    callback = get_callback_query(update)
+    data = callback.get("data") or ""
+
+    if not data.startswith("ack_alert:"):
+        return
+
+    if not is_allowed_chat(update):
+        return
+
+    if not is_authorized(update):
+        await answer_callback_query(
+            callback.get("id"),
+            "你没有权限确认该告警",
+            show_alert=True,
+        )
+        return
+
+    try:
+        alert_id = int(data.split(":", 1)[1])
+    except Exception:
+        await answer_callback_query(callback.get("id"), "告警ID无效", show_alert=True)
+        return
+
+    user = update_user(update)
+    alert = await ack_alert(alert_id, str(user.get("id") or ""))
+    if not alert:
+        await answer_callback_query(callback.get("id"), "告警不存在", show_alert=True)
+        return
+
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    try:
+        await edit_message_reply_markup(chat.get("id"), message.get("message_id"))
+    except Exception as e:
+        logger.warning(f"移除已读按钮失败，已忽略 | alert_id={alert_id} | {e}")
+
+    await answer_callback_query(callback.get("id"), "已读，停止重复提醒")
+    await send_control_text(
+        f"告警已读：#{alert_id}\n确认人：{user.get('username') or user.get('id')}",
+        thread_id=update_thread_id(update),
+    )
 
 
 async def control_polling_worker():
@@ -677,7 +773,7 @@ async def control_polling_worker():
             await ensure_control_polling_mode()
             data = {
                 "timeout": config["polling_timeout"],
-                "allowed_updates": json.dumps(["message", "channel_post"]),
+                "allowed_updates": json.dumps(["message", "channel_post", "callback_query"]),
             }
             if _offset is not None:
                 data["offset"] = _offset
