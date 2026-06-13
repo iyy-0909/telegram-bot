@@ -116,6 +116,30 @@ def acknowledge_ack_alert(alert_id, user_id):
         db.close()
 
 
+def acknowledge_pending_support_alerts(support_bot_id, user_id="system"):
+    if not support_bot_id:
+        return 0
+
+    current = now()
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ControlAckAlert)
+            .filter(ControlAckAlert.status == "pending")
+            .filter(ControlAckAlert.support_bot_id == int(support_bot_id))
+            .all()
+        )
+        for alert in rows:
+            alert.status = "acknowledged"
+            alert.acknowledged_by = str(user_id or "system")
+            alert.acknowledged_at = current
+            alert.updated_at = current
+        db.commit()
+        return len(rows)
+    finally:
+        db.close()
+
+
 def get_pending_ack_alerts_due(limit=50):
     threshold = now() - timedelta(seconds=REPEAT_SECONDS)
     db = SessionLocal()

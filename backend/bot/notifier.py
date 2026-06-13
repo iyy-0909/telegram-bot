@@ -7,6 +7,7 @@ from bot.control_config import control_config
 from bot.logger import logger
 from db.crud_control_alerts import (
     acknowledge_ack_alert,
+    acknowledge_pending_support_alerts,
     get_pending_ack_alerts_due,
     mark_ack_alert_sent,
     upsert_ack_alert,
@@ -159,6 +160,20 @@ def _send_ack_alert_sync(alert):
         return None
 
 
+def support_bot_is_disabled(support_bot_id):
+    if not support_bot_id:
+        return False
+
+    try:
+        from db.crud_support import get_support_bot_config
+
+        config = get_support_bot_config(support_bot_id, include_secret=False)
+        return bool(config and config.get("status") == "disabled")
+    except Exception as e:
+        logger.warning(f"检查客服机器人停用状态失败，按未停用处理 | support_bot_id={support_bot_id} | {e}")
+        return False
+
+
 async def notify_text(text: str):
     try:
         return await asyncio.to_thread(_send_message_sync, text)
@@ -176,16 +191,43 @@ async def notify_ack_alert(alert):
 
 
 async def send_ack_required_alert(alert_key, title, detail="", module="", context=None):
+    context = context or {}
+    support_bot_id = context.get("support_bot_id")
+    if support_bot_is_disabled(support_bot_id):
+        return None
+
     alert, should_send_now = upsert_ack_alert(
         alert_key=alert_key,
         title=title,
         detail=detail,
         module=module,
-        context=context or {},
+        context=context,
     )
     if should_send_now:
         await notify_ack_alert(alert)
     return alert
+
+
+async def resolve_support_bot_alerts(support_bot_id, bot_name=""):
+    resolved_count = acknowledge_pending_support_alerts(support_bot_id, user_id="system")
+    if not resolved_count:
+        return 0
+
+    name = bot_name or f"ID {support_bot_id}"
+    await notify_text(
+        "\n".join(
+            [
+                "【客服机器人恢复】",
+                f"客服机器人：{name}",
+                f"SupportBot ID：{support_bot_id}",
+                f"时间：{format_app_time()}",
+                f"已自动取消待确认告警：{resolved_count} 条",
+                "",
+                "机器人已重连成功，停止重复提醒。",
+            ]
+        )
+    )
+    return resolved_count
 
 
 async def ack_alert(alert_id, user_id):
@@ -198,6 +240,9 @@ async def ack_alert_repeat_worker():
     while True:
         try:
             for alert in get_pending_ack_alerts_due():
+                if support_bot_is_disabled(alert.get("support_bot_id")):
+                    acknowledge_ack_alert(alert.get("id"), "system_disabled")
+                    continue
                 await notify_ack_alert(alert)
         except Exception as e:
             logger.warning(f"需确认云台告警重复提醒失败，已忽略 | {e}")

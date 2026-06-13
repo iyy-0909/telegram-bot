@@ -5,7 +5,7 @@ from datetime import datetime
 
 from bot.bot_sender import BotApiError, bot_get_me, request_post
 from bot.logger import logger
-from bot.notifier import send_ack_required_alert
+from bot.notifier import resolve_support_bot_alerts, send_ack_required_alert
 from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
 from db.crud_bot import get_bot
 from db.crud_support import (
@@ -126,16 +126,36 @@ async def notify_support_warning(title, detail="", context=None):
     support_bot_id = context.get("support_bot_id") or "global"
     method = context.get("method") or ""
     alert_key = context.get("alert_key") or f"support:{support_bot_id}:{title}:{method}"
+    bot_name = context.get("bot_name") or support_bot_display_name(support_bot_id)
+    display_title = f"{bot_name}：{title}" if bot_name else title
+    display_detail = detail
+    if bot_name and f"客服机器人：{bot_name}" not in str(detail or ""):
+        display_detail = f"客服机器人：{bot_name}\n{detail or ''}".strip()
     return await send_ack_required_alert(
         alert_key=alert_key,
-        title=title,
-        detail=detail,
+        title=display_title,
+        detail=display_detail,
         module="客服机器人",
         context={
             **context,
             "module": "客服机器人",
         },
     )
+
+
+def support_bot_display_name(support_bot_id):
+    if not support_bot_id or support_bot_id == "global":
+        return ""
+
+    try:
+        config = get_support_bot_config(support_bot_id, include_secret=False)
+    except Exception:
+        config = None
+
+    if not config:
+        return f"ID {support_bot_id}"
+
+    return config.get("name") or config.get("bot_username") or f"ID {support_bot_id}"
 
 
 def parse_error_code(error_data):
@@ -161,6 +181,7 @@ async def request_post_with_retry(
     *,
     max_attempts=3,
     context="",
+    alert_context=None,
 ):
     for attempt in range(1, max_attempts + 1):
         try:
@@ -190,7 +211,10 @@ async def request_post_with_retry(
                     f"error_code={error_code} | attempt={attempt}/{max_attempts} | "
                     f"sleep={retry_after}s | context={context or '-'}"
                 ),
-                context={"method": method},
+                context={
+                    **(alert_context or {}),
+                    "method": method,
+                },
             )
             rewind_request_files(files)
             await asyncio.sleep(max(retry_after, 1))
@@ -1311,6 +1335,10 @@ async def support_polling_worker(config):
                 data,
                 None,
                 context=f"support_get_updates support_bot_id={support_bot_id}",
+                alert_context={
+                    "support_bot_id": support_bot_id,
+                    "bot_name": latest_config.get("name") or "",
+                },
             )
             updates = result.get("result") or []
             for update in updates:
@@ -1329,6 +1357,10 @@ async def support_polling_worker(config):
                     )
 
             update_support_bot_error(support_bot_id, "")
+            await resolve_support_bot_alerts(
+                support_bot_id,
+                latest_config.get("name") or "",
+            )
 
         except Exception as e:
             error_data = parse_bot_api_error(e)
