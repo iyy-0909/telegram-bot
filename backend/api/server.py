@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from bot.handlers import reload_handlers
+from bot.handlers import get_registered_listener_snapshot, reload_handlers
 from bot.clone_manager import clone_manager
 
 from db.crud_bot import get_bot
@@ -1007,6 +1007,62 @@ def status():
     return {
         "status": "running",
         "rules_count": len(listener_tasks),
+    }
+
+
+@app.get("/api/runtime/listener-handlers")
+def api_runtime_listener_handlers():
+    listener_tasks = get_all_listener_tasks()
+    registered_groups = get_registered_listener_snapshot()
+    registered_task_ids = {
+        task_id
+        for group in registered_groups
+        for task_id in group.get("task_ids", [])
+    }
+
+    client_states = {}
+    for account_id, client in account_manager.clients.items():
+        connected = None
+        try:
+            if hasattr(client, "is_connected"):
+                connected = bool(client.is_connected())
+        except Exception:
+            connected = None
+
+        client_states[int(account_id)] = {
+            "loaded": True,
+            "connected": connected,
+        }
+
+    tasks = []
+    for task in listener_tasks:
+        account_id = getattr(task, "account_id", None)
+        client_state = client_states.get(int(account_id or 0), {
+            "loaded": False,
+            "connected": False,
+        })
+        targets = parse_listener_targets(task.target_channels)
+
+        tasks.append({
+            "id": task.id,
+            "name": task.name,
+            "enabled": bool(task.enabled),
+            "status": task.status,
+            "source_channel": task.source_channel,
+            "target_channels": targets,
+            "account_id": account_id,
+            "client_loaded": client_state.get("loaded", False),
+            "client_connected": client_state.get("connected"),
+            "registered": task.id in registered_task_ids,
+            "last_received_at": str(task.last_received_at) if getattr(task, "last_received_at", None) else "",
+            "last_error": task.last_error or "",
+        })
+
+    return {
+        "registered_groups": registered_groups,
+        "registered_count": len(registered_groups),
+        "client_states": client_states,
+        "tasks": tasks,
     }
 
 

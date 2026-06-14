@@ -30,6 +30,7 @@ import bot.runtime as runtime
 
 
 _registered_handlers = []
+_registered_listener_groups = []
 _album_cache = {}
 _album_tasks = {}
 
@@ -103,6 +104,10 @@ def get_targets_from_tasks(tasks):
                 targets.append(target)
 
     return targets
+
+
+def get_registered_listener_snapshot():
+    return [dict(item) for item in _registered_listener_groups]
 
 
 def task_source_url(task, source_message_id):
@@ -667,7 +672,7 @@ async def process_message(message, tasks, source):
 
 
 def clear_handlers():
-    global _registered_handlers
+    global _registered_handlers, _registered_listener_groups
 
     for client, handler, builder in _registered_handlers:
         try:
@@ -676,6 +681,7 @@ def clear_handlers():
             logger.warning(f"移除旧监听失败：{e}")
 
     _registered_handlers = []
+    _registered_listener_groups = []
     logger.info("旧监听已卸载")
 
 
@@ -722,6 +728,12 @@ def register_handlers():
         _registered_handlers.append((listen_client, handler, builder))
 
         targets = get_targets_from_tasks(group_tasks)
+        _registered_listener_groups.append({
+            "account_id": account_id,
+            "source": source,
+            "task_ids": [task.id for task in group_tasks],
+            "targets": targets,
+        })
         logger.info(
             f"已注册监听 | account_id={account_id} | "
             f"source={source} | targets={targets}"
