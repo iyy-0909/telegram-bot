@@ -22,8 +22,8 @@ from bot.listener_events import get_listener_send_events
 from bot.bulk_replace import execute_bulk_replace, preview_bulk_replace
 from bot.account_login import account_login_manager
 from bot.runtime_queue import runtime_queue_state
-from bot.listener_catchup import check_latest_content_consistency
-from bot.listener_catchup import catchup_latest_listener_message
+from bot.listener_auto_catchup import catchup_latest_listener_message
+from bot.listener_catchup import build_listener_catchup_plan
 from accounts.manager import account_manager
 from bot.channel_utils import normalize_channel_identifier, normalize_channel_list_json
 from bot.support_bot import (
@@ -588,7 +588,8 @@ class BulkReplaceExecuteRequest(BaseModel):
 
 class ListenerCatchupRequest(BaseModel):
     force: bool = True
-    limit: int = 1
+    limit: int = 500
+    background: bool = False
 
 def clone_task_to_dict(task):
     return {
@@ -1894,7 +1895,9 @@ async def api_listener_catchup_check(task_id: int):
             "message": "listener task not found",
         }
 
-    return await check_latest_content_consistency(task)
+    plan = await build_listener_catchup_plan(task)
+    plan.pop("_pending_items", None)
+    return plan
 
 
 @app.post("/api/listener-tasks/{task_id}/catchup-latest")
@@ -1910,11 +1913,25 @@ async def api_listener_catchup_latest(
             "message": "listener task not found",
         }
 
-    return await catchup_latest_listener_message(
-        task,
-        force=bool(payload.force) if payload else True,
-        limit=payload.limit if payload else 1,
-    )
+    force = bool(payload.force) if payload else True
+    limit = payload.limit if payload else 500
+    background = bool(payload.background) if payload else False
+
+    if background:
+        asyncio.create_task(
+            catchup_latest_listener_message(
+                task,
+                force=force,
+                limit=limit,
+            )
+        )
+        return {
+            "ok": True,
+            "message": "补齐任务已开始，发送进度会显示在首页排队任务列表",
+            "background": True,
+        }
+
+    return await catchup_latest_listener_message(task, force=force, limit=limit)
 
 
 @app.get("/api/accounts")

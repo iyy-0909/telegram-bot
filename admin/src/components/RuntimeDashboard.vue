@@ -175,8 +175,7 @@
         <el-table-column label="任务" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="task-cell">
-              <strong>{{ row.task_name || formatTask(row) }}</strong>
-              <span>#{{ row.task_id || "-" }}</span>
+              <strong>#{{ row.task_id || "-" }}{{ row.task_name || formatTask(row) }}</strong>
             </div>
           </template>
         </el-table-column>
@@ -221,6 +220,8 @@ let currentPollingTimer = null
 let pollingItemId = ""
 
 function sourceTypeLabel(value) {
+  if (value === "listener_catchup") return "监听补齐"
+
   const map = {
     clone: "克隆",
     listener: "监听",

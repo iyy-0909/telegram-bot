@@ -154,6 +154,8 @@ async def send_prepared_to_tasks(
     source_message_id,
     grouped_id=None,
     force=False,
+    queue_source_type="listener",
+    queue_reason=None,
 ):
     success_count = 0
 
@@ -328,7 +330,7 @@ async def send_prepared_to_tasks(
                     target=target,
                     target_delay=0,
                     queue_meta={
-                        "source_type": "listener",
+                        "source_type": queue_source_type,
                         "task_id": task.id,
                         "task_name": task.name,
                         "source_channel": task.source_channel,
@@ -336,6 +338,7 @@ async def send_prepared_to_tasks(
                         "source_message_id": source_message_id,
                         "grouped_id": grouped_id,
                         "message_type": "caption" if send_payload.get("files") else "text",
+                        "reason": queue_reason or "等待全局发送队列",
                     },
                 )
 

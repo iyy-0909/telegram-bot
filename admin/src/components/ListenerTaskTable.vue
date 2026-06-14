@@ -136,7 +136,7 @@
                 plain
                 @click="emit('catchup', row.id)"
               >
-                补齐
+                一键补齐
               </el-button>
               <el-button
                 size="small"

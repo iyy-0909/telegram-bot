@@ -1,8 +1,16 @@
+from sqlalchemy import func
+
 from accounts.manager import account_manager
 from bot.content_processor import get_message_text, process_content
 from bot.logger import logger
 from bot.sender import cleanup_prepared, prepare_album, prepare_single_message
+from db.crud_bot import normalize_target_channel
 from db.crud_listener import parse_target_channels
+from db.database import SessionLocal
+from db.models import ListenerSendEvent
+
+
+MAX_AUTO_CATCHUP_ITEMS = 500
 
 
 def normalize_compare_text(value: str) -> str:
@@ -101,6 +109,225 @@ async def get_recent_source_content_items(client, channel, limit=1):
 
     items.sort(key=lambda item: item["source_message_id"])
     return items
+
+
+async def get_source_content_items_after(client, channel, after_message_id=0, limit=MAX_AUTO_CATCHUP_ITEMS):
+    await ensure_client_connected(client)
+
+    after_message_id = max(int(after_message_id or 0), 0)
+    limit = max(min(int(limit or MAX_AUTO_CATCHUP_ITEMS), MAX_AUTO_CATCHUP_ITEMS), 1)
+    messages = []
+
+    async for message in client.iter_messages(
+        channel,
+        min_id=after_message_id,
+        limit=limit * 20,
+        reverse=True,
+    ):
+        messages.append(message)
+
+    items = []
+    grouped_map = {}
+    grouped_order = []
+
+    for message in messages:
+        grouped_id = getattr(message, "grouped_id", None)
+
+        if grouped_id:
+            key = str(grouped_id)
+            if key not in grouped_map:
+                grouped_map[key] = []
+                grouped_order.append(key)
+            grouped_map[key].append(message)
+        else:
+            items.append({
+                "messages": [message],
+                "source_message_id": message.id,
+                "grouped_id": None,
+            })
+
+    for key in grouped_order:
+        album_messages = grouped_map[key]
+        album_messages.sort(key=lambda item: item.id)
+        items.append({
+            "messages": album_messages,
+            "source_message_id": max(item.id for item in album_messages),
+            "grouped_id": getattr(album_messages[-1], "grouped_id", None),
+        })
+
+    items.sort(key=lambda item: item["source_message_id"])
+    return items[:limit]
+
+
+def target_lookup_keys(target):
+    raw = str(target or "").strip()
+    normalized = normalize_target_channel(raw)
+    keys = {raw.lower(), normalized.lower()}
+    return [key for key in keys if key]
+
+
+def get_last_success_by_target(task_id, targets):
+    db = SessionLocal()
+    result = {}
+
+    try:
+        for target in targets:
+            keys = target_lookup_keys(target)
+            if not keys:
+                result[target] = None
+                continue
+
+            event = (
+                db.query(ListenerSendEvent)
+                .filter(
+                    ListenerSendEvent.task_id == task_id,
+                    ListenerSendEvent.status == "success",
+                    ListenerSendEvent.source_message_id.isnot(None),
+                    func.lower(func.trim(ListenerSendEvent.target)).in_(keys),
+                )
+                .order_by(
+                    ListenerSendEvent.source_message_id.desc(),
+                    ListenerSendEvent.id.desc(),
+                )
+                .first()
+            )
+            result[target] = event
+
+        return result
+    finally:
+        db.close()
+
+
+def build_target_states(task, targets, last_success_map):
+    states = []
+
+    for target in targets:
+        event = last_success_map.get(target)
+        states.append({
+            "target": target,
+            "last_source_message_id": getattr(event, "source_message_id", None),
+            "last_grouped_id": getattr(event, "grouped_id", None),
+            "last_target_message_url": getattr(event, "target_message_url", "") or "",
+            "last_success_at": str(getattr(event, "created_at", "") or ""),
+        })
+
+    return states
+
+
+def targets_needing_item(target_states, source_message_id):
+    targets = []
+
+    for state in target_states:
+        last_id = state.get("last_source_message_id") or 0
+        if int(source_message_id or 0) > int(last_id or 0):
+            targets.append(state["target"])
+
+    return targets
+
+
+async def build_listener_catchup_plan(task, limit=MAX_AUTO_CATCHUP_ITEMS):
+    client = account_manager.get_client(task.account_id)
+
+    if not client:
+        return {
+            "ok": False,
+            "message": f"监听账号不存在：account_id={task.account_id}",
+            "targets": [],
+            "items": [],
+        }
+
+    targets = parse_target_channels(task.target_channels)
+
+    if not targets:
+        return {
+            "ok": False,
+            "message": "目标频道为空",
+            "targets": [],
+            "items": [],
+        }
+
+    last_success_map = get_last_success_by_target(task.id, targets)
+    target_states = build_target_states(task, targets, last_success_map)
+    known_last_ids = [
+        int(state["last_source_message_id"])
+        for state in target_states
+        if state.get("last_source_message_id")
+    ]
+    after_message_id = (
+        min(known_last_ids)
+        if len(known_last_ids) == len(target_states)
+        else 0
+    )
+
+    try:
+        if after_message_id:
+            content_items = await get_source_content_items_after(
+                client,
+                task.source_channel,
+                after_message_id=after_message_id,
+                limit=limit,
+            )
+        else:
+            content_items = await get_recent_source_content_items(
+                client,
+                task.source_channel,
+                limit=limit,
+            )
+    except Exception as e:
+        logger.warning(
+            f"监听一键补齐计划失败：读取源频道异常 | "
+            f"task_id={task.id} | source={task.source_channel} | {e}"
+        )
+        return {
+            "ok": False,
+            "message": f"读取源频道失败：{e}",
+            "targets": target_states,
+            "items": [],
+        }
+
+    pending_items = []
+
+    for item in content_items:
+        source_message_id = item["source_message_id"]
+        needed_targets = targets_needing_item(target_states, source_message_id)
+
+        if not needed_targets:
+            continue
+
+        pending_items.append({
+            "source_message_id": source_message_id,
+            "grouped_id": str(item["grouped_id"]) if item.get("grouped_id") else None,
+            "targets": needed_targets,
+            "_messages": item["messages"],
+            "_grouped_id": item.get("grouped_id"),
+        })
+
+    public_items = [
+        {
+            "source_message_id": item["source_message_id"],
+            "grouped_id": item["grouped_id"],
+            "targets": item["targets"],
+        }
+        for item in pending_items
+    ]
+
+    return {
+        "ok": True,
+        "message": (
+            f"检测到可补齐 {len(pending_items)} 条内容"
+            if pending_items
+            else "未检测到需要补齐的内容"
+        ),
+        "task_id": task.id,
+        "task_name": task.name,
+        "source_channel": task.source_channel,
+        "targets": target_states,
+        "catchup_count": len(pending_items),
+        "after_message_id": after_message_id,
+        "limit": limit,
+        "items": public_items,
+        "_pending_items": pending_items,
+    }
 
 
 def compare_latest_content(source_text, source_has_media, target_text, target_has_media):
@@ -236,7 +463,7 @@ async def check_latest_content_consistency(task):
     }
 
 
-async def catchup_latest_listener_message(task, force=True, limit=1):
+async def catchup_latest_listener_message_legacy(task, force=True, limit=1):
     client = account_manager.get_client(task.account_id)
 
     if not client:

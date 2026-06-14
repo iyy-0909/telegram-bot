@@ -1218,7 +1218,7 @@ async function checkListenerCatchupHandler(id) {
 }
 
 
-async function checkListenerCatchupHandlerV2(id) {
+async function checkListenerCatchupHandlerV2Legacy(id) {
   try {
     const { value } = await ElMessageBox.prompt(
       "请输入需要补齐的内容条数。补齐会跳过去重逻辑，可能重复发送已发过的内容。",
@@ -1256,6 +1256,68 @@ async function checkListenerCatchupHandlerV2(id) {
 
 // 旧监听规则兼容
 // =========================
+
+async function checkListenerCatchupHandlerV2(id) {
+  try {
+    const planRes = await checkListenerCatchup(id)
+    const plan = planRes.data || {}
+
+    if (!plan.ok) {
+      ElMessage.error(plan.message || "补齐检测失败")
+      return
+    }
+
+    const catchupCount = Number(plan.catchup_count || 0)
+
+    if (catchupCount <= 0) {
+      ElMessage.success(plan.message || "未检测到需要补齐的内容")
+      await loadListenerTaskLogs()
+      return
+    }
+
+    const targetLines = (plan.targets || [])
+      .map((item) => {
+        const lastId = item.last_source_message_id || "无记录"
+        return `${item.target}：最后成功源消息 ${lastId}`
+      })
+      .join("\n")
+
+    await ElMessageBox.confirm(
+      [
+        `检测到可补齐 ${catchupCount} 条内容。`,
+        `任务：${plan.task_name || `#${id}`}`,
+        `源频道：${plan.source_channel || "-"}`,
+        targetLines ? `目标进度：\n${targetLines}` : "",
+        "补齐会进入首页排队任务列表，并按全局发送限流逐条发送。",
+      ].filter(Boolean).join("\n\n"),
+      "确认一键补齐",
+      {
+        type: "warning",
+        confirmButtonText: "开始补齐",
+        cancelButtonText: "取消",
+      },
+    )
+
+    const catchupRes = await catchupLatestListenerMessage(id, {
+      limit: Math.max(Number(plan.limit || catchupCount || 500), catchupCount),
+      background: true,
+    })
+    const catchupData = catchupRes.data || {}
+
+    if (catchupData.ok) {
+      ElMessage.success(catchupData.message || `已补齐发送 ${catchupData.sent_count || 0} 条`)
+    } else {
+      ElMessage.warning(catchupData.message || "补齐失败")
+    }
+  } catch {
+    await loadListenerTaskLogs()
+    return
+  }
+
+  await loadListenerTaskLogs()
+  await loadListenerTasks()
+  await loadRuntimeDashboard()
+}
 
 function resetCurrentRule() {
   currentRule.id = null
