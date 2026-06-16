@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="visible"
     @update:model-value="$emit('update:visible', $event)"
-    :title="isEdit ? '编辑内容模板规则' : '添加内容模板规则'"
+    :title="isEdit ? '编辑内容规则模板' : '添加内容规则模板'"
     width="780px"
   >
     <el-form label-width="110px">
@@ -13,13 +13,14 @@
           <el-option label="底部 footer" value="footer" />
           <el-option label="过滤关键词 filter" value="filter" />
           <el-option label="链接配置 link" value="link" />
+          <el-option label="联系方式删除 contact" value="contact" />
         </el-select>
       </el-form-item>
 
       <el-form-item label="规则名称">
         <el-input
           v-model="localForm.name"
-          placeholder="例如 A规则 / 上海footer / 通用过滤词"
+          placeholder="例如：A规则 / 上海 footer / 通用过滤词"
         />
       </el-form-item>
 
@@ -60,6 +61,30 @@
         </el-descriptions-item>
       </el-descriptions>
 
+      <div v-else-if="localForm.type === 'contact'" class="contact-rule-config">
+        <div class="contact-rule-switches">
+          <el-checkbox v-model="contactConfig.remove_phone">删除手机号</el-checkbox>
+          <el-checkbox v-model="contactConfig.remove_links">删除链接</el-checkbox>
+          <el-checkbox v-model="contactConfig.remove_usernames">删除 @用户名</el-checkbox>
+          <el-checkbox v-model="contactConfig.remove_keywords">删除命中关键词的整行</el-checkbox>
+        </div>
+        <el-form-item label="关键词">
+          <el-input
+            v-model="contactKeywordText"
+            type="textarea"
+            :rows="6"
+            placeholder="一行一个关键词，例如：微信、vx、电话、客服"
+          />
+        </el-form-item>
+        <el-form-item label="自定义正则">
+          <el-input
+            v-model="contactRegexText"
+            type="textarea"
+            :rows="4"
+            placeholder="一行一个正则，留空即可。高级用户使用"
+          />
+        </el-form-item>
+      </div>
       <div v-else class="content-list">
         <div
           v-for="(item, index) in localForm.items"
@@ -145,7 +170,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, watch } from "vue"
+import { computed, nextTick, reactive, ref, watch } from "vue"
 
 const props = defineProps({
   visible: Boolean,
@@ -186,6 +211,33 @@ const DEFAULT_LINK_CONFIG = {
   source_message_link_replacement: "",
 }
 
+const DEFAULT_CONTACT_CONFIG = {
+  remove_phone: true,
+  remove_links: true,
+  remove_usernames: true,
+  remove_keywords: true,
+  keywords: [
+    "微信",
+    "微信号",
+    "微",
+    "vx",
+    "v信",
+    "wechat",
+    "we chat",
+    "wx",
+    "电话",
+    "手机",
+    "联系",
+    "联系方式",
+    "客服",
+    "tg",
+    "telegram",
+    "纸飞机",
+    "飞机",
+  ],
+  custom_regex: [],
+}
+
 const linkActionOptions = [
   { label: "目标链接", value: "target_link" },
   { label: "降级文本", value: "downgrade" },
@@ -195,6 +247,9 @@ const linkActionOptions = [
 ]
 
 const linkConfig = reactive({ ...DEFAULT_LINK_CONFIG })
+const contactConfig = reactive({ ...DEFAULT_CONTACT_CONFIG })
+const contactKeywordText = ref(DEFAULT_CONTACT_CONFIG.keywords.join("\n"))
+const contactRegexText = ref("")
 
 const linkRuleFields = [
   { key: "source_message_link", label: "源频道内部消息链接" },
@@ -208,99 +263,38 @@ const linkRuleFields = [
 ]
 
 const primaryFormatActions = [
-  {
-    key: "bold",
-    label: "加粗",
-    shortLabel: "B",
-    prefix: "<b>",
-    suffix: "</b>",
-    sample: "加粗文字",
-  },
-  {
-    key: "italic",
-    label: "斜体",
-    shortLabel: "I",
-    prefix: "<i>",
-    suffix: "</i>",
-    sample: "斜体文字",
-  },
-  {
-    key: "underline",
-    label: "下划线",
-    shortLabel: "U",
-    prefix: "<u>",
-    suffix: "</u>",
-    sample: "下划线文字",
-  },
-  {
-    key: "strike",
-    label: "删除线",
-    shortLabel: "S",
-    prefix: "<s>",
-    suffix: "</s>",
-    sample: "删除线文字",
-  },
-  {
-    key: "code",
-    label: "行内代码",
-    shortLabel: "code",
-    prefix: "<code>",
-    suffix: "</code>",
-    sample: "代码",
-  },
+  { key: "bold", label: "加粗", shortLabel: "B", prefix: "<b>", suffix: "</b>", sample: "加粗文字" },
+  { key: "italic", label: "斜体", shortLabel: "I", prefix: "<i>", suffix: "</i>", sample: "斜体文字" },
+  { key: "underline", label: "下划线", shortLabel: "U", prefix: "<u>", suffix: "</u>", sample: "下划线文字" },
+  { key: "strike", label: "删除线", shortLabel: "S", prefix: "<s>", suffix: "</s>", sample: "删除线文字" },
+  { key: "code", label: "行内代码", shortLabel: "code", prefix: "<code>", suffix: "</code>", sample: "代码" },
 ]
 
 const moreFormatActions = [
-  {
-    key: "spoiler",
-    label: "隐藏剧透",
-    prefix: "<tg-spoiler>",
-    suffix: "</tg-spoiler>",
-    sample: "隐藏文字",
-  },
-  {
-    key: "link",
-    label: "链接模板",
-    prefix: '<a href="https://t.me/username">',
-    suffix: "</a>",
-    sample: "点击联系",
-  },
-  {
-    key: "pre",
-    label: "预格式文本",
-    prefix: "<pre>",
-    suffix: "</pre>",
-    sample: "预格式文本",
-  },
-  {
-    key: "quote",
-    label: "引用",
-    prefix: "<blockquote>",
-    suffix: "</blockquote>",
-    sample: "引用内容",
-  },
+  { key: "spoiler", label: "隐藏剧透", prefix: "<tg-spoiler>", suffix: "</tg-spoiler>", sample: "隐藏文字" },
+  { key: "link", label: "链接模板", prefix: '<a href="https://t.me/username">', suffix: "</a>", sample: "点击联系" },
+  { key: "pre", label: "预格式文本", prefix: "<pre>", suffix: "</pre>", sample: "预格式文本" },
+  { key: "quote", label: "引用", prefix: "<blockquote>", suffix: "</blockquote>", sample: "引用内容" },
 ]
-
 const allFormatActions = [
   ...primaryFormatActions,
   ...moreFormatActions,
 ]
 
-const contentTitle = computed(() => (
-  localForm.type === "filter"
-    ? "过滤关键词"
-    : localForm.type === "link"
-      ? "链接处理配置"
-      : "规则内容"
-))
+const contentTitle = computed(() => {
+  if (localForm.type === "filter") return "过滤关键词"
+  if (localForm.type === "link") return "链接处理配置"
+  if (localForm.type === "contact") return "联系方式删除配置"
+  return "规则内容"
+})
 
 const contentPlaceholder = computed(() => (
   localForm.type === "filter"
-    ? "每行填写一个过滤关键词。任务选择该规则后，任意关键词命中都会跳过整条内容。"
-    : "填写这条模板内容，可使用上方富文本格式按钮插入 Telegram HTML 标签。"
+    ? "每行填写一个过滤关键词。任务选择该规则后，命中任意关键词都会跳过整条内容。"
+    : "填写这条模板内容，可以使用上方富文本按钮插入 Telegram HTML 标签。"
 ))
 
-const showRichToolbar = computed(() => !["filter", "link"].includes(localForm.type))
+const showRichToolbar = computed(() => !["filter", "link", "contact"].includes(localForm.type))
 
 function linkActionOptionsFor(fieldKey) {
   return linkActionOptions
@@ -328,6 +322,9 @@ watch(
     }
 
     Object.assign(linkConfig, parseLinkConfig(localForm.items[0]?.content))
+    Object.assign(contactConfig, parseContactConfig(localForm.items[0]?.content))
+    contactKeywordText.value = (contactConfig.keywords || []).join("\n")
+    contactRegexText.value = (contactConfig.custom_regex || []).join("\n")
   },
   { immediate: true, deep: true },
 )
@@ -409,11 +406,17 @@ async function clearHtmlTags(index) {
 }
 
 function submit() {
-  const items = localForm.type === "link"
+  const items = ["link", "contact"].includes(localForm.type)
     ? [{
         id: normalizeTemplateId(localForm.items[0]?.id),
-        name: "链接配置",
-        content: JSON.stringify(normalizeLinkConfig(linkConfig), null, 2),
+        name: localForm.type === "contact" ? "联系方式删除配置" : "链接配置",
+        content: JSON.stringify(
+          localForm.type === "contact"
+            ? normalizeContactConfig(contactConfig)
+            : normalizeLinkConfig(linkConfig),
+          null,
+          2,
+        ),
         enabled: true,
         weight: 1,
       }]
@@ -432,6 +435,43 @@ function submit() {
     enabled: localForm.enabled,
     items,
   })
+}
+
+function parseContactConfig(value) {
+  try {
+    const parsed = JSON.parse(value || "{}")
+    return {
+      ...DEFAULT_CONTACT_CONFIG,
+      ...parsed,
+      keywords: splitLines(parsed.keywords),
+      custom_regex: splitLines(parsed.custom_regex),
+    }
+  } catch {
+    return { ...DEFAULT_CONTACT_CONFIG }
+  }
+}
+
+function normalizeContactConfig(value) {
+  return {
+    ...DEFAULT_CONTACT_CONFIG,
+    remove_phone: Boolean(value?.remove_phone ?? true),
+    remove_links: Boolean(value?.remove_links ?? true),
+    remove_usernames: Boolean(value?.remove_usernames ?? true),
+    remove_keywords: Boolean(value?.remove_keywords ?? true),
+    keywords: splitLines(contactKeywordText.value || value?.keywords),
+    custom_regex: splitLines(contactRegexText.value || value?.custom_regex),
+  }
+}
+
+function splitLines(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean)
+  }
+
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function parseLinkConfig(value) {
@@ -541,6 +581,22 @@ function toPositiveNumber(value, fallback) {
 
 .add-content-button {
   margin-top: 12px;
+}
+
+.contact-rule-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.contact-rule-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
 }
 
 .link-rules-descriptions :deep(.el-descriptions__label) {

@@ -3,7 +3,7 @@ import re
 from html import escape, unescape
 
 from bot.logger import logger
-from db.crud_templates import get_filter_keywords, pick_template_content
+from db.crud_templates import get_contact_rule_config, get_filter_keywords, pick_template_content
 
 
 TEXT_LIMIT = 4096
@@ -90,7 +90,7 @@ def has_telegram_username(line: str) -> bool:
     if not line:
         return False
 
-    username_pattern = re.compile(r"(^|\s|[:：])@[a-zA-Z0-9_]{4,32}\b")
+    username_pattern = re.compile(r"@[a-zA-Z0-9][a-zA-Z0-9_]*\b")
     return bool(username_pattern.search(line))
 
 
@@ -130,6 +130,43 @@ def should_remove_line(line: str) -> bool:
     )
 
 
+def has_contact_keyword(line: str, keywords=None) -> bool:
+    if not line:
+        return False
+
+    lower_line = line.lower()
+    contact_keywords = keywords or []
+    return any(str(keyword).lower() in lower_line for keyword in contact_keywords)
+
+
+def has_custom_regex(line: str, patterns) -> bool:
+    if not line or not patterns:
+        return False
+
+    for pattern in patterns:
+        try:
+            if re.search(str(pattern), line, re.IGNORECASE):
+                return True
+        except re.error as e:
+            logger.warning(f"联系方式删除正则无效，已跳过 | pattern={pattern} | {e}")
+
+    return False
+
+
+def should_remove_line(line: str, config=None) -> bool:
+    config = config or {}
+    return (
+        (config.get("remove_phone", True) and has_phone_number(line))
+        or (config.get("remove_links", True) and has_link(line))
+        or (config.get("remove_usernames", True) and has_telegram_username(line))
+        or (
+            config.get("remove_keywords", True)
+            and has_contact_keyword(line, config.get("keywords"))
+        )
+        or has_custom_regex(line, config.get("custom_regex"))
+    )
+
+
 def compact_blank_lines(text: str) -> str:
     if not text:
         return ""
@@ -149,14 +186,14 @@ def compact_blank_lines(text: str) -> str:
     return "\n".join(result_lines).strip()
 
 
-def remove_contact_lines(text: str) -> str:
+def remove_contact_lines(text: str, config=None) -> str:
     if not text:
         return ""
 
     clean_lines = [
         line
         for line in text.splitlines()
-        if not should_remove_line(line)
+        if not should_remove_line(line, config)
     ]
     return compact_blank_lines("\n".join(clean_lines))
 
@@ -436,7 +473,10 @@ def process_content(raw_text: str, task):
 
     if getattr(task, "remove_contact_lines", True):
         before_contact_cleanup = text
-        text = remove_contact_lines(text)
+        contact_rule_config = get_contact_rule_config(
+            getattr(task, "selected_contact_template_group_id", None)
+        )
+        text = remove_contact_lines(text, contact_rule_config)
         contact_cleanup_changed = text != before_contact_cleanup
     else:
         contact_cleanup_changed = False

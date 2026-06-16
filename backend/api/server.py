@@ -228,6 +228,7 @@ class ListenerTaskCreate(BaseModel):
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
     selected_link_template_group_id: Optional[int] = None
+    selected_contact_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -255,6 +256,7 @@ class ListenerTaskUpdate(BaseModel):
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
     selected_link_template_group_id: Optional[int] = None
+    selected_contact_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -364,6 +366,7 @@ class CloneTaskCreate(BaseModel):
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
     selected_link_template_group_id: Optional[int] = None
+    selected_contact_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -399,6 +402,7 @@ class CloneTaskUpdate(BaseModel):
     selected_footer_template_group_id: Optional[int] = None
     selected_filter_template_group_id: Optional[int] = None
     selected_link_template_group_id: Optional[int] = None
+    selected_contact_template_group_id: Optional[int] = None
     selected_head_template_id: Optional[int] = None
     selected_body_template_id: Optional[int] = None
     selected_footer_template_id: Optional[int] = None
@@ -621,6 +625,7 @@ def clone_task_to_dict(task):
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
         "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
         "selected_link_template_group_id": getattr(task, "selected_link_template_group_id", None),
+        "selected_contact_template_group_id": getattr(task, "selected_contact_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
@@ -711,6 +716,7 @@ def listener_task_to_dict(task):
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
         "selected_filter_template_group_id": getattr(task, "selected_filter_template_group_id", None),
         "selected_link_template_group_id": getattr(task, "selected_link_template_group_id", None),
+        "selected_contact_template_group_id": getattr(task, "selected_contact_template_group_id", None),
         "selected_head_template_id": getattr(task, "selected_head_template_id", None),
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),

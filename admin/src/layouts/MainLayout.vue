@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-container class="layout">
     <el-aside width="220px" class="aside">
       <div class="logo">校长克隆机器人</div>
@@ -45,12 +45,10 @@ const menuItems = [
   ["my-channels", "我的频道"],
   ["bulk-replace", "批量替换"],
   ["support", "客服机器人"],
-  ["templates", "内容模板规则"],
   ["accounts", "账号管理"],
   ["settings", "系统设置"],
   ["guide", "使用教程"],
 ]
-
 const handleSelect = (menu) => {
   emit("change-menu", menu)
 }
@@ -135,3 +133,4 @@ const AppMenu = defineComponent({
   padding: 20px;
 }
 </style>
+

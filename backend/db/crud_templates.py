@@ -6,7 +6,36 @@ from db.models import ContentTemplate
 from bot.logger import logger
 
 
-VALID_TEMPLATE_TYPES = {"head", "body", "footer", "filter", "link"}
+VALID_TEMPLATE_TYPES = {"head", "body", "footer", "filter", "link", "contact"}
+
+DEFAULT_CONTACT_RULE_NAME = "默认联系方式删除配置"
+DEFAULT_CONTACT_RULE_ITEM_NAME = "默认规则"
+DEFAULT_CONTACT_RULE_CONFIG = {
+    "remove_phone": True,
+    "remove_links": True,
+    "remove_usernames": True,
+    "remove_keywords": True,
+    "keywords": [
+        "微信",
+        "微信号",
+        "微",
+        "vx",
+        "v信",
+        "wechat",
+        "we chat",
+        "wx",
+        "电话",
+        "手机",
+        "联系",
+        "联系方式",
+        "客服",
+        "tg",
+        "telegram",
+        "纸飞机",
+        "飞机",
+    ],
+    "custom_regex": [],
+}
 
 
 def normalize_template_type(value):
@@ -487,6 +516,154 @@ def pick_template_content(
 def get_filter_keywords(selected_group_id=None):
     if not selected_group_id:
         return []
+
+
+def get_filter_keywords(selected_group_id=None):
+    if not selected_group_id:
+        return []
+
+    try:
+        group = get_template(int(selected_group_id))
+
+        if (
+            not group
+            or not group.enabled
+            or group.type != "filter"
+            or group.parent_id is not None
+        ):
+            logger.warning(f"指定过滤关键词规则不可用，跳过 | group_id={selected_group_id}")
+            return []
+
+        items = get_enabled_template_items_by_group("filter", int(selected_group_id))
+        keywords = []
+
+        for item in items:
+            for line in (item.content or "").splitlines():
+                keyword = line.strip()
+                if keyword:
+                    keywords.append(keyword)
+
+        return keywords
+    except Exception as e:
+        logger.warning(f"读取过滤关键词规则失败，跳过 | group_id={selected_group_id} | {e}")
+        return []
+
+
+def normalize_contact_rule_config(value):
+    import json
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except Exception:
+            value = {}
+
+    if not isinstance(value, dict):
+        value = {}
+
+    config = {
+        **DEFAULT_CONTACT_RULE_CONFIG,
+        **value,
+    }
+    config["remove_phone"] = bool(config.get("remove_phone", True))
+    config["remove_links"] = bool(config.get("remove_links", True))
+    config["remove_usernames"] = bool(config.get("remove_usernames", True))
+    config["remove_keywords"] = bool(config.get("remove_keywords", True))
+    config["keywords"] = [
+        str(item).strip()
+        for item in (config.get("keywords") or [])
+        if str(item).strip()
+    ]
+    config["custom_regex"] = [
+        str(item).strip()
+        for item in (config.get("custom_regex") or [])
+        if str(item).strip()
+    ]
+    return config
+
+
+def ensure_default_contact_rule():
+    import json
+
+    db = SessionLocal()
+
+    try:
+        group = (
+            db.query(ContentTemplate)
+            .filter(
+                ContentTemplate.type == "contact",
+                ContentTemplate.parent_id.is_(None),
+                ContentTemplate.name == DEFAULT_CONTACT_RULE_NAME,
+            )
+            .first()
+        )
+
+        if not group:
+            group = ContentTemplate(
+                parent_id=None,
+                name=DEFAULT_CONTACT_RULE_NAME,
+                type="contact",
+                content="",
+                enabled=True,
+                weight=1,
+            )
+            db.add(group)
+            db.flush()
+
+        item = (
+            db.query(ContentTemplate)
+            .filter(
+                ContentTemplate.type == "contact",
+                ContentTemplate.parent_id == group.id,
+            )
+            .first()
+        )
+
+        if not item:
+            item = ContentTemplate(
+                parent_id=group.id,
+                name=DEFAULT_CONTACT_RULE_ITEM_NAME,
+                type="contact",
+                content=json.dumps(DEFAULT_CONTACT_RULE_CONFIG, ensure_ascii=False, indent=2),
+                enabled=True,
+                weight=1,
+            )
+            db.add(item)
+
+        db.commit()
+        db.refresh(group)
+        return group
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def get_contact_rule_config(selected_group_id=None):
+    try:
+        group = None
+        if selected_group_id:
+            group = get_template(int(selected_group_id))
+
+        if (
+            not group
+            or not group.enabled
+            or group.type != "contact"
+            or group.parent_id is not None
+        ):
+            group = ensure_default_contact_rule()
+
+        items = get_enabled_template_items_by_group("contact", int(group.id))
+        for item in items:
+            content = (item.content or "").strip()
+            if content:
+                return normalize_contact_rule_config(content)
+
+        return normalize_contact_rule_config(DEFAULT_CONTACT_RULE_CONFIG)
+    except Exception as e:
+        logger.warning(f"读取联系方式删除配置失败，使用默认配置 | group_id={selected_group_id} | {e}")
+        return normalize_contact_rule_config(DEFAULT_CONTACT_RULE_CONFIG)
 
     try:
         group = get_template(int(selected_group_id))

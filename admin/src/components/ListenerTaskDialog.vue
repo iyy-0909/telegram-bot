@@ -127,6 +127,22 @@
             </el-select>
           </el-form-item>
 
+          <el-form-item label="联系方式配置">
+            <el-select
+              v-model="localForm.selected_contact_template_group_id"
+              clearable
+              filterable
+              placeholder="不选则使用默认联系方式删除配置"
+            >
+              <el-option
+                v-for="group in enabledTemplateGroupsByType('contact')"
+                :key="group.id"
+                :label="templateLabel(group)"
+                :value="group.id"
+              />
+            </el-select>
+          </el-form-item>
+
           <el-form-item label="任务补充过滤词">
             <el-select
               v-model="blockedKeywordList"
@@ -240,6 +256,7 @@ const localForm = reactive({
   selected_body_template_group_id: null,
   selected_footer_template_group_id: null,
   selected_link_template_group_id: null,
+  selected_contact_template_group_id: null,
   selected_head_template_id: null,
   selected_body_template_id: null,
   selected_footer_template_id: null,
@@ -276,6 +293,7 @@ watch(
       selected_body_template_group_id: normalizeTemplateId(val.selected_body_template_group_id),
       selected_footer_template_group_id: normalizeTemplateId(val.selected_footer_template_group_id),
       selected_link_template_group_id: normalizeTemplateId(val.selected_link_template_group_id),
+      selected_contact_template_group_id: normalizeTemplateId(val.selected_contact_template_group_id),
       selected_head_template_id: normalizeTemplateId(val.selected_head_template_id),
       selected_body_template_id: normalizeTemplateId(val.selected_body_template_id),
       selected_footer_template_id: normalizeTemplateId(val.selected_footer_template_id),
@@ -314,6 +332,7 @@ function applyCopyTask(taskId) {
     selected_body_template_group_id: normalizeTemplateId(task.selected_body_template_group_id),
     selected_footer_template_group_id: normalizeTemplateId(task.selected_footer_template_group_id),
     selected_link_template_group_id: normalizeTemplateId(task.selected_link_template_group_id),
+    selected_contact_template_group_id: normalizeTemplateId(task.selected_contact_template_group_id),
     selected_head_template_id: normalizeTemplateId(task.selected_head_template_id),
     selected_body_template_id: normalizeTemplateId(task.selected_body_template_id),
     selected_footer_template_id: normalizeTemplateId(task.selected_footer_template_id),
@@ -359,6 +378,7 @@ function submit() {
     footer: "",
     selected_filter_template_group_id: normalizeTemplateId(localForm.selected_filter_template_group_id),
     selected_link_template_group_id: normalizeTemplateId(localForm.selected_link_template_group_id),
+    selected_contact_template_group_id: normalizeTemplateId(localForm.selected_contact_template_group_id),
     filter_qr_code: localForm.filter_qr_code,
     selected_head_template_group_id: localForm.use_random_head
       ? normalizeTemplateId(localForm.selected_head_template_group_id)

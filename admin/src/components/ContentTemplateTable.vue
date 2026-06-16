@@ -3,7 +3,7 @@
     <template #header>
       <div class="card-header">
         <div>
-          <div class="card-title">内容模板规则</div>
+          <div class="card-title">内容规则模板</div>
           <div class="card-subtitle">
             一条规则包含类型、名称和多条内容；任务选择规则后可随机或指定内容。
           </div>
@@ -23,7 +23,7 @@
       row-key="id"
       height="492"
       class="template-table"
-      empty-text="暂无内容模板规则，请点击“添加规则”创建 head/body/footer/过滤关键词规则。"
+      empty-text="暂无内容规则模板，请点击添加规则创建"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -112,6 +112,7 @@ function getTypeTag(type) {
     footer: "info",
     filter: "danger",
     link: "primary",
+    contact: "warning",
   }
 
   return map[type] || "info"
@@ -124,6 +125,7 @@ function typeLabel(type) {
     footer: "底部",
     filter: "过滤",
     link: "链接",
+    contact: "联系方式",
   }
 
   return map[type] || type || "-"
