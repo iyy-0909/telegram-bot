@@ -20,7 +20,7 @@ RUN npm run build
 
 FROM nginx:alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY admin/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=admin-build /app/admin/dist /usr/share/nginx/html
 COPY --from=mobile-build /app/admin-mobile/dist /usr/share/nginx/html/mobile
 
