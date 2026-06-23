@@ -5,6 +5,7 @@ from sqlalchemy import or_
 from db.crud_bot import normalize_target_channel
 from db.database import SessionLocal
 from db.models import BotAccount, MyChannel
+from db.search_utils import build_channel_search_terms
 
 
 def normalize_username(value):
@@ -109,17 +110,24 @@ def list_my_channels(keyword="", status="", group_name="", bot_id=None):
     try:
         query = db.query(MyChannel)
 
-        if keyword:
-            like = f"%{keyword.strip()}%"
+        terms = build_channel_search_terms(keyword)
+        if terms:
+            fields = (
+                MyChannel.title,
+                MyChannel.username,
+                MyChannel.chat_id,
+                MyChannel.group_name,
+                MyChannel.delivery_status,
+                MyChannel.collection_status,
+                MyChannel.clone_status,
+            )
             query = query.filter(
                 or_(
-                    MyChannel.title.like(like),
-                    MyChannel.username.like(like),
-                    MyChannel.chat_id.like(like),
-                    MyChannel.group_name.like(like),
-                    MyChannel.delivery_status.like(like),
-                    MyChannel.collection_status.like(like),
-                    MyChannel.clone_status.like(like),
+                    *[
+                        field.like(f"%{term}%")
+                        for term in terms
+                        for field in fields
+                    ]
                 )
             )
 

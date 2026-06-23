@@ -233,6 +233,7 @@
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
+import { matchesSearch } from "../utils/search"
 
 const props = defineProps({
   tasks: {
@@ -257,9 +258,7 @@ const keyword = ref("")
 const logKeyword = ref("")
 
 const filteredTasks = computed(() => {
-  const query = keyword.value.trim().toLowerCase()
-
-  if (!query) return props.tasks
+  if (!keyword.value.trim()) return props.tasks
 
   return props.tasks.filter((task) => {
     const values = [
@@ -272,14 +271,12 @@ const filteredTasks = computed(() => {
       task.enable_listener ? "监听 开" : "监听 关",
     ]
 
-    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+    return matchesSearch(values, keyword.value)
   })
 })
 
 const filteredTaskLogs = computed(() => {
-  const query = logKeyword.value.trim().toLowerCase()
-
-  if (!query) return props.taskLogs
+  if (!logKeyword.value.trim()) return props.taskLogs
 
   return props.taskLogs.filter((row) => {
     const values = [
@@ -299,7 +296,7 @@ const filteredTaskLogs = computed(() => {
       row.bot_name,
     ]
 
-    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+    return matchesSearch(values, logKeyword.value)
   })
 })
 

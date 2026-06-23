@@ -15,6 +15,7 @@ DEFAULT_TASK_VALUES = {
     "enabled": True,
     "status": "stopped",
     "blocked_keywords": "[]",
+    "listen_required_keywords": "[]",
     "replace_words": "{}",
     "footer": "",
     "remove_contact_lines": True,
@@ -64,7 +65,7 @@ def normalize_task_data(data):
         if key in ("name", "source_channel", "footer", "last_error"):
             value = str(value or "").strip()
 
-        if key in ("target_channels", "blocked_keywords", "replace_words"):
+        if key in ("target_channels", "blocked_keywords", "listen_required_keywords", "replace_words"):
             if isinstance(value, (list, dict)):
                 value = json.dumps(value, ensure_ascii=False)
             value = value or default
@@ -284,6 +285,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
             enabled=True,
             status="running",
             blocked_keywords=clone_task.blocked_keywords or "[]",
+            listen_required_keywords="[]",
             replace_words=clone_task.replace_words or "{}",
             footer=clone_task.footer or "",
             remove_contact_lines=getattr(clone_task, "remove_contact_lines", True),

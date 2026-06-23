@@ -2,14 +2,14 @@
   <el-dialog
     :model-value="visible"
     @update:model-value="$emit('update:visible', $event)"
-    :title="isEdit ? '缂栬緫鍏嬮殕浠诲姟' : '鏂板鍏嬮殕浠诲姟'"
+    :title="isEdit ? '编辑克隆任务' : '新增克隆任务'"
     width="980px"
     class="task-dialog"
   >
     <el-form class="task-form" label-position="top">
       <div class="section-row">
         <section class="form-section">
-          <div class="section-title">鍩虹淇℃伅</div>
+          <div class="section-title">基础信息</div>
           <div class="form-grid two">
             <el-form-item label="任务名称">
               <el-input v-model="localForm.name" placeholder="例如：杭州频道克隆" />
@@ -26,7 +26,7 @@
               />
             </el-form-item>
 
-            <el-form-item label="缁撴潫鍐呭閾炬帴">
+            <el-form-item label="结束内容链接">
               <el-input
                 v-model="localForm.end_message_url"
                 placeholder="为空则克隆到当前最新"
@@ -49,12 +49,12 @@
               <BotSelect
                 v-model="localForm.bot_id"
                 :bots="props.bots"
-                placeholder="璇烽€夋嫨 Bot"
+                placeholder="请选择 Bot"
               />
             </el-form-item>
           </div>
 
-          <el-form-item label="鐩爣棰戦亾">
+          <el-form-item label="目标频道">
             <ChannelSelect
               v-model="targetChannelValues"
               multiple
@@ -90,7 +90,7 @@
               v-model="localForm.selected_filter_template_group_id"
               clearable
               filterable
-              placeholder="閫夋嫨杩囨护瑙勫垯"
+              placeholder="选择过滤规则"
             >
               <el-option
                 v-for="group in enabledTemplateGroupsByType('filter')"
@@ -101,7 +101,7 @@
             </el-select>
           </el-form-item>
 
-          <el-form-item label="閾炬帴閰嶇疆">
+          <el-form-item label="链接配置">
             <el-select
               v-model="localForm.selected_link_template_group_id"
               clearable
@@ -284,11 +284,11 @@ const collectorAccount = computed(() => (
 
 const collectorAccountLabel = computed(() => {
   if (!collectorAccount.value) {
-    return "鏆傛棤鍙敤閲囬泦璐﹀彿"
+    return "暂无可用采集账号"
   }
 
   const username = collectorAccount.value.username ? ` @${collectorAccount.value.username}` : ""
-  return `${collectorAccount.value.id} - ${collectorAccount.value.name || "閲囬泦璐﹀彿"}${username}`
+  return `${collectorAccount.value.id} - ${collectorAccount.value.name || "采集账号"}${username}`
 })
 
 watch(
@@ -363,7 +363,7 @@ function enabledTemplateGroupsByType(type) {
 }
 
 function templateLabel(template) {
-  return template.name || `妯℃澘 ${template.id}`
+  return template.name || `模板 ${template.id}`
 }
 
 function parseChannels(value) {

@@ -141,6 +141,7 @@ class ListenerTask(Base):
     status = Column(String, default="stopped")
 
     blocked_keywords = Column(Text, default="[]")
+    listen_required_keywords = Column(Text, default="[]")
     replace_words = Column(Text, default="{}")
     footer = Column(Text, default="")
     remove_contact_lines = Column(Boolean, default=True)
@@ -527,6 +528,7 @@ class SupportBot(Base):
     name = Column(String, default="")
     bot_id = Column(Integer, nullable=True, index=True)
     bot_token = Column(Text, default="")
+    price = Column(String, default="")
     support_group_chat_id = Column(String, default="", index=True)
     polling_enabled = Column(Boolean, default=False, index=True)
     welcome_message = Column(Text, default="")

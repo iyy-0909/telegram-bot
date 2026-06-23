@@ -32,7 +32,7 @@
     <ListPage
       v-else-if="activeTab === 'listeners'"
       title="监听任务"
-      placeholder="搜索任务名 / 源频道 / 目标频道"
+      placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
       empty-title="暂无监听任务"
       :keyword="keyword.listeners"
       :items="filteredListeners"
@@ -57,6 +57,7 @@
             ['最后监听', formatDate(item.last_received_at)],
             ['最近动作', compactText(item.last_action || item.recent_action)],
             ['账号 / Bot', `${compactText(item.account_name || item.account_id)} / ${compactText(item.bot_name || item.bot_id)}`],
+            ['只监听内容', channelLine(item.listen_required_keywords)],
             ['过滤词', channelLine(item.blocked_keywords)],
             ['删除联系方式', item.remove_contact_lines ? '是' : '否'],
             ['过滤二维码', item.filter_qr_code ? '是' : '否'],
@@ -76,7 +77,7 @@
     <ListPage
       v-else-if="activeTab === 'clones'"
       title="克隆任务"
-      placeholder="搜索任务名 / 源频道 / 目标频道"
+      placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
       empty-title="暂无克隆任务"
       :keyword="keyword.clones"
       :items="filteredClones"
@@ -120,7 +121,7 @@
     <ListPage
       v-else-if="activeTab === 'channels'"
       title="我的频道"
-      placeholder="搜索频道名 / username / 分组"
+      placeholder="搜索频道名 / username / 分组 / https://t.me/..."
       empty-title="暂无频道"
       :keyword="keyword.channels"
       :items="filteredChannels"
@@ -232,6 +233,24 @@
     >
       <pre class="detail-text">{{ detailText }}</pre>
     </el-drawer>
+
+    <el-drawer
+      v-model="logVisible"
+      class="form-sheet log-sheet"
+      direction="btt"
+      size="88%"
+      :title="logTitle"
+      destroy-on-close
+    >
+      <LogDrawer
+        :type="logType"
+        :items="filteredLogItems"
+        :keyword="logKeyword"
+        :loading="logLoading"
+        @update:keyword="logKeyword = $event"
+        @refresh="showLogs(logType)"
+      />
+    </el-drawer>
   </MobileLayout>
 </template>
 
@@ -306,6 +325,7 @@ import {
   formatDate,
   sourceTypeLabel,
 } from "./utils/format"
+import { matchesSearch } from "./utils/search"
 
 const authenticated = ref(Boolean(getToken()))
 const password = ref("")
@@ -322,6 +342,11 @@ const uploadingMedia = ref(false)
 const accountLoginVisible = ref(false)
 const accountLoginLoading = ref(false)
 const accountLoginTarget = ref(null)
+const logVisible = ref(false)
+const logLoading = ref(false)
+const logType = ref("listener")
+const logKeyword = ref("")
+const logItems = ref([])
 
 const status = ref({})
 const dashboard = ref({})
@@ -388,6 +413,8 @@ const templateGroups = computed(() => templates.value
   .sort((a, b) => (b.id || 0) - (a.id || 0)))
 const filteredTemplates = computed(() => filterItems(templateGroups.value, keyword.templates, ["name", "type", "content", "remark", "items"]))
 const filteredAccounts = computed(() => filterItems(accounts.value, keyword.accounts, ["name", "username", "phone", "remark"]))
+const logTitle = computed(() => logType.value === "clone" ? "克隆日志" : "监听日志")
+const filteredLogItems = computed(() => filterLogItems(logItems.value, logKeyword.value))
 
 function pickList(data) {
   if (Array.isArray(data)) return data
@@ -397,10 +424,36 @@ function pickList(data) {
 }
 
 function filterItems(items, value, fields) {
-  const text = String(value || "").trim().toLowerCase()
+  const text = String(value || "").trim()
   if (!text) return items
   return items.filter((item) =>
-    fields.some((field) => JSON.stringify(item?.[field] ?? "").toLowerCase().includes(text)),
+    matchesSearch(fields.map((field) => item?.[field]), text),
+  )
+}
+
+function filterLogItems(items, value) {
+  const text = String(value || "").trim()
+  if (!text) return items
+  return (items || []).filter((item) =>
+    matchesSearch([
+      item.time,
+      item.event_type,
+      item.status,
+      item.result,
+      item.task_id,
+      item.task_name,
+      item.source_channel,
+      item.target,
+      item.source_message_id,
+      item.target_message_id,
+      item.grouped_id,
+      item.source_message_url,
+      item.target_message_url,
+      item.message_type,
+      item.message,
+      item.error,
+      item.bot_name,
+    ], text),
   )
 }
 
@@ -586,6 +639,7 @@ function defaultForm(type) {
       enabled: true,
       status: "running",
       blocked_keywords: "[]",
+      listen_required_keywords: "[]",
       replace_words: "{}",
       remove_contact_lines: true,
       selected_contact_template_group_id: null,
@@ -638,6 +692,7 @@ function defaultForm(type) {
       name: "",
       bot_id: firstBot.id || null,
       bot_token: "",
+      price: "",
       support_group_chat_id: "",
       polling_enabled: true,
       backend_base_url: "",
@@ -680,6 +735,9 @@ function payloadFor(type) {
     data.target_channels = normalizeJsonList(data.target_channels)
     data.blocked_keywords = normalizeJsonList(data.blocked_keywords)
     data.replace_words = normalizeJsonObject(data.replace_words)
+  }
+  if (type === "listener") {
+    data.listen_required_keywords = normalizeJsonList(data.listen_required_keywords)
   }
   if (type === "template") {
     if (data.type === "link") {
@@ -861,14 +919,18 @@ async function batchCheckChannels() {
 }
 
 async function showLogs(type) {
+  logType.value = type === "clone" ? "clone" : "listener"
+  logVisible.value = true
+  logLoading.value = true
   try {
-    const res = type === "listener"
+    const res = logType.value === "listener"
       ? await getListenerSendEvents(200)
       : await getCloneSendEvents(200)
-    detailText.value = JSON.stringify(pickList(res.data).slice(0, 80), null, 2)
-    detailVisible.value = true
+    logItems.value = pickList(res.data)
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "加载日志失败"))
+  } finally {
+    logLoading.value = false
   }
 }
 
@@ -1172,6 +1234,106 @@ const TaskCard = defineComponent({
   },
 })
 
+const LogDrawer = defineComponent({
+  props: {
+    type: String,
+    items: Array,
+    keyword: String,
+    loading: Boolean,
+  },
+  emits: ["update:keyword", "refresh"],
+  setup(props, { emit }) {
+    return () => h("div", { class: "log-drawer" }, [
+      h("div", { class: "search-bar" }, [
+        h(resolve("el-input"), {
+          modelValue: props.keyword,
+          "onUpdate:modelValue": (value) => emit("update:keyword", value),
+          placeholder: props.type === "clone" ? "搜索任务 / 目标 / 消息 / 错误" : "搜索任务 / 频道 / 消息 / 错误",
+          clearable: true,
+        }),
+        h(resolve("el-button"), {
+          plain: true,
+          loading: props.loading,
+          onClick: () => emit("refresh"),
+        }, () => "刷新"),
+      ]),
+      h("div", { class: "section-head log-summary" }, [
+        h("div", [
+          h("div", { class: "section-title" }, props.type === "clone" ? "最近克隆发送结果" : "监听执行记录"),
+          h("div", { class: "section-subtitle" }, `共 ${props.items?.length || 0} 条，按最新记录展示`),
+        ]),
+      ]),
+      props.loading
+        ? h(resolve("el-skeleton"), { rows: 8, animated: true })
+        : props.items?.length
+          ? h("div", { class: "card-list log-list" }, props.items.map((item, index) =>
+            h(LogCard, { key: `${item.id || item.time || index}-${index}`, item, type: props.type }),
+          ))
+          : h(EmptyState, { title: props.type === "clone" ? "暂无克隆日志" : "暂无监听日志" }),
+    ])
+  },
+})
+
+const LogCard = defineComponent({
+  props: {
+    item: Object,
+    type: String,
+  },
+  setup(props) {
+    const expanded = ref(false)
+    const primaryStatus = computed(() => props.item?.event_type || props.item?.result || props.item?.status || "unknown")
+    const title = computed(() => {
+      const task = props.item?.task_name || (props.item?.task_id ? `任务 #${props.item.task_id}` : "")
+      return task || (props.type === "clone" ? "克隆发送结果" : "监听执行记录")
+    })
+    const subtitle = computed(() => {
+      const target = props.item?.target || props.item?.target_channel || ""
+      const message = props.item?.message || props.item?.error || ""
+      return compactText(target || message || props.item?.source_channel || "-")
+    })
+    const meta = computed(() => [
+      ["时间", formatDate(props.item?.time || props.item?.created_at)],
+      ["状态", primaryStatus.value],
+      ["任务ID", props.item?.task_id],
+      ["源频道", props.item?.source_channel],
+      ["目标", props.item?.target || props.item?.target_channel],
+      ["源消息", props.item?.source_message_id],
+      ["目标消息", props.item?.target_message_id],
+      ["相册ID", props.item?.grouped_id],
+      ["Bot", props.item?.bot_name],
+      ["消息", props.item?.message],
+      ["错误", props.item?.error],
+      ["源链接", props.item?.source_message_url],
+      ["目标链接", props.item?.target_message_url],
+    ])
+    const visibleMeta = computed(() => expanded.value ? meta.value : meta.value.slice(0, 4))
+
+    return () => h("article", {
+      class: ["data-card", "log-card", { expanded: expanded.value }],
+      onClick: () => { expanded.value = !expanded.value },
+    }, [
+      h("div", { class: "card-main" }, [
+        h("div", { style: "min-width:0" }, [
+          h("div", { class: "card-title" }, title.value),
+          h("div", { class: "card-subtitle" }, subtitle.value),
+        ]),
+        h("div", { class: "card-side" }, [
+          h(StatusPill, { status: primaryStatus.value }),
+          h("span", { class: "card-toggle" }, [
+            h(resolve("el-icon"), null, () => h(expanded.value ? ArrowUpBold : ArrowDownBold)),
+          ]),
+        ]),
+      ]),
+      h("div", { class: "card-meta" }, visibleMeta.value
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([label, value]) => h("div", { class: "meta-item", key: label }, [
+          h("span", { class: "meta-label" }, label),
+          h("span", { class: "meta-value" }, compactText(value)),
+        ]))),
+    ])
+  },
+})
+
 const MorePage = defineComponent({
   props: {
     page: String,
@@ -1317,8 +1479,9 @@ function moreCard(type, item, emit) {
       enabled: item.polling_enabled,
       meta: [
         ["ID", item.id],
+        ["价格", item.price],
         ["客服群", item.support_group_chat_id],
-        ["Bot", item.bot_username || item.bot_id],
+        ["Bot用户名", item.bot_username || item.bot_id],
         ["polling", item.polling_enabled ? "启用" : "停用"],
         ["状态", item.status],
         ["文本类型", item.welcome_parse_mode],
@@ -1690,6 +1853,7 @@ function formSummaryRows(type, form, props) {
   const commonContent = [
     ["删除联系方式", form.remove_contact_lines ? "开启" : "关闭"],
     ["过滤二维码", form.filter_qr_code ? "开启" : "关闭"],
+    ["只监听内容", displayEditValue(form.listen_required_keywords, "textarea") || "全部监听"],
     ["过滤规则", filterName || "未选择"],
     ["链接规则", linkName || "未选择"],
     ["联系方式规则", contactName || "默认配置"],
@@ -1731,6 +1895,7 @@ function formSummaryRows(type, form, props) {
     support: [
       ["客服机器人", form.name],
       ["Bot 来源", form.bot_id ? `复用 ${botName}` : "独立 Token"],
+      ["价格", form.price],
       ["客服群", form.support_group_chat_id],
       ["欢迎语", form.welcome_message],
       ["媒体", form.welcome_media_file_id ? "已配置" : "无"],
@@ -1777,6 +1942,7 @@ function formSections(type, isCreate, form) {
     { key: "selected_filter_template_group_id", label: "通用过滤词", input: "template-filter" },
     { key: "selected_link_template_group_id", label: "链接配置", input: "template-link" },
     { key: "selected_contact_template_group_id", label: "联系方式配置", input: "template-contact" },
+    { key: "listen_required_keywords", label: "只监听内容", input: "lines" },
     { key: "blocked_keywords", label: "补充过滤词", input: "lines" },
     { key: "remove_contact_lines", label: "删除联系方式", input: "switch" },
     { key: "filter_qr_code", label: "过滤二维码图片", input: "switch" },
@@ -1893,6 +2059,7 @@ function formSections(type, isCreate, form) {
         { key: "name", label: "客服机器人名称" },
         { key: "bot_id", label: "复用已有 Bot", input: "bot" },
         { key: "bot_token", label: "或填写独立 Token" },
+        { key: "price", label: "价格" },
         { key: "support_group_chat_id", label: "客服群 chat_id" },
         { key: "polling_enabled", label: "启用 polling", input: "switch" },
       ],
@@ -2279,6 +2446,7 @@ function fieldPlaceholder(field) {
     target_delay: "填写不同目标之间的发送间隔秒数",
     album_wait_seconds: "填写相册等待秒数，例如 3",
     album_delay: "填写相册等待秒数，例如 3",
+    listen_required_keywords: "一行一个必须命中的内容；留空表示全部监听",
     blocked_keywords: "一行一个过滤关键词，命中后不发送",
     replace_words: "高级替换配置，通常不用填写",
     title: "填写频道名称，例如：长沙投放频道",

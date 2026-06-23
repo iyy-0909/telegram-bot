@@ -291,6 +291,50 @@ def find_blocked_keyword(text: str, blocked_keywords: list) -> str:
     return ""
 
 
+def normalize_keyword_items(value) -> list:
+    keywords = load_json(value, [])
+
+    if not isinstance(keywords, list):
+        return []
+
+    return [
+        str(keyword).strip()
+        for keyword in keywords
+        if str(keyword or "").strip()
+    ]
+
+
+def find_required_keyword(text: str, required_keywords: list) -> str:
+    if not text or not required_keywords:
+        return ""
+
+    normalized_text = str(text).casefold()
+
+    for keyword in required_keywords:
+        keyword = str(keyword).strip()
+
+        if keyword and keyword.casefold() in normalized_text:
+            return keyword
+
+    return ""
+
+
+def format_keyword_preview(keywords: list, limit: int = 5) -> str:
+    clean_keywords = [
+        str(keyword).strip()
+        for keyword in keywords
+        if str(keyword or "").strip()
+    ]
+
+    if not clean_keywords:
+        return ""
+
+    preview = " / ".join(clean_keywords[:limit])
+    if len(clean_keywords) > limit:
+        preview = f"{preview} 等"
+    return preview
+
+
 def is_blocked(text: str, blocked_keywords: list) -> bool:
     return bool(find_blocked_keyword(text, blocked_keywords))
 
@@ -446,6 +490,18 @@ def normalize_collected_text(text: str) -> str:
 
 def process_content(raw_text: str, task):
     text = normalize_collected_text(raw_text or "")
+
+    required_keywords = normalize_keyword_items(
+        getattr(task, "listen_required_keywords", "[]")
+    )
+    if required_keywords and not find_required_keyword(text, required_keywords):
+        return {
+            "blocked": True,
+            "text": text,
+            "reason": "required_keyword_missing",
+            "filter_stage": "before_cleanup",
+            "filter_detail": f"未命中只监听内容：{format_keyword_preview(required_keywords)}",
+        }
 
     blocked_keywords = load_json(
         getattr(task, "blocked_keywords", None) or getattr(task, "keywords", None),

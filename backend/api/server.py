@@ -216,6 +216,7 @@ class ListenerTaskCreate(BaseModel):
     enabled: bool = True
     status: str = "running"
     blocked_keywords: str = "[]"
+    listen_required_keywords: str = "[]"
     replace_words: str = "{}"
     footer: str = ""
     remove_contact_lines: bool = True
@@ -244,6 +245,7 @@ class ListenerTaskUpdate(BaseModel):
     enabled: Optional[bool] = None
     status: Optional[str] = None
     blocked_keywords: Optional[str] = None
+    listen_required_keywords: Optional[str] = None
     replace_words: Optional[str] = None
     footer: Optional[str] = None
     remove_contact_lines: Optional[bool] = None
@@ -443,6 +445,7 @@ class SupportBotCreate(BaseModel):
     name: str = "客服 Bot"
     bot_id: Optional[int] = None
     bot_token: str = ""
+    price: str = ""
     support_group_chat_id: str = ""
     polling_enabled: bool = False
     welcome_message: str = ""
@@ -461,6 +464,7 @@ class SupportBotUpdate(BaseModel):
     name: Optional[str] = None
     bot_id: Optional[int] = None
     bot_token: Optional[str] = None
+    price: Optional[str] = None
     support_group_chat_id: Optional[str] = None
     polling_enabled: Optional[bool] = None
     welcome_message: Optional[str] = None
@@ -704,6 +708,7 @@ def listener_task_to_dict(task):
         "enabled": task.enabled,
         "status": task.status,
         "blocked_keywords": task.blocked_keywords,
+        "listen_required_keywords": getattr(task, "listen_required_keywords", "[]") or "[]",
         "replace_words": task.replace_words,
         "footer": task.footer,
         "remove_contact_lines": task.remove_contact_lines,

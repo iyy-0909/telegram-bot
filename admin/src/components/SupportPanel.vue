@@ -45,6 +45,22 @@
         empty-text="暂无客服 Bot，请点击“新增客服 Bot”创建客服接待配置。"
       >
         <el-table-column prop="name" label="名称" min-width="150" />
+        <el-table-column prop="price" label="价格" min-width="110" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.price || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Bot用户名" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <CopyText
+              v-if="botUsername(row)"
+              :value="botUsername(row)"
+              :text="botUsername(row)"
+              tone="primary"
+            />
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="Bot" min-width="160">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">
@@ -113,6 +129,10 @@
       <el-form label-width="150px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="例如：杭州客服 Bot" />
+        </el-form-item>
+
+        <el-form-item label="价格">
+          <el-input v-model="form.price" placeholder="例如：基础版 99/月，或填写备注价格" />
         </el-form-item>
 
         <el-form-item label="复用已有 Bot">
@@ -243,6 +263,7 @@ import {
   uploadSupportMedia,
 } from "../api/support"
 import BotSelect from "./BotSelect.vue"
+import CopyText from "./CopyText.vue"
 import ErrorText from "./ErrorText.vue"
 import StatusTag from "./StatusTag.vue"
 
@@ -279,6 +300,7 @@ function emptyForm() {
     bot_id: null,
     bot_token: "",
     has_bot_token: false,
+    price: "",
     support_group_chat_id: "",
     polling_enabled: false,
     welcome_message: "您好，欢迎咨询，请直接发送您的问题，客服会尽快回复您。",
@@ -336,6 +358,7 @@ async function save() {
   const payload = {
     ...form,
     name: form.name.trim(),
+    price: form.price.trim(),
     support_group_chat_id: form.support_group_chat_id.trim(),
     welcome_text_type: normalizeWelcomeTextType(form.welcome_text_type),
   }
@@ -446,6 +469,18 @@ function botLabel(row) {
   const bot = props.bots.find((item) => Number(item.id) === Number(row.bot_id))
   if (bot) return `${bot.name} (#${bot.id})`
   return row.has_bot_token ? "自定义 Token" : "-"
+}
+
+function botUsername(row) {
+  if (row?.bot_username) {
+    const username = String(row.bot_username).trim()
+    return username.startsWith("@") ? username : `@${username}`
+  }
+
+  const bot = props.bots.find((item) => Number(item.id) === Number(row.bot_id))
+  const username = String(bot?.username || "").trim()
+
+  return username ? (username.startsWith("@") ? username : `@${username}`) : ""
 }
 
 function normalizeWelcomeTextType(value) {

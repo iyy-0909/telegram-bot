@@ -53,6 +53,12 @@ def parse_bot_api_error(error):
     return {"description": text}
 
 
+def is_message_thread_not_found_error(error):
+    data = parse_bot_api_error(error)
+    description = str(data.get("description") or "").lower()
+    return parse_error_code(data) == 400 and "message thread not found" in description
+
+
 def friendly_media_error(description):
     lower = (description or "").lower()
     if "wrong file identifier" in lower or "file_id" in lower and "wrong" in lower:
@@ -739,9 +745,9 @@ async def create_forum_topic(token, chat_id, name):
     return topic.get("message_thread_id")
 
 
-async def ensure_conversation_topic(token, group_chat_id, customer, conversation):
+async def ensure_conversation_topic(token, group_chat_id, customer, conversation, *, force_recreate=False):
     thread_id = getattr(conversation, "support_thread_id", None)
-    if thread_id:
+    if thread_id and not force_recreate:
         return int(thread_id)
 
     topic_name = build_topic_name(customer, conversation)
@@ -753,6 +759,36 @@ async def ensure_conversation_topic(token, group_chat_id, customer, conversation
     conversation.support_thread_id = thread_id
     conversation.support_topic_name = topic_name
     return int(thread_id)
+
+
+async def recreate_conversation_topic(token, group_chat_id, customer, conversation, settings, reason=""):
+    old_thread_id = getattr(conversation, "support_thread_id", None)
+    thread_id = await ensure_conversation_topic(
+        token,
+        group_chat_id,
+        customer,
+        conversation,
+        force_recreate=True,
+    )
+    detail = (
+        "客服话题已丢失，系统已自动重建话题 | "
+        f"conversation_id={conversation.id} | customer_id={customer.id} | "
+        f"old_thread_id={old_thread_id or '-'} | new_thread_id={thread_id} | "
+        f"reason={reason or '-'}"
+    )
+    logger.warning(detail)
+    await notify_support_warning(
+        "客服话题已自动重建",
+        detail,
+        context={
+            "support_bot_id": settings.get("_support_bot_id"),
+            "customer_id": customer.id,
+            "conversation_id": conversation.id,
+            "group_chat_id": group_chat_id,
+            "thread_id": thread_id,
+        },
+    )
+    return thread_id
 
 
 async def send_support_message(chat_id, text, token=None):
@@ -834,21 +870,43 @@ async def forward_customer_message_to_group(customer, conversation, message, pay
             "创建客户话题失败，请检查 Bot 是否有 Manage Topics 权限。",
         )
 
-    send_payload = dict(payload)
-    if message_type == "text":
-        send_payload["text"] = notice
-    elif message_type in CAPTION_TYPES:
-        send_payload["caption"] = notice
-    else:
-        await send_text_to_chat(token, group_chat_id, notice, message_thread_id=thread_id)
+    async def send_once(current_thread_id):
+        send_payload = dict(payload)
+        if message_type == "text":
+            send_payload["text"] = notice
+        elif message_type in CAPTION_TYPES:
+            send_payload["caption"] = notice
+        else:
+            await send_text_to_chat(
+                token,
+                group_chat_id,
+                notice,
+                message_thread_id=current_thread_id,
+            )
 
-    result = await send_telegram_by_type(
-        token,
-        group_chat_id,
-        message_type,
-        send_payload,
-        message_thread_id=thread_id,
-    )
+        return await send_telegram_by_type(
+            token,
+            group_chat_id,
+            message_type,
+            send_payload,
+            message_thread_id=current_thread_id,
+        )
+
+    try:
+        result = await send_once(thread_id)
+    except Exception as e:
+        if not thread_id or not is_message_thread_not_found_error(e):
+            raise
+        thread_id = await recreate_conversation_topic(
+            token,
+            group_chat_id,
+            customer,
+            conversation,
+            settings,
+            reason=str(e),
+        )
+        result = await send_once(thread_id)
+
     group_message_id = (result.get("result") or {}).get("message_id")
     if group_message_id:
         update_support_message_group_message_id(support_message.id, group_message_id)

@@ -160,6 +160,25 @@
               />
             </el-select>
           </el-form-item>
+
+          <el-form-item label="只监听内容">
+            <el-select
+              v-model="requiredKeywordList"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="输入源消息必须包含的内容后回车"
+            >
+              <el-option
+                v-for="keyword in requiredKeywordList"
+                :key="keyword"
+                :label="keyword"
+                :value="keyword"
+              />
+            </el-select>
+            <div class="field-tip">留空表示全部监听；填写后，源消息包含任意一条才会发送。</div>
+          </el-form-item>
         </div>
 
         <el-form-item label="替换词">
@@ -245,6 +264,7 @@ const localForm = reactive({
   enabled: true,
   status: "running",
   blocked_keywords: "[]",
+  listen_required_keywords: "[]",
   replace_words: "{}",
   footer: "",
   remove_contact_lines: true,
@@ -278,6 +298,15 @@ const blockedKeywordList = computed({
   },
 })
 
+const requiredKeywordList = computed({
+  get() {
+    return parseJsonArray(localForm.listen_required_keywords)
+  },
+  set(value) {
+    localForm.listen_required_keywords = JSON.stringify(uniqueStrings(value), null, 0)
+  },
+})
+
 watch(
   () => props.form,
   (val) => {
@@ -286,6 +315,7 @@ watch(
       ...val,
       target_channels: JSON.stringify(uniqueChannels(parseChannelItems(val.target_channels || "[]"))),
       blocked_keywords: normalizeJsonArrayString(val.blocked_keywords || "[]"),
+      listen_required_keywords: normalizeJsonArrayString(val.listen_required_keywords || "[]"),
       use_random_head: val.use_random_head ?? false,
       use_random_body: val.use_random_body ?? false,
       use_random_footer: val.use_random_footer ?? false,
@@ -321,6 +351,7 @@ function applyCopyTask(taskId) {
     enabled: true,
     status: "running",
     blocked_keywords: normalizeJsonArrayString(task.blocked_keywords || "[]"),
+    listen_required_keywords: normalizeJsonArrayString(task.listen_required_keywords || "[]"),
     replace_words: task.replace_words || "{}",
     footer: "",
     remove_contact_lines: task.remove_contact_lines ?? true,
@@ -375,6 +406,7 @@ function submit() {
     bot_id: normalizeBotId(localForm.bot_id),
     album_wait_seconds: toPositiveNumber(localForm.album_wait_seconds, 3),
     blocked_keywords: normalizeJsonArrayString(localForm.blocked_keywords),
+    listen_required_keywords: normalizeJsonArrayString(localForm.listen_required_keywords),
     footer: "",
     selected_filter_template_group_id: normalizeTemplateId(localForm.selected_filter_template_group_id),
     selected_link_template_group_id: normalizeTemplateId(localForm.selected_link_template_group_id),
@@ -587,6 +619,13 @@ function updateTemplateField({ key, value }) {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+
+.field-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #909399;
 }
 
 .form-grid {

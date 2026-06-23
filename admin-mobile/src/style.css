@@ -483,6 +483,37 @@ select {
   line-height: 1.6;
 }
 
+.log-sheet .el-drawer__body {
+  background: var(--bg);
+}
+
+.log-drawer {
+  display: grid;
+  gap: 12px;
+}
+
+.log-drawer .search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 0;
+}
+
+.log-summary {
+  margin-top: 2px;
+}
+
+.log-list {
+  padding-bottom: 10px;
+}
+
+.log-card.expanded .meta-value {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
+
 @media (min-width: 720px) {
   .mobile-shell {
     max-width: 480px;

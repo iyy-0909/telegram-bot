@@ -392,6 +392,7 @@ const currentListenerTask = reactive({
   enabled: true,
   status: "running",
   blocked_keywords: "[]",
+  listen_required_keywords: "[]",
   replace_words: "{}",
   footer: "",
   remove_contact_lines: true,
@@ -881,6 +882,7 @@ function resetCurrentListenerTask() {
     enabled: true,
     status: "running",
     blocked_keywords: "[]",
+    listen_required_keywords: "[]",
     replace_words: "{}",
     footer: "",
     remove_contact_lines: true,
@@ -927,6 +929,7 @@ async function openEditListenerTaskDialog(row) {
     enabled: row.enabled ?? true,
     status: row.status || "running",
     blocked_keywords: row.blocked_keywords || "[]",
+    listen_required_keywords: row.listen_required_keywords || "[]",
     replace_words: row.replace_words || "{}",
     footer: row.footer || "",
     remove_contact_lines: row.remove_contact_lines ?? true,
@@ -961,6 +964,7 @@ function validateListenerTaskJson() {
     }
 
     JSON.parse(currentListenerTask.blocked_keywords || "[]")
+    JSON.parse(currentListenerTask.listen_required_keywords || "[]")
     JSON.parse(currentListenerTask.replace_words || "{}")
     return true
   } catch {
@@ -1086,6 +1090,7 @@ async function submitListenerTask(formData) {
     enabled: currentListenerTask.enabled,
     status: currentListenerTask.enabled ? "running" : "stopped",
     blocked_keywords: currentListenerTask.blocked_keywords || "[]",
+    listen_required_keywords: currentListenerTask.listen_required_keywords || "[]",
     replace_words: currentListenerTask.replace_words || "{}",
     footer: "",
     remove_contact_lines: currentListenerTask.remove_contact_lines,

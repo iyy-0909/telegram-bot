@@ -31,7 +31,7 @@
           <div class="actions">
             <el-input
               v-model="filters.keyword"
-              placeholder="搜索名称 / username / chat_id"
+              placeholder="搜索名称 / username / chat_id / https://t.me/..."
               clearable
               @keyup.enter="load"
             >
@@ -39,10 +39,25 @@
                 <el-icon><Search /></el-icon>
               </template>
             </el-input>
-            <el-select v-model="filters.status" clearable placeholder="状态" class="status-filter">
-              <el-option label="enabled" value="enabled" />
-              <el-option label="disabled" value="disabled" />
-              <el-option label="error" value="error" />
+            <el-select
+              v-model="filters.group_name"
+              clearable
+              filterable
+              placeholder="分组"
+              class="status-filter"
+              @change="load"
+            >
+              <el-option
+                v-for="group in groupOptions"
+                :key="group"
+                :label="group"
+                :value="group"
+              />
+            </el-select>
+            <el-select v-model="filters.status" clearable placeholder="状态" class="status-filter" @change="load">
+              <el-option label="正常" value="enabled" />
+              <el-option label="已禁用" value="disabled" />
+              <el-option label="异常" value="error" />
             </el-select>
             <el-button @click="load">
               <el-icon><Refresh /></el-icon>
@@ -71,24 +86,14 @@
             <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
             <el-table-column label="username" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">
-                <CopyText
-                  v-if="row.username"
-                  :value="row.username"
-                  :text="row.username"
-                  tone="primary"
-                />
+                <CopyText v-if="row.username" :value="row.username" :text="row.username" tone="primary" />
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column prop="group_name" label="分组" min-width="120" />
-            <el-table-column label="绑定 Bot" min-width="130">
+            <el-table-column prop="group_name" label="分组" min-width="120" show-overflow-tooltip />
+            <el-table-column label="绑定 Bot" min-width="130" show-overflow-tooltip>
               <template #default="{ row }">
-                <CopyText
-                  v-if="botUsername(row)"
-                  :value="botUsername(row)"
-                  :text="botUsername(row)"
-                  tone="primary"
-                />
+                <CopyText v-if="botUsername(row)" :value="botUsername(row)" :text="botUsername(row)" tone="primary" />
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -98,14 +103,10 @@
               </template>
             </el-table-column>
             <el-table-column prop="delivery_status" label="投放状态" min-width="120" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ row.delivery_status || "-" }}
-              </template>
+              <template #default="{ row }">{{ row.delivery_status || "-" }}</template>
             </el-table-column>
             <el-table-column prop="collection_status" label="收录状态" min-width="120" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ row.collection_status || "-" }}
-              </template>
+              <template #default="{ row }">{{ row.collection_status || "-" }}</template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
             <el-table-column label="操作" width="280" fixed="right">
@@ -120,7 +121,7 @@
                     检测
                   </el-button>
                   <el-button size="small" @click="toggle(row)">
-                    {{ row.status === "disabled" ? "启用" : "禁用" }}
+                    {{ row.status === "disabled" ? "启用" : "停用" }}
                   </el-button>
                   <el-button size="small" type="danger" plain @click="remove(row)">
                     <el-icon><Delete /></el-icon>
@@ -138,7 +139,7 @@
           <div class="actions">
             <el-input
               v-model="cloneFilters.keyword"
-              placeholder="搜索频道名 / 链接 / 分组"
+              placeholder="搜索频道名 / 链接 / 分组 / https://t.me/..."
               clearable
               @keyup.enter="loadCloneChannels"
             >
@@ -146,13 +147,21 @@
                 <el-icon><Search /></el-icon>
               </template>
             </el-input>
-            <el-input
+            <el-select
               v-model="cloneFilters.group_name"
-              placeholder="分组"
               clearable
+              filterable
+              placeholder="分组"
               class="status-filter"
-              @keyup.enter="loadCloneChannels"
-            />
+              @change="loadCloneChannels"
+            >
+              <el-option
+                v-for="group in cloneGroupOptions"
+                :key="group"
+                :label="group"
+                :value="group"
+              />
+            </el-select>
             <el-button @click="loadCloneChannels">
               <el-icon><Refresh /></el-icon>
               刷新
@@ -176,16 +185,11 @@
             <el-table-column prop="title" label="频道名" min-width="170" show-overflow-tooltip />
             <el-table-column label="频道链接" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">
-                <CopyText
-                  v-if="row.channel_link"
-                  :value="row.channel_link"
-                  :text="row.channel_link"
-                  tone="primary"
-                />
+                <CopyText v-if="row.channel_link" :value="row.channel_link" :text="row.channel_link" tone="primary" />
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column prop="group_name" label="分组" min-width="120" />
+            <el-table-column prop="group_name" label="分组" min-width="120" show-overflow-tooltip />
             <el-table-column prop="channel_type" label="频道类型" min-width="120" show-overflow-tooltip />
             <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
             <el-table-column label="操作" width="150" fixed="right">
@@ -210,7 +214,7 @@
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="720px">
       <el-descriptions :column="2" border>
         <el-descriptions-item label="频道名称">
-          <el-input v-model="form.title" class="description-field" />
+          <el-input v-model="form.title" class="description-field" placeholder="例如：北京投放频道" />
         </el-descriptions-item>
         <el-descriptions-item label="状态">
           <el-select v-model="form.status" class="description-field">
@@ -229,7 +233,7 @@
           <el-input v-model="form.channel_type" class="description-field" placeholder="例如：channel / supergroup" />
         </el-descriptions-item>
         <el-descriptions-item label="分组">
-          <el-input v-model="form.group_name" class="description-field" />
+          <el-input v-model="form.group_name" class="description-field" placeholder="例如：北京" />
         </el-descriptions-item>
         <el-descriptions-item label="绑定 Bot">
           <BotSelect v-model="form.bot_id" :bots="props.bots" class="description-field" placeholder="不选则使用系统默认 Bot" />
@@ -242,12 +246,8 @@
           <el-input v-model="form.collection_status" class="description-field" placeholder="例如：已收录 / 未收录 / 待确认" />
         </el-descriptions-item>
         <el-descriptions-item label="克隆状态" :span="2">{{ editing?.clone_status || "-" }}</el-descriptions-item>
-        <el-descriptions-item label="成员数">
-          {{ formatMemberCount(editing) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="频道创建者">
-          {{ formatCreator(editing) }}
-        </el-descriptions-item>
+        <el-descriptions-item label="成员数">{{ formatMemberCount(editing) }}</el-descriptions-item>
+        <el-descriptions-item label="频道创建者">{{ formatCreator(editing) }}</el-descriptions-item>
         <el-descriptions-item label="权限" :span="2">
           <div class="detail-tags">
             <el-tag size="small" :type="editing?.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(editing?.bot_is_member) }}</el-tag>
@@ -265,11 +265,9 @@
           </div>
         </el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">
-          <el-input v-model="form.remark" class="description-field" type="textarea" :rows="3" />
+          <el-input v-model="form.remark" class="description-field" type="textarea" :rows="3" placeholder="运营备注，可选" />
         </el-descriptions-item>
-        <el-descriptions-item label="最近错误" :span="2">
-          {{ editing?.last_error || "-" }}
-        </el-descriptions-item>
+        <el-descriptions-item label="最近错误" :span="2">{{ editing?.last_error || "-" }}</el-descriptions-item>
       </el-descriptions>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -292,7 +290,7 @@
           <el-input v-model="cloneForm.channel_type" placeholder="例如：新闻 / 房产 / 招聘" />
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="cloneForm.remark" type="textarea" :rows="3" />
+          <el-input v-model="cloneForm.remark" type="textarea" :rows="3" placeholder="源频道备注，可选" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -316,12 +314,8 @@
         <el-descriptions-item label="投放状态">{{ checkInfo.delivery_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="收录状态">{{ checkInfo.collection_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="克隆状态" :span="2">{{ checkInfo.clone_status || "-" }}</el-descriptions-item>
-        <el-descriptions-item label="成员数">
-          {{ formatMemberCount(checkInfo) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="频道创建者">
-          {{ formatCreator(checkInfo) }}
-        </el-descriptions-item>
+        <el-descriptions-item label="成员数">{{ formatMemberCount(checkInfo) }}</el-descriptions-item>
+        <el-descriptions-item label="频道创建者">{{ formatCreator(checkInfo) }}</el-descriptions-item>
         <el-descriptions-item label="权限" :span="2">
           <div class="detail-tags">
             <el-tag size="small" :type="checkInfo.bot_is_member ? 'success' : 'danger'">在频道 {{ yesNo(checkInfo.bot_is_member) }}</el-tag>
@@ -338,9 +332,7 @@
             <el-tag size="small" :type="checkInfo.can_view_creator ? 'success' : 'warning'">频道创建者 {{ checkInfo.can_view_creator ? "可查看" : "不可查看" }}</el-tag>
           </div>
         </el-descriptions-item>
-        <el-descriptions-item label="最近错误" :span="2">
-          {{ checkInfo.last_error || "-" }}
-        </el-descriptions-item>
+        <el-descriptions-item label="最近错误" :span="2">{{ checkInfo.last_error || "-" }}</el-descriptions-item>
       </el-descriptions>
       <template #footer>
         <el-button type="primary" @click="checkDialogVisible = false">关闭</el-button>
@@ -399,6 +391,7 @@ const checkDialogVisible = ref(false)
 const checkInfo = ref(null)
 const filters = reactive({
   keyword: "",
+  group_name: "",
   status: "",
 })
 const cloneFilters = reactive({
@@ -407,11 +400,15 @@ const cloneFilters = reactive({
 })
 const form = reactive(emptyForm())
 const cloneForm = reactive(emptyCloneForm())
+
 const channelStats = computed(() => ({
   total: channels.value.length,
   enabled: channels.value.filter((channel) => channel.status === "enabled").length,
   error: channels.value.filter((channel) => channel.status === "error").length,
 }))
+
+const groupOptions = computed(() => uniqueGroups(channels.value))
+const cloneGroupOptions = computed(() => uniqueGroups(cloneChannels.value))
 
 onMounted(async () => {
   await Promise.all([load(), loadCloneChannels()])
@@ -441,6 +438,14 @@ function emptyCloneForm() {
     channel_type: "",
     remark: "",
   }
+}
+
+function uniqueGroups(list) {
+  return Array.from(new Set(
+    list
+      .map((item) => String(item.group_name || "").trim())
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"))
 }
 
 async function load() {
@@ -671,11 +676,7 @@ function yesNo(value) {
 }
 
 function formatMemberCount(row) {
-  if (!row) {
-    return "-"
-  }
-
-  if (!row?.can_view_member_count) {
+  if (!row || !row.can_view_member_count) {
     return "不可查看"
   }
 
@@ -685,11 +686,7 @@ function formatMemberCount(row) {
 }
 
 function formatCreator(row) {
-  if (!row) {
-    return "-"
-  }
-
-  if (!row?.can_view_creator) {
+  if (!row || !row.can_view_creator) {
     return "不可查看"
   }
 
@@ -756,7 +753,7 @@ function readError(error, fallback) {
 }
 
 .actions .el-input {
-  width: 260px;
+  width: 320px;
 }
 
 .status-filter {
@@ -802,12 +799,6 @@ function readError(error, fallback) {
   margin-top: 12px;
   border-radius: 8px;
   border: 1px solid #e5e7eb;
-}
-
-.perm {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
 }
 
 .row-actions {

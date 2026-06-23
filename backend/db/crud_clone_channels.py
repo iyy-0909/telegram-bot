@@ -4,6 +4,7 @@ from sqlalchemy import or_
 
 from db.database import SessionLocal
 from db.models import CloneChannel
+from db.search_utils import build_channel_search_terms
 
 
 def normalize_clone_channel_data(data):
@@ -40,15 +41,22 @@ def list_clone_channels(keyword="", group_name="", channel_type=""):
     try:
         query = db.query(CloneChannel)
 
-        if keyword:
-            like = f"%{keyword.strip()}%"
+        terms = build_channel_search_terms(keyword)
+        if terms:
+            fields = (
+                CloneChannel.title,
+                CloneChannel.channel_link,
+                CloneChannel.group_name,
+                CloneChannel.channel_type,
+                CloneChannel.remark,
+            )
             query = query.filter(
                 or_(
-                    CloneChannel.title.like(like),
-                    CloneChannel.channel_link.like(like),
-                    CloneChannel.group_name.like(like),
-                    CloneChannel.channel_type.like(like),
-                    CloneChannel.remark.like(like),
+                    *[
+                        field.like(f"%{term}%")
+                        for term in terms
+                        for field in fields
+                    ]
                 )
             )
 

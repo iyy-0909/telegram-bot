@@ -9,6 +9,7 @@
     collapse-tags-tooltip
     :allow-create="allowCreate"
     :default-first-option="allowCreate"
+    :filter-method="handleFilter"
     class="channel-select"
     @update:model-value="$emit('update:modelValue', $event)"
   >
@@ -37,6 +38,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import { getMyChannels } from "../api/myChannels"
 import StatusTag from "./StatusTag.vue"
+import { matchesSearch } from "../utils/search"
 
 const props = defineProps({
   modelValue: {
@@ -72,6 +74,7 @@ const props = defineProps({
 defineEmits(["update:modelValue"])
 
 const channels = ref([])
+const filterKeyword = ref("")
 
 const groupedChannels = computed(() => {
   const groups = new Map()
@@ -84,7 +87,17 @@ const groupedChannels = computed(() => {
       return false
     }
 
-    return true
+    return matchesSearch(
+      [
+        channel.title,
+        channel.username,
+        channel.chat_id,
+        channel.group_name,
+        channel.status,
+        channel.target_value,
+      ],
+      filterKeyword.value,
+    )
   })
 
   for (const channel of filtered) {
@@ -112,6 +125,10 @@ async function loadChannels() {
     bot_id: props.botId || undefined,
   })
   channels.value = res.data.items || []
+}
+
+function handleFilter(value) {
+  filterKeyword.value = value || ""
 }
 
 function channelValue(channel) {

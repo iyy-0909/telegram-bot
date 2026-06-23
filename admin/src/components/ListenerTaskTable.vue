@@ -245,6 +245,7 @@
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
+import { matchesSearch } from "../utils/search"
 
 const props = defineProps({
   tasks: {
@@ -271,9 +272,7 @@ const eventKeyword = ref("")
 const keyword = ref("")
 
 const filteredTasks = computed(() => {
-  const query = keyword.value.trim().toLowerCase()
-
-  if (!query) return props.tasks
+  if (!keyword.value.trim()) return props.tasks
 
   return props.tasks.filter((task) => {
     const latest = latestEvent(task.id)
@@ -290,19 +289,18 @@ const filteredTasks = computed(() => {
       latest?.error,
     ]
 
-    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+    return matchesSearch(values, keyword.value)
   })
 })
 
 const runtimeEvents = computed(() => {
-  const query = eventKeyword.value.trim().toLowerCase()
   let list = props.events || []
 
   if (eventFilter.value) {
     list = list.filter((event) => (event.event_type || event.status) === eventFilter.value)
   }
 
-  if (!query) return list
+  if (!eventKeyword.value.trim()) return list
 
   return list.filter((event) => {
     const values = [
@@ -324,7 +322,7 @@ const runtimeEvents = computed(() => {
       event.bot_name,
     ]
 
-    return values.some((value) => String(value ?? "").toLowerCase().includes(query))
+    return matchesSearch(values, eventKeyword.value)
   })
 })
 

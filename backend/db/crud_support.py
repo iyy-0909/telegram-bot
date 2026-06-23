@@ -5,6 +5,7 @@ from sqlalchemy import or_
 
 from db.database import SessionLocal
 from db.models import (
+    BotAccount,
     SupportConversation,
     SupportCustomer,
     SupportCustomerTag,
@@ -99,12 +100,31 @@ def ensure_support_defaults():
 
 def support_bot_to_dict(bot, include_secret=False):
     bot_token = bot.bot_token or ""
+    bot_name = ""
+    bot_username = ""
+    bot_link = ""
+
+    if bot.bot_id:
+        db = SessionLocal()
+        try:
+            bot_account = db.query(BotAccount).filter(BotAccount.id == bot.bot_id).first()
+            if bot_account:
+                bot_name = bot_account.name or ""
+                bot_username = bot_account.username or ""
+                bot_link = bot_account.bot_link or ""
+        finally:
+            db.close()
+
     return {
         "id": bot.id,
         "name": bot.name or "",
         "bot_id": bot.bot_id,
+        "bot_name": bot_name,
+        "bot_username": normalize_bot_username(bot_username, bot_link),
+        "bot_link": bot_link,
         "bot_token": bot_token if include_secret else mask_secret(bot_token),
         "has_bot_token": bool(bot_token),
+        "price": getattr(bot, "price", "") or "",
         "support_group_chat_id": bot.support_group_chat_id or "",
         "polling_enabled": bool(bot.polling_enabled),
         "welcome_message": bot.welcome_message or "",
@@ -133,6 +153,20 @@ def mask_secret(value):
         return "******"
 
     return f"{text[:8]}...{text[-6:]}"
+
+
+def normalize_bot_username(username="", bot_link=""):
+    text = str(username or "").strip()
+
+    if text:
+        return text if text.startswith("@") else f"@{text}"
+
+    link = str(bot_link or "").strip()
+    if "t.me/" in link:
+        name = link.rsplit("t.me/", 1)[-1].split("/", 1)[0].split("?", 1)[0].strip()
+        return f"@{name}" if name else ""
+
+    return ""
 
 
 def legacy_settings_to_support_bot_data():
@@ -213,6 +247,7 @@ def create_support_bot(data):
             name=str(data.get("name") or "").strip() or "客服 Bot",
             bot_id=data.get("bot_id"),
             bot_token=str(data.get("bot_token") or "").strip(),
+            price=str(data.get("price") or "").strip(),
             support_group_chat_id=str(data.get("support_group_chat_id") or "").strip(),
             polling_enabled=bool(data.get("polling_enabled", False)),
             welcome_message=data.get("welcome_message") or "",
