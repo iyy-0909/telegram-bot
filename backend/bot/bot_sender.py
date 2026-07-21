@@ -228,6 +228,23 @@ async def bot_edit_message_caption(
     return result
 
 
+async def bot_delete_message(token: str, chat_id: str, message_id: int):
+    chat_id = normalize_chat_id(chat_id)
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+    }
+
+    logger.info(
+        f"Bot delete message start | chat_id={chat_id} | message_id={message_id}"
+    )
+    result = await asyncio.to_thread(request_post, token, "deleteMessage", data, None)
+    logger.info(
+        f"Bot delete message ok | chat_id={chat_id} | message_id={message_id}"
+    )
+    return result
+
+
 def guess_media_type(file_path: str) -> str:
     mime_type, _ = mimetypes.guess_type(file_path)
 

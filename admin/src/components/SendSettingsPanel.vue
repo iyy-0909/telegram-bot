@@ -105,4 +105,16 @@ function submit() {
 .settings-form {
   max-width: 520px;
 }
+
+@media (max-width: 900px) {
+  .card-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .settings-form {
+    max-width: none;
+  }
+}
 </style>

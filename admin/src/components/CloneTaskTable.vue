@@ -341,12 +341,12 @@ const targetSummary = (value) => {
 
 <style scoped>
 .clone-card {
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .clone-log-card {
   margin-top: 16px;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .card-header {
@@ -400,7 +400,7 @@ const targetSummary = (value) => {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .action-buttons .el-button {
@@ -451,5 +451,22 @@ const targetSummary = (value) => {
 
 .link-success {
   color: #67c23a;
+}
+
+@media (max-width: 900px) {
+  .card-header,
+  .header-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .task-search {
+    width: 100%;
+  }
+
+  .target-text {
+    max-width: 180px;
+  }
 }
 </style>

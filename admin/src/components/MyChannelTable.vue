@@ -821,4 +821,38 @@ function readError(error, fallback) {
 .description-field {
   width: 100%;
 }
+
+@media (max-width: 900px) {
+  .page-hero,
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+
+  .actions .el-input,
+  .status-filter {
+    width: 100%;
+  }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .summary {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-tags {
+    gap: 4px;
+  }
+}
 </style>

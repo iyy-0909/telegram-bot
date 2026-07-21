@@ -234,4 +234,13 @@ const maskToken = (token) => {
 .action-buttons .el-button {
   margin-left: 0;
 }
+
+@media (max-width: 900px) {
+  .card-header,
+  .header-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+}
 </style>

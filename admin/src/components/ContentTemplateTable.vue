@@ -167,4 +167,11 @@ function previewItems(items) {
 .template-table {
   width: 100%;
 }
+
+@media (max-width: 900px) {
+  .card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 </style>

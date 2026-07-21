@@ -617,4 +617,34 @@ function welcomeTextTypeLabel(value) {
   align-items: center;
   gap: 10px;
 }
+
+@media (max-width: 900px) {
+  .page-hero,
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .page-alert {
+    flex: none;
+  }
+
+  .upload-actions,
+  .row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 520px) {
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

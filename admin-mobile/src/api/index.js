@@ -24,6 +24,10 @@ export function getListenerTasks() {
   return http.get("/api/listener-tasks")
 }
 
+export function checkListenerSourceSubscription(data) {
+  return http.post("/api/listener-tasks/check-source-subscription", data)
+}
+
 export function createListenerTask(data) {
   return http.post("/api/listener-tasks", data)
 }

@@ -51,3 +51,16 @@ python run.py
 - `docs/frontend-ui-skill.md`
 
 修改前端时必须先阅读该文档，并按其中的布局、表格、状态标签、表单、公共组件、错误展示、验收标准执行。
+
+## UI and interaction requirements
+
+For every frontend page, admin page, form, component, responsive layout, styling, navigation, or interaction task in `admin/` or `admin-mobile/`:
+
+1. Always invoke `$product-ui-ux-guardian`.
+2. Read all files under `docs/ui/` and retain the compatible project-specific rules in `docs/frontend-ui-skill.md`.
+3. Preserve existing business behavior unless the task explicitly changes it.
+4. Reuse existing components, Element Plus controls, and design tokens before creating new ones.
+5. Implement loading, empty, success, error, disabled, and permission-restricted states.
+6. Run the real application and inspect the rendered result in a browser.
+7. Verify at minimum 375px mobile and 1440px desktop layouts, and test the complete primary flow.
+8. Do not declare the task complete before browser validation; include screenshots and test results in the final report.

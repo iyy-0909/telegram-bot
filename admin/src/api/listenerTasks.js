@@ -5,6 +5,10 @@ export function getListenerTasks() {
   return axios.get(`${API}/api/listener-tasks`)
 }
 
+export function checkListenerSourceSubscription(data) {
+  return axios.post(`${API}/api/listener-tasks/check-source-subscription`, data)
+}
+
 export function createListenerTask(data) {
   return axios.post(`${API}/api/listener-tasks`, data)
 }

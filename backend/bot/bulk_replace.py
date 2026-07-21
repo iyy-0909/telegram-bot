@@ -14,6 +14,7 @@ from db.models import (
 )
 from bot.bot_sender import (
     BotApiError,
+    bot_delete_message,
     bot_edit_message_caption,
     bot_edit_message_text,
     request_post,
@@ -25,6 +26,12 @@ SOURCE_MODELS = {
     "clone": CloneSendEvent,
     "listener": ListenerSendEvent,
 }
+ACTION_REPLACE = "replace"
+ACTION_DELETE_MESSAGE = "delete_message"
+
+
+def normalize_action_type(value):
+    return ACTION_DELETE_MESSAGE if value == ACTION_DELETE_MESSAGE else ACTION_REPLACE
 
 
 def normalize_key(value):
@@ -86,7 +93,8 @@ def record_matches_channels(record, channel_key_set):
     return bool(record_target_keys(record) & channel_key_set)
 
 
-def build_preview_item(record, source_type, channel, old_text, new_text):
+def build_preview_item(record, source_type, channel, old_text, new_text, action_type=ACTION_REPLACE):
+    action_type = normalize_action_type(action_type)
     content_type, original_text = extract_edit_text(record)
     target_message_id = getattr(record, "target_message_id", None)
     target_chat_id = (
@@ -118,6 +126,7 @@ def build_preview_item(record, source_type, channel, old_text, new_text):
     return {
         "record_id": record.id,
         "source_type": source_type,
+        "action_type": action_type,
         "target_chat_id": target_chat_id,
         "target_message_id": target_message_id,
         "channel_id": channel.id if channel else None,
@@ -129,7 +138,12 @@ def build_preview_item(record, source_type, channel, old_text, new_text):
         ),
         "message_type": content_type or getattr(record, "message_type", "") or "",
         "original_text": original_text,
-        "replaced_text": replace_text(original_text, old_text, new_text),
+        "replaced_text": (
+            ""
+            if action_type == ACTION_DELETE_MESSAGE
+            else replace_text(original_text, old_text, new_text)
+        ),
+        "action_label": "删除整条内容" if action_type == ACTION_DELETE_MESSAGE else "替换内容",
         "created_at": str(getattr(record, "created_at", "") or ""),
         "can_edit": can_edit,
         "reason": reason,
@@ -153,7 +167,9 @@ def preview_bulk_replace(
     start_time=None,
     end_time=None,
     limit=500,
+    action_type=ACTION_REPLACE,
 ):
+    action_type = normalize_action_type(action_type)
     old_text = old_text or ""
     if not old_text:
         raise ValueError("old_text 不能为空")
@@ -219,6 +235,7 @@ def preview_bulk_replace(
                         channel,
                         old_text,
                         new_text,
+                        action_type,
                     )
                 )
 
@@ -297,6 +314,37 @@ async def check_edit_permission(bot, chat_id):
         return False, error_text(e)
 
 
+async def check_delete_permission(bot, chat_id):
+    try:
+        me = await asyncio.to_thread(request_post, bot.token, "getMe", {}, None)
+        bot_user_id = (me.get("result") or {}).get("id")
+        member_result = await asyncio.to_thread(
+            request_post,
+            bot.token,
+            "getChatMember",
+            {
+                "chat_id": chat_id,
+                "user_id": bot_user_id,
+            },
+            None,
+        )
+        member = member_result.get("result") or {}
+        status = member.get("status")
+        is_admin = status in ["administrator", "creator"]
+        can_delete = bool(member.get("can_delete_messages") or status == "creator")
+
+        if not is_admin:
+            return False, "Bot 不是频道管理员"
+
+        if not can_delete:
+            return False, "Bot 缺少删除消息权限"
+
+        return True, ""
+
+    except Exception as e:
+        return False, error_text(e)
+
+
 async def execute_bulk_replace(
     *,
     records,
@@ -306,7 +354,9 @@ async def execute_bulk_replace(
     message_type="all",
     source_type="all",
     dry_run=False,
+    action_type=ACTION_REPLACE,
 ):
+    action_type = normalize_action_type(action_type)
     old_text = old_text or ""
     if not old_text:
         raise ValueError("old_text 不能为空")
@@ -367,7 +417,11 @@ async def execute_bulk_replace(
                 or getattr(channel, "username", "")
             )
             target_message_id = getattr(record, "target_message_id", None)
-            replaced_text = replace_text(original_text, old_text, new_text or "")
+            replaced_text = (
+                ""
+                if action_type == ACTION_DELETE_MESSAGE
+                else replace_text(original_text, old_text, new_text or "")
+            )
             item = BulkReplaceJobItem(
                 job_id=job.id,
                 source_type=current_source_type or "",
@@ -402,6 +456,44 @@ async def execute_bulk_replace(
                 bot = get_bot_for_record(db, record, channel)
                 if not bot:
                     raise ValueError("缺少可用 Bot")
+
+                if action_type == ACTION_DELETE_MESSAGE:
+                    permission_key = ("delete", bot.id, target_chat_id)
+                    if permission_key not in permission_cache:
+                        permission_cache[permission_key] = await check_delete_permission(
+                            bot,
+                            target_chat_id,
+                        )
+
+                    has_delete_permission, delete_reason = permission_cache[permission_key]
+                    if not has_delete_permission:
+                        raise ValueError(delete_reason or "Bot 无删除权限")
+
+                    if dry_run:
+                        item.status = "skipped"
+                        item.error_message = "dry_run 未执行 Telegram 删除"
+                        job.skipped_count += 1
+                        db.commit()
+                        continue
+
+                    await bot_delete_message(
+                        bot.token,
+                        target_chat_id,
+                        target_message_id,
+                    )
+
+                    if content_type == "text":
+                        record.text = ""
+                    else:
+                        record.caption = ""
+
+                    item.status = "success"
+                    item.error_message = ""
+                    item.updated_at = datetime.utcnow()
+                    job.success_count += 1
+                    db.commit()
+                    await asyncio.sleep(0.8)
+                    continue
 
                 permission_key = (bot.id, target_chat_id)
                 if permission_key not in permission_cache:

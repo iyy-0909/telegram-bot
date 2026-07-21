@@ -7,12 +7,19 @@
 
     <el-container class="content-shell">
       <el-header class="header">
-        <div class="header-title">Telegram Clone System</div>
+        <div class="header-title">
+          <span>Telegram Clone System</span>
+          <small>运营管理后台</small>
+        </div>
 
         <el-tag :type="status === 'running' ? 'success' : 'danger'" size="small">
           {{ status || "unknown" }}
         </el-tag>
       </el-header>
+
+      <div class="mobile-menu">
+        <AppMenu :active-menu="activeMenu" @select="handleSelect" />
+      </div>
 
       <el-main class="main">
         <slot />
@@ -23,6 +30,18 @@
 
 <script setup>
 import { defineComponent, h, resolveComponent } from "vue"
+import {
+  ChatDotRound,
+  Collection,
+  Connection,
+  Grid,
+  Guide,
+  House,
+  Operation,
+  Setting,
+  Switch,
+  User,
+} from "@element-plus/icons-vue"
 
 defineProps({
   status: {
@@ -38,16 +57,16 @@ defineProps({
 const emit = defineEmits(["change-menu"])
 
 const menuItems = [
-  ["home", "首页"],
-  ["rules", "监听任务"],
-  ["clone", "克隆任务"],
-  ["bots", "Bot 管理"],
-  ["my-channels", "我的频道"],
-  ["bulk-replace", "批量替换"],
-  ["support", "客服机器人"],
-  ["accounts", "账号管理"],
-  ["settings", "系统设置"],
-  ["guide", "使用教程"],
+  ["home", "首页", House],
+  ["rules", "监听任务", Switch],
+  ["clone", "克隆任务", Collection],
+  ["bots", "Bot 管理", Connection],
+  ["my-channels", "我的频道", Grid],
+  ["bulk-replace", "批量替换", Operation],
+  ["support", "客服机器人", ChatDotRound],
+  ["accounts", "账号管理", User],
+  ["settings", "系统设置", Setting],
+  ["guide", "使用教程", Guide],
 ]
 const handleSelect = (menu) => {
   emit("change-menu", menu)
@@ -69,10 +88,13 @@ const AppMenu = defineComponent({
       textColor: "#cbd5e1",
       activeTextColor: "#ffffff",
       onSelect: (menu) => componentEmit("select", menu),
-    }, () => menuItems.map(([index, label]) => h(resolveComponent("el-menu-item"), {
+    }, () => menuItems.map(([index, label, icon]) => h(resolveComponent("el-menu-item"), {
       index,
       key: index,
-    }, () => h("span", label))))
+    }, () => [
+      h(resolveComponent("el-icon"), null, () => h(icon)),
+      h("span", label),
+    ])))
   },
 })
 </script>
@@ -120,17 +142,72 @@ const AppMenu = defineComponent({
 .header-title {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 16px;
   font-weight: 600;
   color: #303133;
+}
+
+.header-title span,
+.header-title small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-title small {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #909399;
+}
+
+.mobile-menu {
+  display: none;
+  background: #111827;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
 }
 
 .main {
   min-width: 0;
   background: #f3f4f6;
   padding: 20px;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    display: block;
+  }
+
+  .aside {
+    display: none;
+  }
+
+  .header {
+    height: 56px;
+    padding: 0 14px;
+  }
+
+  .mobile-menu {
+    display: block;
+  }
+
+  .mobile-menu :deep(.el-menu) {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .mobile-menu :deep(.el-menu-item) {
+    flex: 0 0 auto;
+    height: 46px;
+    padding: 0 14px;
+  }
+
+  .main {
+    padding: 12px;
+  }
 }
 </style>
 

@@ -346,6 +346,10 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.page-header > div:first-child {
+  min-width: 0;
+}
+
 .page-title {
   font-size: 16px;
   font-weight: 600;
@@ -572,6 +576,26 @@ onUnmounted(() => {
   .countdown-box {
     width: 100%;
     text-align: left;
+  }
+}
+
+@media (max-width: 520px) {
+  .page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .current-panel {
+    padding: 12px;
+  }
+
+  .reason-line {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

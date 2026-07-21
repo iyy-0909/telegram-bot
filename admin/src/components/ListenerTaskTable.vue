@@ -524,5 +524,25 @@ function formatTargets(value) {
   .overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .card-header,
+  .header-actions,
+  .log-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .task-search,
+  .event-search,
+  .event-filter {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

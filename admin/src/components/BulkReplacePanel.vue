@@ -19,6 +19,13 @@
         </el-form-item>
 
         <div class="form-grid">
+          <el-form-item label="操作类型">
+            <el-select v-model="form.action_type">
+              <el-option label="替换内容" value="replace" />
+              <el-option label="删除整条内容" value="delete_message" />
+            </el-select>
+          </el-form-item>
+
           <el-form-item label="旧内容">
             <el-input
               v-model="form.old_text"
@@ -135,6 +142,13 @@
         <el-table-column prop="channel_title" label="频道" min-width="150" show-overflow-tooltip />
         <el-table-column prop="target_message_id" label="消息ID" width="100" />
         <el-table-column prop="message_type" label="类型" width="110" />
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.action_type === 'delete_message' ? 'danger' : 'info'">
+              {{ row.action_label || (row.action_type === "delete_message" ? "删除整条" : "替换") }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="替换前" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="text-cell">{{ row.original_text }}</span>
@@ -142,7 +156,9 @@
         </el-table-column>
         <el-table-column label="替换后" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="text-cell">{{ row.replaced_text }}</span>
+            <span class="text-cell">
+              {{ row.action_type === "delete_message" ? "将删除整条内容" : row.replaced_text }}
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="150">
@@ -193,6 +209,7 @@ const defaultForm = () => ({
   channel_ids: [],
   old_text: "",
   new_text: "",
+  action_type: "replace",
   message_type: "all",
   source_type: "all",
   date_range: [],
@@ -244,6 +261,7 @@ async function handlePreview(clearJob = true) {
       ...form,
       old_text: form.old_text,
       new_text: form.new_text,
+      action_type: form.action_type,
     })
     previewItems.value = res.data.items || []
     unavailableCount.value = res.data.unavailable_count || 0
@@ -262,7 +280,17 @@ async function handleExecute(dryRun) {
   }
 
   try {
-    if (!form.new_text) {
+    if (form.action_type === "delete_message") {
+      await ElMessageBox.confirm(
+        `将删除 ${editableItems.value.length} 条命中“${form.old_text}”的频道消息。删除后 Telegram 频道内消息不可恢复，是否继续？`,
+        "确认删除整条内容",
+        {
+          type: "warning",
+          confirmButtonText: "确认删除",
+          cancelButtonText: "取消",
+        },
+      )
+    } else if (!form.new_text) {
       await ElMessageBox.confirm(
         "新内容为空，这会删除命中的旧内容。是否继续？",
         "确认删除内容",
@@ -270,11 +298,13 @@ async function handleExecute(dryRun) {
       )
     }
 
-    await ElMessageBox.confirm(
+    if (form.action_type === "replace") {
+      await ElMessageBox.confirm(
       `将把 ${editableItems.value.length} 条消息中的「${form.old_text}」替换为「${form.new_text}」，是否继续？`,
       dryRun ? "确认 Dry Run" : "确认执行",
       { type: dryRun ? "info" : "warning" },
-    )
+      )
+    }
   } catch {
     return
   }
@@ -290,6 +320,7 @@ async function handleExecute(dryRun) {
       })),
       old_text: form.old_text,
       new_text: form.new_text,
+      action_type: form.action_type,
       channel_ids: form.channel_ids,
       message_type: form.message_type,
       source_type: form.source_type,
@@ -375,5 +406,22 @@ function resultTagType(status) {
   margin-top: 4px;
   font-size: 12px;
   color: #9ca3af;
+}
+
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-header,
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .result-header > *,
+  .actions > * {
+    width: 100%;
+  }
 }
 </style>

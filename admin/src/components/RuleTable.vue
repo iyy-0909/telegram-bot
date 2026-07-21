@@ -52,4 +52,12 @@ defineEmits(["add", "edit", "delete", "toggle","clone"])
   justify-content: space-between;
   align-items: center;
 }
+
+@media (max-width: 900px) {
+  .card-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+}
 </style>

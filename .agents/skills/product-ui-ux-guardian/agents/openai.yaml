@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product UI/UX Guardian"
+  short_description: "Enforce complete, browser-verified UI and interactions"
+  default_prompt: "Use $product-ui-ux-guardian to design, implement, and verify this UI task."

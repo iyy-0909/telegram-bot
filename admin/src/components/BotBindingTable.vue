@@ -99,7 +99,7 @@ const getBotName = (botId) => {
 
 <style scoped>
 .binding-card {
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .card-header {
@@ -128,5 +128,14 @@ const getBotName = (botId) => {
 
 .action-buttons .el-button {
   margin-left: 0;
+}
+
+@media (max-width: 900px) {
+  .card-header,
+  .action-buttons {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
 }
 </style>

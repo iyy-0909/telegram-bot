@@ -265,6 +265,7 @@ import {
 
 import {
   getListenerTasks,
+  checkListenerSourceSubscription,
   createListenerTask,
   updateListenerTask,
   deleteListenerTask,
@@ -1059,6 +1060,76 @@ function normalizeChannelInput(value) {
 }
 
 
+function buildSubscriptionWarningMessage(results) {
+  const lines = results.map((item) => {
+    const source = item.normalized_source || item.source_channel || "-"
+    return `${source}：${item.message || "监听账号未订阅源频道，实时监听可能不稳定。"}`
+  })
+
+  return [
+    "检测到源频道订阅风险：",
+    "",
+    ...lines,
+    "",
+    "公开频道可能可以读取历史，但不一定能稳定收到实时监听更新。建议先用监听账号加入/订阅源频道。",
+    "",
+    "是否仍然继续保存？",
+  ].join("\n")
+}
+
+
+async function confirmListenerSourceSubscription(accountId, sourceChannels) {
+  const sources = normalizeChannelList(sourceChannels)
+
+  if (!sources.length) {
+    return false
+  }
+
+  try {
+    const res = await checkListenerSourceSubscription({
+      account_id: toPositiveNumber(accountId, 1),
+      source_channels: sources,
+    })
+    const results = res.data?.results || []
+    const warnings = results.filter((item) => item.warning)
+
+    if (!warnings.length) {
+      return true
+    }
+
+    await ElMessageBox.confirm(
+      buildSubscriptionWarningMessage(warnings),
+      "源频道订阅提醒",
+      {
+        confirmButtonText: "继续保存",
+        cancelButtonText: "返回修改",
+        type: "warning",
+      },
+    )
+    return true
+  } catch (error) {
+    if (error === "cancel" || error === "close") {
+      return false
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        `源频道订阅状态检测失败：${error?.response?.data?.detail || error?.response?.data?.message || error?.message || error}\n\n继续保存后，若监听账号未订阅源频道，实时监听可能不稳定。是否仍然继续保存？`,
+        "源频道订阅检测失败",
+        {
+          confirmButtonText: "继续保存",
+          cancelButtonText: "返回修改",
+          type: "warning",
+        },
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+
 async function submitListenerTask(formData) {
   Object.assign(currentListenerTask, formData)
 
@@ -1080,6 +1151,15 @@ async function submitListenerTask(formData) {
   }
 
   if (!validateListenerTaskJson()) return
+
+  const subscriptionConfirmed = await confirmListenerSourceSubscription(
+    currentListenerTask.account_id,
+    sourceChannels,
+  )
+
+  if (!subscriptionConfirmed) {
+    return
+  }
 
   const payload = {
     name: currentListenerTask.name,
@@ -1304,8 +1384,22 @@ async function checkListenerCatchupHandlerV2(id) {
       },
     )
 
+    const { value } = await ElMessageBox.prompt(
+      "请输入本次需要补齐的内容条数。",
+      "补齐条数",
+      {
+        type: "warning",
+        inputValue: String(catchupCount),
+        inputPattern: /^[1-9]\d*$/,
+        inputErrorMessage: "请输入大于 0 的整数",
+        confirmButtonText: "加入队列",
+        cancelButtonText: "取消",
+      },
+    )
+    const requestedLimit = Math.min(Math.max(Number(value || 1), 1), catchupCount)
+
     const catchupRes = await catchupLatestListenerMessage(id, {
-      limit: Math.max(Number(plan.limit || catchupCount || 500), catchupCount),
+      limit: requestedLimit,
       background: true,
     })
     const catchupData = catchupRes.data || {}

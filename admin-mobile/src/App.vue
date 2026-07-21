@@ -265,6 +265,7 @@ import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
   checkListenerCatchup,
+  checkListenerSourceSubscription,
   checkMyChannel,
   batchCheckMyChannels,
   createAccount,
@@ -508,17 +509,21 @@ function changeTab(tab) {
 }
 
 async function loadInitial() {
-  await Promise.allSettled([
-    loadHome(),
-    loadListeners(),
-    loadClones(),
-    loadChannels(),
-    loadBots(),
-    loadAccounts(),
-    loadSendSettings(),
-    loadTemplates(),
-    loadSupportBots(),
+  const results = await Promise.allSettled([
+    loadHome({ silent: true }),
+    loadListeners({ silent: true }),
+    loadClones({ silent: true }),
+    loadChannels({ silent: true }),
+    loadBots({ silent: true }),
+    loadAccounts({ silent: true }),
+    loadSendSettings({ silent: true }),
+    loadTemplates({ silent: true }),
+    loadSupportBots({ silent: true }),
   ])
+  const failedCount = results.filter((item) => item.status === "fulfilled" && item.value === false).length
+  if (failedCount) {
+    ElMessage.warning(`部分数据加载失败（${failedCount} 项），请稍后刷新重试。`)
+  }
 }
 
 async function loadActive() {
@@ -533,71 +538,75 @@ async function loadActive() {
   return Promise.allSettled([loadBots(), loadSupportBots(), loadTemplates(), loadAccounts()])
 }
 
-async function withLoading(key, fn) {
+async function withLoading(key, fn, options = {}) {
   loading[key] = true
   try {
     await fn()
+    return true
   } catch (error) {
-    ElMessage.error(getErrorMessage(error))
+    if (!options.silent) {
+      ElMessage.error(getErrorMessage(error))
+    }
+    return false
   } finally {
     loading[key] = false
   }
 }
 
-function loadHome() {
+function loadHome(options) {
   return withLoading("home", async () => {
     const [statusRes, dashboardRes] = await Promise.all([getStatus(), getRuntimeDashboard()])
     status.value = statusRes.data || {}
     dashboard.value = dashboardRes.data || {}
-  })
+  }, options)
 }
 
-function loadListeners() {
+function loadListeners(options) {
   return withLoading("listeners", async () => {
     listeners.value = pickList((await getListenerTasks()).data)
-  })
+  }, options)
 }
 
-function loadClones() {
+function loadClones(options) {
   return withLoading("clones", async () => {
     clones.value = pickList((await getCloneTasks()).data)
-  })
+  }, options)
 }
 
-function loadChannels() {
+function loadChannels(options) {
   return withLoading("channels", async () => {
     channels.value = pickList((await getMyChannels()).data)
-  })
+  }, options)
 }
 
-function loadBots() {
+function loadBots(options) {
   return withLoading("bots", async () => {
     bots.value = pickList((await getBots()).data)
-  })
+  }, options)
 }
 
-function loadSupportBots() {
+function loadSupportBots(options) {
   return withLoading("support", async () => {
     supportBots.value = pickList((await getSupportBots()).data)
-  })
+  }, options)
 }
 
-function loadTemplates() {
+function loadTemplates(options) {
   return withLoading("templates", async () => {
     templates.value = pickList((await getContentTemplates()).data)
-  })
+  }, options)
 }
 
-function loadSendSettings() {
+function loadSendSettings(options) {
   return withLoading("settings", async () => {
     sendSettings.value = (await getSendSettings()).data || sendSettings.value
-  })
+  }, options)
 }
 
-function loadAccounts() {
+function loadAccounts(options) {
   return withLoading("accounts", async () => {
     accounts.value = pickList((await getAccounts()).data)
-  })
+  }, options)
 }
 
 function openEdit(type, row) {
@@ -801,6 +810,60 @@ function payloadFor(type) {
   return data
 }
 
+function buildMobileSubscriptionWarning(results) {
+  return [
+    "检测到源频道订阅风险：",
+    "",
+    ...results.map((item) => `${item.normalized_source || item.source_channel || "-"}：${item.message || "监听账号未订阅源频道，实时监听可能不稳定。"}`),
+    "",
+    "公开频道可能能读取历史，但不一定能稳定收到实时更新。是否继续保存？",
+  ].join("\n")
+}
+
+async function confirmMobileListenerSourceSubscription(payload) {
+  try {
+    const res = await checkListenerSourceSubscription({
+      account_id: Number(payload.account_id || 1),
+      source_channels: [payload.source_channel],
+    })
+    const warnings = (res.data?.results || []).filter((item) => item.warning)
+
+    if (!warnings.length) {
+      return true
+    }
+
+    await ElMessageBox.confirm(
+      buildMobileSubscriptionWarning(warnings),
+      "源频道订阅提醒",
+      {
+        confirmButtonText: "继续保存",
+        cancelButtonText: "返回修改",
+        type: "warning",
+      },
+    )
+    return true
+  } catch (error) {
+    if (error === "cancel" || error === "close") {
+      return false
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        `源频道订阅状态检测失败：${getErrorMessage(error, "检测失败")}\n\n继续保存后，若监听账号未订阅源频道，实时监听可能不稳定。是否继续保存？`,
+        "源频道订阅检测失败",
+        {
+          confirmButtonText: "继续保存",
+          cancelButtonText: "返回修改",
+          type: "warning",
+        },
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 async function saveEdit() {
   saving.value = true
   try {
@@ -808,6 +871,10 @@ async function saveEdit() {
     const isEdit = Boolean(editForm.id)
     let result = null
     if (editType.value === "listener") {
+      const subscriptionConfirmed = await confirmMobileListenerSourceSubscription(payload)
+      if (!subscriptionConfirmed) {
+        return
+      }
       result = isEdit ? await updateListenerTask(editForm.id, payload) : await createListenerTask(payload)
     }
     if (editType.value === "clone") {
@@ -885,12 +952,20 @@ async function catchupListener(item) {
   try {
     const res = await checkListenerCatchup(item.id)
     const count = res.data?.missing_count ?? res.data?.catchup_count ?? res.data?.count ?? 0
-    await ElMessageBox.confirm(`检测到可补齐 ${count} 条内容，是否加入排队列表？`, "一键补齐", {
+    if (count <= 0) {
+      ElMessage.success(res.data?.message || "未检测到需要补齐的内容")
+      return
+    }
+    const { value } = await ElMessageBox.prompt(`检测到可补齐 ${count} 条内容，请输入本次补齐条数。`, "一键补齐", {
+      inputValue: String(Math.max(count, 1)),
+      inputPattern: /^[1-9]\d*$/,
+      inputErrorMessage: "请输入大于 0 的整数",
       confirmButtonText: "加入队列",
       cancelButtonText: "取消",
       type: count > 0 ? "warning" : "info",
     })
-    await catchupListenerTask(item.id, { background: true })
+    const limit = Math.min(Math.max(Number(value || 1), 1), Math.max(count, 1))
+    await catchupListenerTask(item.id, { background: true, limit })
     ElMessage.success("补齐任务已加入首页排队列表")
     await loadHome()
   } catch (error) {

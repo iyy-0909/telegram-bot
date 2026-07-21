@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from telethon import errors, functions, types
 
 from bot.handlers import get_registered_listener_snapshot, reload_handlers
 from bot.clone_manager import clone_manager
@@ -578,6 +579,7 @@ class BulkReplacePreviewRequest(BaseModel):
     channel_ids: List[int] = []
     old_text: str
     new_text: str = ""
+    action_type: str = "replace"
     message_type: str = "all"
     date_range: Optional[List[str]] = None
     limit: int = 500
@@ -588,6 +590,7 @@ class BulkReplaceExecuteRequest(BaseModel):
     records: List[dict] = []
     old_text: str
     new_text: str = ""
+    action_type: str = "replace"
     channel_ids: List[int] = []
     message_type: str = "all"
     source_type: str = "all"
@@ -598,6 +601,11 @@ class ListenerCatchupRequest(BaseModel):
     force: bool = True
     limit: int = 500
     background: bool = False
+
+
+class ListenerSourceSubscriptionCheckRequest(BaseModel):
+    account_id: int
+    source_channels: List[str] = []
 
 def clone_task_to_dict(task):
     return {
@@ -676,6 +684,132 @@ def normalize_task_channels(data):
         payload["target_channels"] = normalize_channel_list_json(payload.get("target_channels"))
 
     return payload
+
+
+def normalize_source_channel_list(value):
+    if isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+
+    result = []
+    seen = set()
+    for item in items:
+        channel = normalize_channel_identifier(item)
+        key = channel.lower()
+        if not channel or key in seen:
+            continue
+        seen.add(key)
+        result.append(channel)
+    return result
+
+
+async def check_listener_source_subscription(account_id: int, source_channel: str):
+    source = normalize_channel_identifier(source_channel)
+
+    if not source:
+        return {
+            "source_channel": source_channel,
+            "normalized_source": "",
+            "ok": False,
+            "joined": False,
+            "warning": True,
+            "message": "源频道为空，无法检测监听账号是否订阅。",
+        }
+
+    client = account_manager.get_client(account_id)
+    if not client:
+        await account_manager.load_accounts()
+        client = account_manager.get_client(account_id)
+
+    if not client:
+        return {
+            "source_channel": source_channel,
+            "normalized_source": source,
+            "ok": False,
+            "joined": False,
+            "warning": True,
+            "message": f"监听账号未加载，无法检测订阅状态：account_id={account_id}",
+        }
+
+    try:
+        if hasattr(client, "is_connected") and not client.is_connected():
+            await client.connect()
+
+        entity = await client.get_entity(source)
+        entity_type = type(entity).__name__
+
+        if isinstance(entity, types.Channel):
+            me = await client.get_me()
+            try:
+                participant = await client(
+                    functions.channels.GetParticipantRequest(
+                        channel=entity,
+                        participant=me,
+                    )
+                )
+                return {
+                    "source_channel": source_channel,
+                    "normalized_source": source,
+                    "ok": True,
+                    "joined": True,
+                    "warning": False,
+                    "entity_type": entity_type,
+                    "title": getattr(entity, "title", "") or "",
+                    "username": f"@{getattr(entity, 'username', '')}" if getattr(entity, "username", "") else "",
+                    "participant_type": type(getattr(participant, "participant", None)).__name__,
+                    "message": "监听账号已订阅该源频道，实时监听较稳定。",
+                }
+            except errors.UserNotParticipantError:
+                return {
+                    "source_channel": source_channel,
+                    "normalized_source": source,
+                    "ok": True,
+                    "joined": False,
+                    "warning": True,
+                    "entity_type": entity_type,
+                    "title": getattr(entity, "title", "") or "",
+                    "username": f"@{getattr(entity, 'username', '')}" if getattr(entity, "username", "") else "",
+                    "message": "监听账号未订阅该源频道。公开频道可能能读取历史，但实时监听不稳定，建议先用监听账号加入/订阅该频道。",
+                }
+
+        if isinstance(entity, types.Chat):
+            left = bool(getattr(entity, "left", False))
+            return {
+                "source_channel": source_channel,
+                "normalized_source": source,
+                "ok": True,
+                "joined": not left,
+                "warning": left,
+                "entity_type": entity_type,
+                "title": getattr(entity, "title", "") or "",
+                "message": (
+                    "监听账号已在该群组中。"
+                    if not left
+                    else "监听账号不在该群组中，实时监听不稳定。"
+                ),
+            }
+
+        return {
+            "source_channel": source_channel,
+            "normalized_source": source,
+            "ok": True,
+            "joined": True,
+            "warning": True,
+            "entity_type": entity_type,
+            "message": "该源不是标准频道/群组，已解析但无法精确检测订阅状态。",
+        }
+
+    except Exception as e:
+        return {
+            "source_channel": source_channel,
+            "normalized_source": source,
+            "ok": False,
+            "joined": False,
+            "warning": True,
+            "message": f"检测源频道订阅状态失败：{e}",
+            "error": repr(e),
+        }
 
 
 def rule_to_dict(rule):
@@ -1301,6 +1435,7 @@ def api_bulk_replace_preview(payload: BulkReplacePreviewRequest):
             start_time=start_time,
             end_time=end_time,
             limit=payload.limit,
+            action_type=payload.action_type,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1317,6 +1452,7 @@ async def api_bulk_replace_execute(payload: BulkReplaceExecuteRequest):
             message_type=payload.message_type,
             source_type=payload.source_type,
             dry_run=payload.dry_run,
+            action_type=payload.action_type,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1793,6 +1929,33 @@ def api_get_listener_tasks():
         listener_task_to_dict(task)
         for task in get_all_listener_tasks()
     ]
+
+
+@app.post("/api/listener-tasks/check-source-subscription")
+async def api_check_listener_source_subscription(data: ListenerSourceSubscriptionCheckRequest):
+    sources = normalize_source_channel_list(data.source_channels)
+
+    if not sources:
+        return {
+            "ok": False,
+            "message": "source_channels empty",
+            "results": [],
+            "warning_count": 0,
+        }
+
+    results = [
+        await check_listener_source_subscription(data.account_id, source)
+        for source in sources
+    ]
+    warning_count = len([item for item in results if item.get("warning")])
+
+    return {
+        "ok": True,
+        "message": "ok" if warning_count == 0 else "存在源频道订阅风险",
+        "account_id": data.account_id,
+        "results": results,
+        "warning_count": warning_count,
+    }
 
 
 @app.post("/api/listener-tasks")
