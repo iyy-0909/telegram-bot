@@ -25,6 +25,42 @@ export function batchCheckMyChannels() {
   return axios.post(`${API}/api/my-channels/batch-check`)
 }
 
+export function getSearchBots(params = {}) {
+  return axios.get(`${API}/api/search-bots`, { params })
+}
+
+export function createSearchBot(data) {
+  return axios.post(`${API}/api/search-bots`, data)
+}
+
+export function updateSearchBot(id, data) {
+  return axios.put(`${API}/api/search-bots/${id}`, data)
+}
+
+export function deleteSearchBot(id) {
+  return axios.delete(`${API}/api/search-bots/${id}`)
+}
+
+export function checkSearchBot(id) {
+  return axios.post(`${API}/api/search-bots/${id}/check`)
+}
+
+export function getSearchBotSubmissions(params = {}) {
+  return axios.get(`${API}/api/search-bot-submissions`, { params })
+}
+
+export function createSearchBotSubmission(data) {
+  return axios.post(`${API}/api/search-bot-submissions`, data)
+}
+
+export function updateSearchBotSubmission(id, data) {
+  return axios.put(`${API}/api/search-bot-submissions/${id}`, data)
+}
+
+export function updateSearchBotSubmissionPermissions(id, data) {
+  return axios.put(`${API}/api/search-bot-submissions/${id}/permissions`, data)
+}
+
 export function getCloneChannels(params = {}) {
   return axios.get(`${API}/api/clone-channels`, { params })
 }

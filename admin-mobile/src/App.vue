@@ -29,97 +29,142 @@
       :loading="loading.home"
     />
 
-    <ListPage
-      v-else-if="activeTab === 'listeners'"
-      title="监听任务"
-      placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
-      empty-title="暂无监听任务"
-      :keyword="keyword.listeners"
-      :items="filteredListeners"
-      :loading="loading.listeners"
-      @update:keyword="keyword.listeners = $event"
-    >
-      <template #actions>
-        <el-button size="small" type="primary" @click="openCreate('listener')">新增</el-button>
-        <el-button size="small" plain @click="showLogs('listener')">日志</el-button>
-      </template>
-      <template #default="{ item }">
-        <TaskCard
-          :title="item.name || `监听任务 #${item.id}`"
-          :subtitle="item.source_channel"
-          :status="item.status"
-          :enabled="item.enabled"
-          :meta="[
-            ['任务 ID', item.id],
-            ['目标频道', channelLine(item.target_channels)],
-            ['运行状态', compactText(item.status)],
-            ['启用状态', enabledLabel(item.enabled)],
-            ['最后监听', formatDate(item.last_received_at)],
-            ['最近动作', compactText(item.last_action || item.recent_action)],
-            ['账号 / Bot', `${compactText(item.account_name || item.account_id)} / ${compactText(item.bot_name || item.bot_id)}`],
-            ['只监听内容', channelLine(item.listen_required_keywords)],
-            ['过滤词', channelLine(item.blocked_keywords)],
-            ['删除联系方式', item.remove_contact_lines ? '是' : '否'],
-            ['过滤二维码', item.filter_qr_code ? '是' : '否'],
-            ['最后错误', compactText(item.last_error)],
-          ]"
-        >
-          <el-button size="small" type="primary" plain @click="openEdit('listener', item)">编辑</el-button>
-          <el-button size="small" :type="item.enabled ? 'warning' : 'success'" plain @click="toggleListener(item)">
-            {{ item.enabled ? "停止" : "启动" }}
-          </el-button>
-          <el-button size="small" plain @click="catchupListener(item)">补齐</el-button>
-          <el-button size="small" type="danger" plain @click="removeItem('listener', item)">删除</el-button>
-        </TaskCard>
-      </template>
-    </ListPage>
+    <div v-else-if="activeTab === 'listeners'" class="task-section">
+      <el-tabs
+        v-model="listenerView"
+        stretch
+        class="task-view-tabs"
+        @tab-change="changeTaskView('listener', $event)"
+      >
+        <el-tab-pane label="监听任务" name="tasks" />
+        <el-tab-pane label="执行任务" name="logs" />
+      </el-tabs>
+      <ListPage
+        v-if="listenerView === 'tasks'"
+        title="监听任务"
+        placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
+        empty-title="暂无监听任务"
+        :keyword="keyword.listeners"
+        :items="filteredListeners"
+        :loading="loading.listeners"
+        @update:keyword="keyword.listeners = $event"
+      >
+        <template #actions>
+          <el-button size="small" type="primary" @click="openCreate('listener')">新增</el-button>
+        </template>
+        <template #default="{ item }">
+          <TaskCard
+            :title="item.name || `监听任务 #${item.id}`"
+            :subtitle="item.source_channel"
+            :status="item.status"
+            :enabled="item.enabled"
+            :meta="[
+              ['任务 ID', item.id],
+              ['目标频道', channelLine(item.target_channels)],
+              ['运行状态', compactText(item.status)],
+              ['启用状态', enabledLabel(item.enabled)],
+              ['最后监听', formatDate(item.last_received_at)],
+              ['最近动作', compactText(item.last_action || item.recent_action)],
+              ['账号 / Bot', `${compactText(item.account_name || item.account_id)} / ${compactText(item.bot_name || item.bot_id)}`],
+              ['只监听内容', channelLine(item.listen_required_keywords)],
+              ['过滤词', channelLine(item.blocked_keywords)],
+              ['删除联系方式', item.remove_contact_lines ? '是' : '否'],
+              ['过滤二维码', item.filter_qr_code ? '是' : '否'],
+              ['最后错误', compactText(item.last_error)],
+            ]"
+          >
+            <el-button size="small" type="primary" plain @click="openEdit('listener', item)">编辑</el-button>
+            <el-button size="small" :type="item.enabled ? 'warning' : 'success'" plain @click="toggleListener(item)">
+              {{ item.enabled ? "停止" : "启动" }}
+            </el-button>
+            <el-button size="small" plain @click="catchupListener(item)">补齐</el-button>
+            <el-button size="small" type="danger" plain @click="removeItem('listener', item)">删除</el-button>
+          </TaskCard>
+        </template>
+      </ListPage>
+      <div v-else class="page task-log-page">
+        <LogDrawer
+          type="listener"
+          :items="filteredLogItems"
+          :keyword="logKeyword"
+          :loading="logLoading"
+          @update:keyword="logKeyword = $event"
+          @refresh="showLogs('listener')"
+        />
+      </div>
+    </div>
 
-    <ListPage
-      v-else-if="activeTab === 'clones'"
-      title="克隆任务"
-      placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
-      empty-title="暂无克隆任务"
-      :keyword="keyword.clones"
-      :items="filteredClones"
-      :loading="loading.clones"
-      @update:keyword="keyword.clones = $event"
-    >
-      <template #actions>
-        <el-button size="small" type="primary" @click="openCreate('clone')">新增</el-button>
-        <el-button size="small" plain @click="showLogs('clone')">日志</el-button>
-      </template>
-      <template #default="{ item }">
-        <TaskCard
-          :title="item.name || `克隆任务 #${item.id}`"
-          :subtitle="item.source_channel"
-          :status="item.status"
-          :enabled="item.enabled"
-          :meta="[
-            ['任务 ID', item.id],
-            ['目标频道', channelLine(item.target_channels)],
-            ['运行状态', compactText(item.status)],
-            ['启用状态', enabledLabel(item.enabled)],
-            ['最后监听', formatDate(item.last_received_at)],
-            ['最近动作', compactText(item.last_action || item.recent_action)],
-            ['账号 / Bot', `${compactText(item.account_name || item.account_id)} / ${compactText(item.bot_name || item.bot_id)}`],
-            ['过滤词', channelLine(item.blocked_keywords)],
-            ['删除联系方式', item.remove_contact_lines ? '是' : '否'],
-            ['过滤二维码', item.filter_qr_code ? '是' : '否'],
-            ['最后错误', compactText(item.last_error)],
-          ]"
-        >
-          <el-button size="small" type="primary" plain @click="openEdit('clone', item)">编辑</el-button>
-          <el-button size="small" type="success" plain @click="runAction(() => startCloneTask(item.id), '已启动克隆任务', loadClones)">启动</el-button>
-          <el-button size="small" type="warning" plain @click="runAction(() => pauseCloneTask(item.id), '已暂停克隆任务', loadClones)">暂停</el-button>
-          <el-button size="small" plain @click="runAction(() => resumeCloneTask(item.id), '已继续克隆任务', loadClones)">继续</el-button>
-          <el-button size="small" type="danger" plain @click="runAction(() => stopCloneTask(item.id), '已停止克隆任务', loadClones)">停止</el-button>
-          <el-button size="small" type="danger" plain @click="removeItem('clone', item)">删除</el-button>
-        </TaskCard>
-      </template>
-    </ListPage>
+    <div v-else-if="activeTab === 'clones'" class="task-section">
+      <el-tabs
+        v-model="cloneView"
+        stretch
+        class="task-view-tabs"
+        @tab-change="changeTaskView('clone', $event)"
+      >
+        <el-tab-pane label="克隆任务" name="tasks" />
+        <el-tab-pane label="执行任务" name="logs" />
+      </el-tabs>
+      <ListPage
+        v-if="cloneView === 'tasks'"
+        title="克隆任务"
+        placeholder="搜索任务名 / 源频道 / 目标频道 / https://t.me/..."
+        empty-title="暂无克隆任务"
+        :keyword="keyword.clones"
+        :items="filteredClones"
+        :loading="loading.clones"
+        @update:keyword="keyword.clones = $event"
+      >
+        <template #actions>
+          <el-button size="small" type="primary" @click="openCreate('clone')">新增</el-button>
+        </template>
+        <template #default="{ item }">
+          <TaskCard
+            :title="item.name || `克隆任务 #${item.id}`"
+            :subtitle="item.source_channel"
+            :status="item.status"
+            :enabled="item.enabled"
+            :meta="[
+              ['任务 ID', item.id],
+              ['目标频道', channelLine(item.target_channels)],
+              ['运行状态', compactText(item.status)],
+              ['启用状态', enabledLabel(item.enabled)],
+              ['最后监听', formatDate(item.last_received_at)],
+              ['最近动作', compactText(item.last_action || item.recent_action)],
+              ['账号 / Bot', `${compactText(item.account_name || item.account_id)} / ${compactText(item.bot_name || item.bot_id)}`],
+              ['过滤词', channelLine(item.blocked_keywords)],
+              ['删除联系方式', item.remove_contact_lines ? '是' : '否'],
+              ['过滤二维码', item.filter_qr_code ? '是' : '否'],
+              ['最后错误', compactText(item.last_error)],
+            ]"
+          >
+            <el-button size="small" type="primary" plain @click="openEdit('clone', item)">编辑</el-button>
+            <el-button size="small" type="success" plain @click="runAction(() => startCloneTask(item.id), '已启动克隆任务', loadClones)">启动</el-button>
+            <el-button size="small" type="warning" plain @click="runAction(() => pauseCloneTask(item.id), '已暂停克隆任务', loadClones)">暂停</el-button>
+            <el-button size="small" plain @click="runAction(() => resumeCloneTask(item.id), '已继续克隆任务', loadClones)">继续</el-button>
+            <el-button size="small" type="danger" plain @click="runAction(() => stopCloneTask(item.id), '已停止克隆任务', loadClones)">停止</el-button>
+            <el-button size="small" type="danger" plain @click="removeItem('clone', item)">删除</el-button>
+          </TaskCard>
+        </template>
+      </ListPage>
+      <div v-else class="page task-log-page">
+        <LogDrawer
+          type="clone"
+          :items="filteredLogItems"
+          :keyword="logKeyword"
+          :loading="logLoading"
+          @update:keyword="logKeyword = $event"
+          @refresh="showLogs('clone')"
+        />
+      </div>
+    </div>
 
+    <div v-else-if="activeTab === 'channels'" class="channel-section">
+      <el-tabs v-model="channelView" stretch class="channel-view-tabs">
+        <el-tab-pane label="我的频道" name="channels" />
+        <el-tab-pane label="搜索机器人" name="search-bots" />
+      </el-tabs>
     <ListPage
-      v-else-if="activeTab === 'channels'"
+      v-if="channelView === 'channels'"
       title="我的频道"
       placeholder="搜索频道名 / username / 分组 / https://t.me/..."
       empty-title="暂无频道"
@@ -152,12 +197,20 @@
             ['备注', compactText(item.remark)],
           ]"
         >
+          <el-button size="small" type="primary" :disabled="item.status === 'disabled'" @click="openChannelSubmit(item)">提交</el-button>
+          <el-button size="small" plain @click="openChannelSubmissionStatus(item)">查看</el-button>
           <el-button size="small" type="primary" plain @click="openEdit('channel', item)">编辑</el-button>
           <el-button size="small" plain @click="checkChannel(item)">检测</el-button>
           <el-button size="small" type="danger" plain @click="removeItem('channel', item)">删除</el-button>
         </TaskCard>
       </template>
     </ListPage>
+      <MobileSearchBots
+        ref="searchBotPanelRef"
+        :page-visible="channelView === 'search-bots'"
+        @submission-changed="loadChannels"
+      />
+    </div>
 
     <MorePage
       v-else
@@ -234,23 +287,6 @@
       <pre class="detail-text">{{ detailText }}</pre>
     </el-drawer>
 
-    <el-drawer
-      v-model="logVisible"
-      class="form-sheet log-sheet"
-      direction="btt"
-      size="88%"
-      :title="logTitle"
-      destroy-on-close
-    >
-      <LogDrawer
-        :type="logType"
-        :items="filteredLogItems"
-        :keyword="logKeyword"
-        :loading="logLoading"
-        @update:keyword="logKeyword = $event"
-        @refresh="showLogs(logType)"
-      />
-    </el-drawer>
   </MobileLayout>
 </template>
 
@@ -261,6 +297,7 @@ import { ArrowDownBold, ArrowUpBold } from "@element-plus/icons-vue"
 import MobileLayout from "./components/MobileLayout.vue"
 import StatusPill from "./components/StatusPill.vue"
 import EmptyState from "./components/EmptyState.vue"
+import MobileSearchBots from "./components/MobileSearchBots.vue"
 import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
@@ -332,6 +369,9 @@ const authenticated = ref(Boolean(getToken()))
 const password = ref("")
 const loginLoading = ref(false)
 const activeTab = ref(window.localStorage.getItem("mobile_active_tab") || "home")
+const channelView = ref("channels")
+const listenerView = ref("tasks")
+const cloneView = ref("tasks")
 const morePage = ref("menu")
 const editVisible = ref(false)
 const detailVisible = ref(false)
@@ -343,11 +383,11 @@ const uploadingMedia = ref(false)
 const accountLoginVisible = ref(false)
 const accountLoginLoading = ref(false)
 const accountLoginTarget = ref(null)
-const logVisible = ref(false)
 const logLoading = ref(false)
 const logType = ref("listener")
 const logKeyword = ref("")
 const logItems = ref([])
+const searchBotPanelRef = ref(null)
 
 const status = ref({})
 const dashboard = ref({})
@@ -414,7 +454,6 @@ const templateGroups = computed(() => templates.value
   .sort((a, b) => (b.id || 0) - (a.id || 0)))
 const filteredTemplates = computed(() => filterItems(templateGroups.value, keyword.templates, ["name", "type", "content", "remark", "items"]))
 const filteredAccounts = computed(() => filterItems(accounts.value, keyword.accounts, ["name", "username", "phone", "remark"]))
-const logTitle = computed(() => logType.value === "clone" ? "克隆日志" : "监听日志")
 const filteredLogItems = computed(() => filterLogItems(logItems.value, logKeyword.value))
 
 function pickList(data) {
@@ -985,6 +1024,26 @@ async function checkChannel(item) {
   }
 }
 
+function openChannelSubmit(item) {
+  if (!item.group_name) {
+    ElMessage.warning("请先编辑频道并设置分组，再提交到搜索机器人")
+    return
+  }
+  if (!searchBotPanelRef.value) {
+    ElMessage.error("提交功能尚未加载，请刷新页面后重试")
+    return
+  }
+  searchBotPanelRef.value.openSubmitForChannel(item)
+}
+
+function openChannelSubmissionStatus(item) {
+  if (!searchBotPanelRef.value) {
+    ElMessage.error("频道提交状态尚未加载，请刷新页面后重试")
+    return
+  }
+  searchBotPanelRef.value.openChannelStatus(item)
+}
+
 async function batchCheckChannels() {
   await runAction(async () => {
     const res = await batchCheckMyChannels()
@@ -995,7 +1054,6 @@ async function batchCheckChannels() {
 
 async function showLogs(type) {
   logType.value = type === "clone" ? "clone" : "listener"
-  logVisible.value = true
   logLoading.value = true
   try {
     const res = logType.value === "listener"
@@ -1007,6 +1065,12 @@ async function showLogs(type) {
   } finally {
     logLoading.value = false
   }
+}
+
+function changeTaskView(type, name) {
+  if (name !== "logs") return
+  logKeyword.value = ""
+  showLogs(type)
 }
 
 async function uploadWelcomeMedia(file) {
@@ -1290,7 +1354,7 @@ const TaskCard = defineComponent({
           }),
           h("span", {
             class: "card-toggle",
-            "aria-label": expanded.value ? "鏀惰捣" : "灞曞紑",
+            "aria-label": expanded.value ? "收起" : "展开",
           }, [
             h(resolve("el-icon"), null, () => h(expanded.value ? ArrowUpBold : ArrowDownBold)),
           ]),

@@ -19,6 +19,8 @@
       </div>
     </div>
 
+    <el-tabs v-model="activeView" class="task-view-tabs">
+      <el-tab-pane label="监听任务" name="tasks">
     <el-card class="listener-card">
       <template #header>
         <div class="card-header">
@@ -150,7 +152,9 @@
         </el-table-column>
       </el-table>
     </el-card>
+      </el-tab-pane>
 
+      <el-tab-pane label="执行任务" name="execution">
     <el-card class="listener-log-card">
       <template #header>
         <div class="card-header">
@@ -238,6 +242,8 @@
         <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
       </el-table>
     </el-card>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -270,6 +276,7 @@ const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup", "
 const eventFilter = ref("")
 const eventKeyword = ref("")
 const keyword = ref("")
+const activeView = ref("tasks")
 
 const filteredTasks = computed(() => {
   if (!keyword.value.trim()) return props.tasks
@@ -446,7 +453,20 @@ function formatTargets(value) {
 }
 
 .listener-log-card {
-  margin-top: 14px;
+  margin-top: 0;
+}
+
+.task-view-tabs {
+  width: 100%;
+}
+
+.task-view-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.task-view-tabs :deep(.el-tabs__item) {
+  min-width: 112px;
+  font-weight: 600;
 }
 
 .card-header,

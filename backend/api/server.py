@@ -23,6 +23,11 @@ from bot.listener_events import get_listener_send_events
 from bot.bulk_replace import execute_bulk_replace, preview_bulk_replace
 from bot.account_login import account_login_manager
 from bot.runtime_queue import runtime_queue_state
+from bot.search_bot_submissions import (
+    normalize_admin_rights,
+    run_search_bot_submission,
+    update_search_bot_submission_permissions,
+)
 from bot.listener_auto_catchup import catchup_latest_listener_message
 from bot.listener_catchup import build_listener_catchup_plan
 from accounts.manager import account_manager
@@ -115,11 +120,26 @@ from db.crud_bot import (
 from db.crud_my_channels import (
     create_my_channel,
     delete_my_channel,
+    get_channel_collection_status_map,
     get_my_channel,
     list_my_channels,
     my_channel_to_dict,
     set_my_channel_check_result,
     update_my_channel,
+)
+from db.crud_search_bots import (
+    create_search_bot,
+    create_submission,
+    delete_search_bot,
+    get_search_bot,
+    list_search_bots,
+    list_submissions,
+    render_submission_text,
+    search_bot_to_dict,
+    set_search_bot_check_result,
+    update_search_bot,
+    update_submission_runtime,
+    update_submission_status,
 )
 from db.crud_clone_channels import (
     clone_channel_to_dict,
@@ -156,6 +176,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -557,6 +579,56 @@ class MyChannelUpdate(BaseModel):
     collection_status: Optional[str] = None
     is_default: Optional[bool] = None
     remark: Optional[str] = None
+
+
+class SearchBotCreate(BaseModel):
+    name: str
+    username: str
+    group_name: str = ""
+    account_id: Optional[int] = None
+    monthly_active_users: Optional[int] = None
+    status: str = "enabled"
+    submit_template: str = "{{channel_link}}"
+    remark: str = ""
+
+
+class SearchBotUpdate(BaseModel):
+    name: Optional[str] = None
+    username: Optional[str] = None
+    group_name: Optional[str] = None
+    account_id: Optional[int] = None
+    monthly_active_users: Optional[int] = None
+    status: Optional[str] = None
+    submit_template: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class SearchBotSubmissionCreate(BaseModel):
+    search_bot_id: int
+    my_channel_id: int
+    account_id: Optional[int] = None
+    submission_mode: str = "queue"
+    review_status: str = "pending"
+    collection_status: str = "unknown"
+    block_status: str = "normal"
+    is_current: bool = False
+    admin_rights: Optional[dict] = None
+
+
+class SearchBotSubmissionBatchCreate(BaseModel):
+    items: List[SearchBotSubmissionCreate] = []
+
+
+class SearchBotSubmissionUpdate(BaseModel):
+    review_status: Optional[str] = None
+    collection_status: Optional[str] = None
+    block_status: Optional[str] = None
+    is_current: Optional[bool] = None
+
+
+class SearchBotSubmissionPermissionUpdate(BaseModel):
+    account_id: Optional[int] = None
+    admin_rights: Optional[dict] = None
 
 
 class CloneChannelCreate(BaseModel):
@@ -1254,17 +1326,239 @@ def api_get_my_channels(
     group_name: str = "",
     bot_id: Optional[int] = None,
 ):
+    channels = list_my_channels(
+        keyword=keyword,
+        status=status,
+        group_name=group_name,
+        bot_id=bot_id,
+    )
+    collection_statuses = get_channel_collection_status_map([channel.id for channel in channels])
     return {
         "items": [
-            my_channel_to_dict(channel)
-            for channel in list_my_channels(
-                keyword=keyword,
-                status=status,
-                group_name=group_name,
-                bot_id=bot_id,
+            my_channel_to_dict(
+                channel,
+                collection_status_override=collection_statuses.get(channel.id, "未收录"),
             )
+            for channel in channels
         ],
     }
+
+
+@app.get("/api/search-bots")
+def api_get_search_bots(keyword: str = "", group_name: str = "", status: str = ""):
+    return {
+        "items": list_search_bots(keyword=keyword, group_name=group_name, status=status),
+    }
+
+
+@app.post("/api/search-bots")
+def api_create_search_bot(data: SearchBotCreate):
+    try:
+        return create_search_bot(data.dict())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.put("/api/search-bots/{bot_id}")
+def api_update_search_bot(bot_id: int, data: SearchBotUpdate):
+    try:
+        item = update_search_bot(bot_id, data.dict(exclude_unset=True))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not item:
+        raise HTTPException(status_code=404, detail="搜索机器人不存在")
+    return item
+
+
+@app.delete("/api/search-bots/{bot_id}")
+def api_delete_search_bot(bot_id: int):
+    try:
+        ok = delete_search_bot(bot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail="搜索机器人不存在")
+    return {"ok": True}
+
+
+@app.post("/api/search-bots/{bot_id}/check")
+async def api_check_search_bot(bot_id: int):
+    bot = get_search_bot(bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="搜索机器人不存在")
+    if not bot.account_id:
+        item = set_search_bot_check_result(bot_id, False, "请先选择用于检测的 Telegram 用户号")
+        return {"ok": False, "message": "请先选择用于检测的 Telegram 用户号", "item": item}
+    client = account_manager.get_client(bot.account_id)
+    if not client:
+        item = set_search_bot_check_result(bot_id, False, "检测账号未加载或 session 已失效")
+        return {"ok": False, "message": "检测账号未加载或 session 已失效", "item": item}
+    try:
+        entity = await client.get_entity(bot.username)
+        if not getattr(entity, "bot", False):
+            raise ValueError("该 username 不是 Telegram 机器人")
+        item = set_search_bot_check_result(
+            bot_id,
+            True,
+            identity={"username": getattr(entity, "username", "")},
+        )
+        return {
+            "ok": True,
+            "message": "机器人身份和可用性检测正常；第三方机器人月活仍需手动维护",
+            "item": item,
+            "identity": {
+                "telegram_id": getattr(entity, "id", None),
+                "username": getattr(entity, "username", "") or "",
+                "name": " ".join(filter(None, [getattr(entity, "first_name", ""), getattr(entity, "last_name", "")])).strip(),
+            },
+        }
+    except Exception as exc:
+        item = set_search_bot_check_result(bot_id, False, str(exc))
+        return {"ok": False, "message": str(exc), "item": item}
+
+
+@app.get("/api/search-bot-submissions")
+def api_get_search_bot_submissions(
+    keyword: str = "",
+    group_name: str = "",
+    search_bot_id: Optional[int] = None,
+    my_channel_id: Optional[int] = None,
+    block_status: str = "",
+):
+    return {
+        "items": list_submissions(
+            keyword=keyword,
+            group_name=group_name,
+            search_bot_id=search_bot_id,
+            my_channel_id=my_channel_id,
+            block_status=block_status,
+        ),
+    }
+
+
+async def execute_search_bot_submission(data):
+    bot = get_search_bot(data.search_bot_id)
+    channel = get_my_channel(data.my_channel_id)
+    if not bot:
+        raise ValueError("搜索机器人不存在")
+    if not channel:
+        raise ValueError("频道不存在")
+    if data.submission_mode not in {"queue", "manual"}:
+        raise ValueError("提交方式无效")
+    manual_mode = data.submission_mode == "manual"
+    if manual_mode:
+        allowed_statuses = {
+            "review_status": {"unknown", "pending", "reviewing", "approved", "rejected"},
+            "collection_status": {"unknown", "collected", "not_collected"},
+            "block_status": {"unknown", "normal", "blocked"},
+        }
+        for field, values in allowed_statuses.items():
+            if getattr(data, field) not in values:
+                raise ValueError(f"{field} 状态值无效")
+    account_id = data.account_id if manual_mode else (data.account_id or bot.account_id)
+    if not manual_mode and not account_id:
+        raise ValueError("系统添加需要选择操作账号，或为搜索机器人配置默认操作账号")
+    submitted_text = render_submission_text(bot, channel)
+    if not submitted_text:
+        raise ValueError("提交内容为空，请检查机器人的提交模板")
+    admin_rights = normalize_admin_rights(data.admin_rights)
+    item = create_submission(
+        bot.id,
+        channel.id,
+        account_id,
+        submitted_text,
+        admin_rights=admin_rights,
+        submit_status="manual" if manual_mode else "queued",
+        submitted_at=datetime.utcnow() if manual_mode else None,
+    )
+    if manual_mode:
+        item = update_submission_runtime(
+            item["id"],
+            applied_admin_rights_json=admin_rights,
+            permission_status="unverified",
+            permission_last_error="人工登记，尚未通过 Telegram 自动验证",
+        )
+        item = update_submission_status(item["id"], {
+            "review_status": data.review_status,
+            "collection_status": data.collection_status,
+            "block_status": data.block_status,
+            "is_current": data.is_current,
+        })
+    else:
+        item = await run_search_bot_submission(item)
+    return item
+
+
+@app.put("/api/search-bot-submissions/{submission_id}/permissions")
+async def api_update_search_bot_submission_permissions(
+    submission_id: int,
+    data: SearchBotSubmissionPermissionUpdate,
+):
+    try:
+        admin_rights = normalize_admin_rights(data.admin_rights)
+        item = await update_search_bot_submission_permissions(
+            submission_id,
+            admin_rights,
+            account_id=data.account_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not item:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+    return {
+        "ok": item.get("permission_status") == "applied",
+        "item": item,
+        "message": (
+            "机器人频道权限已更新并通过 Telegram 回查"
+            if item.get("permission_status") == "applied"
+            else item.get("permission_last_error") or "机器人频道权限更新失败"
+        ),
+    }
+
+
+@app.post("/api/search-bot-submissions")
+async def api_create_search_bot_submission(data: SearchBotSubmissionCreate):
+    try:
+        item = await execute_search_bot_submission(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/search-bot-submissions/batch")
+async def api_batch_create_search_bot_submissions(data: SearchBotSubmissionBatchCreate):
+    if not data.items:
+        raise HTTPException(status_code=400, detail="至少选择一组频道和搜索机器人")
+    result = []
+    errors_result = []
+    for index, entry in enumerate(data.items):
+        try:
+            result.append(await execute_search_bot_submission(entry))
+        except ValueError as exc:
+            errors_result.append({"index": index, "message": str(exc)})
+    return {
+        "ok": bool(result),
+        "items": result,
+        "errors": errors_result,
+        "message": f"已处理 {len(result)} 条，失败 {len(errors_result)} 条",
+    }
+
+
+@app.put("/api/search-bot-submissions/{submission_id}")
+def api_update_search_bot_submission(submission_id: int, data: SearchBotSubmissionUpdate):
+    allowed = {
+        "review_status": {"unknown", "pending", "reviewing", "approved", "rejected"},
+        "collection_status": {"unknown", "collected", "not_collected"},
+        "block_status": {"unknown", "normal", "blocked"},
+    }
+    payload = data.dict(exclude_unset=True)
+    for field, values in allowed.items():
+        if field in payload and payload[field] not in values:
+            raise HTTPException(status_code=400, detail=f"{field} 状态值无效")
+    item = update_submission_status(submission_id, payload)
+    if not item:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+    return item
 
 
 @app.post("/api/my-channels/batch-check")

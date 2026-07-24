@@ -490,6 +490,41 @@ select {
   background: var(--bg);
 }
 
+.task-view-tabs,
+.channel-view-tabs {
+  position: sticky;
+  top: calc(57px + env(safe-area-inset-top));
+  z-index: 13;
+  margin: 0;
+  padding: 0 14px;
+  background: rgba(245, 247, 251, 0.98);
+}
+
+.task-view-tabs .el-tabs__header,
+.channel-view-tabs .el-tabs__header {
+  margin-bottom: 0;
+}
+
+.task-section .search-bar,
+.channel-section .search-bar {
+  top: calc(98px + env(safe-area-inset-top));
+}
+
+.channel-section > .search-page {
+  padding: 14px;
+}
+
+.task-log-page {
+  padding-top: 12px;
+}
+
+.task-log-page .search-bar {
+  position: static;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
 .log-drawer {
   display: grid;
   gap: 12px;
@@ -542,6 +577,15 @@ select {
   }
 
   .data-card {
+    padding: 10px;
+  }
+
+  .task-view-tabs,
+  .channel-view-tabs {
+    padding: 0 10px;
+  }
+
+  .channel-section > .search-page {
     padding: 10px;
   }
 

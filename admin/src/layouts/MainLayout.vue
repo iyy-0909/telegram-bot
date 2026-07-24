@@ -61,7 +61,7 @@ const menuItems = [
   ["rules", "监听任务", Switch],
   ["clone", "克隆任务", Collection],
   ["bots", "Bot 管理", Connection],
-  ["my-channels", "我的频道", Grid],
+  ["my-channels", "频道管理", Grid],
   ["bulk-replace", "批量替换", Operation],
   ["support", "客服机器人", ChatDotRound],
   ["accounts", "账号管理", User],
@@ -105,8 +105,13 @@ const AppMenu = defineComponent({
 }
 
 .aside {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 100;
+  height: 100vh;
   background: #111827;
   color: #cbd5e1;
+  overflow-y: auto;
 }
 
 .logo {
@@ -126,6 +131,8 @@ const AppMenu = defineComponent({
 
 .content-shell {
   min-width: 0;
+  width: calc(100% - 220px);
+  margin-left: 220px;
 }
 
 .header {
@@ -182,6 +189,11 @@ const AppMenu = defineComponent({
 
   .aside {
     display: none;
+  }
+
+  .content-shell {
+    width: 100%;
+    margin-left: 0;
   }
 
   .header {

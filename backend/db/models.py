@@ -370,6 +370,55 @@ class MyChannel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SearchBot(Base):
+    """Telegram search bot managed by an operations group."""
+
+    __tablename__ = "search_bots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    username = Column(String, nullable=False, index=True)
+    bot_link = Column(String, default="")
+    group_name = Column(String, default="", index=True)
+    account_id = Column(Integer, nullable=True, index=True)
+    monthly_active_users = Column(Integer, nullable=True)
+    status = Column(String, default="enabled", index=True)
+    submit_template = Column(Text, default="{{channel_link}}")
+    remark = Column(Text, default="")
+    last_check_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SearchBotChannelSubmission(Base):
+    """Immutable submission attempt plus its latest review result."""
+
+    __tablename__ = "search_bot_channel_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    search_bot_id = Column(Integer, nullable=False, index=True)
+    my_channel_id = Column(Integer, nullable=False, index=True)
+    account_id = Column(Integer, nullable=True, index=True)
+    submit_status = Column(String, default="queued", index=True)
+    review_status = Column(String, default="unknown", index=True)
+    collection_status = Column(String, default="unknown", index=True)
+    block_status = Column(String, default="unknown", index=True)
+    is_current = Column(Boolean, default=False, index=True)
+    submitted_text = Column(Text, default="")
+    admin_rights_json = Column(Text, default="{}")
+    applied_admin_rights_json = Column(Text, default="{}")
+    permission_status = Column(String, default="pending", index=True)
+    permission_last_error = Column(Text, default="")
+    permissions_applied_at = Column(DateTime, nullable=True)
+    telegram_message_id = Column(Integer, nullable=True)
+    last_error = Column(Text, default="")
+    submitted_at = Column(DateTime, nullable=True)
+    last_checked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CloneChannel(Base):
     """Managed source channel for clone/listener tasks."""
 

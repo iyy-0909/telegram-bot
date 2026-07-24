@@ -16,6 +16,20 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes("/api/auth/login")
+    ) {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
+      window.location.reload()
+    }
+    return Promise.reject(error)
+  },
+)
+
 export function setToken(token) {
   if (token) {
     window.localStorage.setItem(TOKEN_STORAGE_KEY, token)

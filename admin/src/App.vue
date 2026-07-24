@@ -96,7 +96,12 @@
     </div>
 
     <div v-if="activeMenu === 'my-channels'">
-      <MyChannelTable :bots="bots" />
+      <MyChannelTable
+        :bots="bots"
+        :accounts="accounts"
+        :active-tab="activeChannelTab"
+        @update:active-tab="setActiveChannelTab"
+      />
     </div>
 
     <div v-if="activeMenu === 'bulk-replace'">
@@ -318,6 +323,7 @@ const pageLoading = reactive({
 })
 
 const MENU_STORAGE_KEY = "clonebot_active_menu"
+const CHANNEL_TAB_STORAGE_KEY = "clonebot_channel_tab"
 const CLONE_TASK_LOG_STORAGE_KEY = "clonebot_clone_task_logs"
 const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
 const CLONE_TASK_LOG_LIMIT = 50
@@ -326,6 +332,7 @@ const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
 const SECONDS_PER_MINUTE = 60
 const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "settings", "guide"]
+const VALID_CHANNEL_TABS = ["targets", "sources", "search-bots"]
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -343,6 +350,14 @@ function getSavedActiveMenu() {
 }
 
 const activeMenu = ref(getSavedActiveMenu())
+const savedChannelTab = window.localStorage.getItem(CHANNEL_TAB_STORAGE_KEY)
+const activeChannelTab = ref(VALID_CHANNEL_TABS.includes(savedChannelTab) ? savedChannelTab : "targets")
+
+function setActiveChannelTab(tab) {
+  const nextTab = VALID_CHANNEL_TABS.includes(tab) ? tab : "targets"
+  activeChannelTab.value = nextTab
+  window.localStorage.setItem(CHANNEL_TAB_STORAGE_KEY, nextTab)
+}
 
 const dialogVisible = ref(false)
 const isEdit = ref(false)

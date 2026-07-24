@@ -140,6 +140,42 @@ export function batchCheckMyChannels() {
   return http.post("/api/my-channels/batch-check")
 }
 
+export function getSearchBots(params = {}) {
+  return http.get("/api/search-bots", { params })
+}
+
+export function createSearchBot(data) {
+  return http.post("/api/search-bots", data)
+}
+
+export function updateSearchBot(id, data) {
+  return http.put(`/api/search-bots/${id}`, data)
+}
+
+export function deleteSearchBot(id) {
+  return http.delete(`/api/search-bots/${id}`)
+}
+
+export function checkSearchBot(id) {
+  return http.post(`/api/search-bots/${id}/check`)
+}
+
+export function getSearchBotSubmissions(params = {}) {
+  return http.get("/api/search-bot-submissions", { params })
+}
+
+export function createSearchBotSubmission(data) {
+  return http.post("/api/search-bot-submissions", data)
+}
+
+export function updateSearchBotSubmission(id, data) {
+  return http.put(`/api/search-bot-submissions/${id}`, data)
+}
+
+export function updateSearchBotSubmissionPermissions(id, data) {
+  return http.put(`/api/search-bot-submissions/${id}/permissions`, data)
+}
+
 export function getSupportBots() {
   return http.get("/api/support/bots")
 }

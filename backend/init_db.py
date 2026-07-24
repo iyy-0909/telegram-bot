@@ -18,6 +18,8 @@ from db.models import ListenerSendEvent
 from db.models import ListenerSentMessage
 from db.models import ListenerTask
 from db.models import MyChannel
+from db.models import SearchBot
+from db.models import SearchBotChannelSubmission
 from db.models import SentMessage
 from db.models import SupportConversation
 from db.models import SupportCustomer
@@ -44,6 +46,8 @@ _REGISTERED_MODELS = (
     ListenerSentMessage,
     ListenerTask,
     MyChannel,
+    SearchBot,
+    SearchBotChannelSubmission,
     SentMessage,
     SupportConversation,
     SupportCustomer,

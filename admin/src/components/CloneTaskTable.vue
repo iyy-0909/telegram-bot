@@ -1,5 +1,27 @@
 ﻿<!-- eslint-disable vue/no-multiple-template-root -->
 <template>
+  <div class="clone-page">
+    <div class="overview-grid">
+      <div class="overview-card">
+        <span>运行中任务</span>
+        <strong>{{ overview.running }}</strong>
+      </div>
+      <div class="overview-card success">
+        <span>成功发送</span>
+        <strong>{{ overview.success }}</strong>
+      </div>
+      <div class="overview-card warning">
+        <span>过滤 / 去重</span>
+        <strong>{{ overview.skipped }}</strong>
+      </div>
+      <div class="overview-card danger">
+        <span>失败 / 异常</span>
+        <strong>{{ overview.failed }}</strong>
+      </div>
+    </div>
+
+    <el-tabs v-model="activeView" class="task-view-tabs">
+      <el-tab-pane label="克隆任务" name="tasks">
   <el-card class="clone-card">
     <template #header>
       <div class="card-header">
@@ -150,7 +172,9 @@
       </el-table-column>
     </el-table>
   </el-card>
+      </el-tab-pane>
 
+      <el-tab-pane label="执行任务" name="execution">
   <el-card class="clone-log-card">
     <template #header>
       <div class="card-header">
@@ -227,6 +251,9 @@
       <el-table-column prop="error" label="错误" min-width="220" show-overflow-tooltip />
       </el-table>
   </el-card>
+      </el-tab-pane>
+    </el-tabs>
+  </div>
 </template>
 
 <script setup>
@@ -256,6 +283,7 @@ const props = defineProps({
 
 const keyword = ref("")
 const logKeyword = ref("")
+const activeView = ref("tasks")
 
 const filteredTasks = computed(() => {
   if (!keyword.value.trim()) return props.tasks
@@ -300,6 +328,19 @@ const filteredTaskLogs = computed(() => {
   })
 })
 
+const overview = computed(() => {
+  const logs = props.taskLogs || []
+  const failedTypes = new Set(["failed", "error", "account_error", "bot_error", "permission_error"])
+  const skippedTypes = new Set(["filtered", "empty", "deduped", "skipped"])
+
+  return {
+    running: props.tasks.filter((task) => task.worker_running).length,
+    success: logs.filter((row) => (row.result || row.event_type || row.status) === "success").length,
+    skipped: logs.filter((row) => skippedTypes.has(row.result || row.event_type || row.status)).length,
+    failed: logs.filter((row) => failedTypes.has(row.result || row.event_type || row.status)).length,
+  }
+})
+
 const emit = defineEmits([
   "add",
   "edit",
@@ -340,12 +381,65 @@ const targetSummary = (value) => {
 </script>
 
 <style scoped>
+.clone-page,
+.task-view-tabs {
+  width: 100%;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.overview-card {
+  padding: 12px 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.overview-card span {
+  display: block;
+  color: #606266;
+  font-size: 13px;
+}
+
+.overview-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #303133;
+  font-size: 24px;
+}
+
+.overview-card.success strong {
+  color: #67c23a;
+}
+
+.overview-card.warning strong {
+  color: #e6a23c;
+}
+
+.overview-card.danger strong {
+  color: #f56c6c;
+}
+
+.task-view-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.task-view-tabs :deep(.el-tabs__item) {
+  min-width: 112px;
+  font-weight: 600;
+}
+
 .clone-card {
   border-radius: 8px;
 }
 
 .clone-log-card {
-  margin-top: 16px;
+  margin-top: 0;
   border-radius: 8px;
 }
 
@@ -454,6 +548,10 @@ const targetSummary = (value) => {
 }
 
 @media (max-width: 900px) {
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .card-header,
   .header-actions {
     align-items: stretch;
@@ -467,6 +565,12 @@ const targetSummary = (value) => {
 
   .target-text {
     max-width: 180px;
+  }
+}
+
+@media (max-width: 520px) {
+  .overview-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

@@ -62,12 +62,12 @@ class RuntimeQueueState:
         self.current = item
         return item
 
-    def mark_sending(self, item_id):
+    def mark_sending(self, item_id, reason=""):
         if not self.current or self.current.get("id") != item_id:
             return None
 
         self.current["status"] = "sending"
-        self.current["reason"] = "正在调用 Bot API"
+        self.current["reason"] = reason or self.current.get("sending_reason") or "正在调用 Bot API"
         self.current["started_at"] = self.current.get("started_at") or now_text()
         self.current["estimated_send_at"] = ""
         self.current["estimated_send_remaining_seconds"] = None

@@ -3,6 +3,7 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import axios from 'axios'
 import App from './App.vue'
+import { redirectToMobileSite } from './deviceRedirect'
 
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('admin_token')
@@ -26,4 +27,6 @@ axios.interceptors.response.use(
   },
 )
 
-createApp(App).use(ElementPlus).mount('#app')
+if (!redirectToMobileSite()) {
+  createApp(App).use(ElementPlus).mount('#app')
+}

@@ -184,7 +184,10 @@ class SendQueue:
                         return False
 
                     try:
-                        runtime_queue_state.mark_sending(queue_item_id)
+                        runtime_queue_state.mark_sending(
+                            queue_item_id,
+                            reason=(queue_meta or {}).get("sending_reason", ""),
+                        )
                         result = await sender_func(*args, **kwargs)
                         self.last_sent_at = time.monotonic()
 

@@ -11,7 +11,11 @@ from bot.logger import logger
 from bot.message_links import build_message_url
 from bot.notifier import send_control_alert
 from db.crud_bot import normalize_target_channel
-from db.crud_listener import get_enabled_listener_tasks, parse_target_channels
+from db.crud_listener import (
+    get_enabled_listener_tasks,
+    get_listener_task,
+    parse_target_channels,
+)
 from db.database import SessionLocal
 from db.models import ListenerSendEvent
 
@@ -33,6 +37,14 @@ def is_stale(task):
     if not timestamp:
         return True
     return utcnow() - timestamp > timedelta(seconds=STALE_SECONDS)
+
+
+def is_running_listener_task(task):
+    return bool(
+        task
+        and getattr(task, "enabled", False)
+        and str(getattr(task, "status", "") or "").strip().lower() == "running"
+    )
 
 
 def target_lookup_keys(target):
@@ -141,6 +153,9 @@ def find_success_event(db, task_id, target, source_message_id, grouped_id):
 
 
 async def inspect_stale_task(task):
+    if not is_running_listener_task(task):
+        return
+
     targets = parse_target_channels(task.target_channels)
     if not targets:
         return
@@ -262,6 +277,16 @@ async def inspect_stale_task(task):
 
 
 async def send_task_alert(task, title, level, message, alert_key, target=""):
+    current_task = get_listener_task(task.id)
+    if not is_running_listener_task(current_task):
+        logger.info(
+            "监听任务未运行，跳过健康告警"
+            f" | task_id={getattr(task, 'id', '-')}"
+            f" | enabled={getattr(current_task, 'enabled', None)}"
+            f" | status={getattr(current_task, 'status', None)}"
+        )
+        return False
+
     if not should_alert(alert_key):
         return False
 
@@ -272,8 +297,8 @@ async def send_task_alert(task, title, level, message, alert_key, target=""):
         context={
             "alert_key": alert_key,
             "module": "listener_health",
-            "task_id": task.id,
-            "channel": task.source_channel,
+            "task_id": current_task.id,
+            "channel": current_task.source_channel,
             "target": target,
         },
     )
@@ -286,7 +311,7 @@ async def listener_health_worker():
         try:
             tasks = get_enabled_listener_tasks()
             for task in tasks:
-                if is_stale(task):
+                if is_running_listener_task(task) and is_stale(task):
                     await inspect_stale_task(task)
         except Exception as e:
             logger.warning(f"监听任务健康检查失败，已忽略 | {e}")

@@ -4,7 +4,7 @@ from sqlalchemy import or_
 
 from db.crud_bot import normalize_target_channel
 from db.database import SessionLocal
-from db.models import BotAccount, MyChannel
+from db.models import BotAccount, MyChannel, SearchBotChannelSubmission
 from db.search_utils import build_channel_search_terms
 
 
@@ -50,7 +50,7 @@ def channel_to_target(channel):
     return channel.username or channel.chat_id or ""
 
 
-def my_channel_to_dict(channel):
+def my_channel_to_dict(channel, collection_status_override=None):
     bot_name = ""
     bot_username = ""
     bot_link = ""
@@ -81,7 +81,11 @@ def my_channel_to_dict(channel):
         "status": channel.status or "enabled",
         "clone_status": getattr(channel, "clone_status", "") or "",
         "delivery_status": getattr(channel, "delivery_status", "") or "",
-        "collection_status": getattr(channel, "collection_status", "") or "",
+        "collection_status": (
+            collection_status_override
+            if collection_status_override is not None
+            else (getattr(channel, "collection_status", "") or "")
+        ),
         "is_default": bool(channel.is_default),
         "remark": channel.remark or "",
         "bot_is_member": bool(channel.bot_is_member),
@@ -141,6 +145,25 @@ def list_my_channels(keyword="", status="", group_name="", bot_id=None):
             query = query.filter(MyChannel.bot_id == int(bot_id))
 
         return query.order_by(MyChannel.id.desc()).all()
+    finally:
+        db.close()
+
+
+def get_channel_collection_status_map(channel_ids):
+    ids = [int(channel_id) for channel_id in (channel_ids or []) if channel_id]
+    if not ids:
+        return {}
+
+    result = {channel_id: "未收录" for channel_id in ids}
+    db = SessionLocal()
+    try:
+        collected_ids = db.query(SearchBotChannelSubmission.my_channel_id).filter(
+            SearchBotChannelSubmission.my_channel_id.in_(ids),
+            SearchBotChannelSubmission.collection_status == "collected",
+        ).distinct().all()
+        for (channel_id,) in collected_ids:
+            result[int(channel_id)] = "已收录"
+        return result
     finally:
         db.close()
 

@@ -1,31 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-hero">
-      <div>
-        <div class="title">我的频道</div>
-        <div class="subtitle">统一管理目标频道和克隆源频道，创建任务时减少手动输入错误。</div>
-      </div>
-      <div class="summary">
-        <div class="summary-item">
-          <span>目标频道</span>
-          <strong>{{ channelStats.total }}</strong>
-        </div>
-        <div class="summary-item success">
-          <span>可用</span>
-          <strong>{{ channelStats.enabled }}</strong>
-        </div>
-        <div class="summary-item danger">
-          <span>异常</span>
-          <strong>{{ channelStats.error }}</strong>
-        </div>
-        <div class="summary-item">
-          <span>克隆频道</span>
-          <strong>{{ cloneChannels.length }}</strong>
-        </div>
-      </div>
-    </div>
-
-    <el-tabs v-model="activeTab" class="channel-tabs">
+    <el-tabs v-model="currentTab" class="channel-tabs">
       <el-tab-pane label="我的频道" name="targets">
         <div class="toolbar">
           <div class="actions">
@@ -106,12 +81,18 @@
               <template #default="{ row }">{{ row.delivery_status || "-" }}</template>
             </el-table-column>
             <el-table-column prop="collection_status" label="收录状态" min-width="120" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.collection_status || "-" }}</template>
+              <template #default="{ row }">
+                <el-tag :type="row.collection_status === '已收录' ? 'success' : 'info'" size="small">
+                  {{ row.collection_status || "未收录" }}
+                </el-tag>
+              </template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-            <el-table-column label="操作" width="280" fixed="right">
+            <el-table-column label="操作" width="382" fixed="right">
               <template #default="{ row }">
                 <div class="row-actions">
+                  <el-button size="small" type="primary" :disabled="row.status === 'disabled'" @click="openChannelSubmit(row)">提交</el-button>
+                  <el-button size="small" type="info" plain @click="openChannelSubmissionStatus(row)">查看</el-button>
                   <el-button size="small" @click="openEdit(row)">
                     <el-icon><Edit /></el-icon>
                     编辑
@@ -209,7 +190,101 @@
           </el-table>
         </el-card>
       </el-tab-pane>
+
+      <el-tab-pane label="搜索机器人" name="search-bots">
+        <SearchBotPanel ref="searchBotPanelRef" :accounts="accounts" @submission-changed="handleSubmissionChanged" />
+      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="submissionStatusDialogVisible"
+      title="频道提交状态"
+      width="min(1060px, calc(100vw - 24px))"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="submission-dialog-heading">
+        <div>
+          <strong>{{ submissionStatusChannel?.title || submissionStatusChannel?.username || "当前频道" }}</strong>
+          <span>{{ submissionStatusChannel?.username || submissionStatusChannel?.chat_id || "-" }}</span>
+        </div>
+        <el-tag
+          :type="submissionStatusChannel?.collection_status === '已收录' ? 'success' : 'info'"
+          size="small"
+        >
+          {{ submissionStatusChannel?.collection_status || "未收录" }}
+        </el-tag>
+      </div>
+
+      <el-table
+        v-loading="submissionStatusLoading"
+        :data="channelSubmissionRows"
+        border
+        stripe
+        max-height="420"
+        empty-text="该频道暂无搜索机器人提交记录"
+      >
+        <el-table-column label="搜索机器人" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="submission-bot-cell">
+              <span>{{ row.search_bot_name || "未命名机器人" }}</span>
+              <CopyText
+                v-if="row.search_bot_username"
+                :value="row.search_bot_username"
+                :text="row.search_bot_username"
+                tone="primary"
+              />
+              <small>{{ formatDateTime(row.updated_at || row.last_checked_at) }}</small>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="提交进度" min-width="350">
+          <template #default="{ row }">
+            <div class="submission-status-strip">
+              <span>执行 <el-tag :type="submissionStatusType(row.submit_status)" size="small">{{ submissionStatusLabel(row.submit_status) }}</el-tag></span>
+              <span>审核 <el-tag :type="submissionStatusType(row.review_status)" size="small">{{ submissionStatusLabel(row.review_status) }}</el-tag></span>
+              <span>收录 <el-tag :type="submissionStatusType(row.collection_status)" size="small">{{ submissionStatusLabel(row.collection_status) }}</el-tag></span>
+              <span>拉黑 <el-tag :type="submissionStatusType(row.block_status)" size="small">{{ submissionStatusLabel(row.block_status) }}</el-tag></span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Telegram 实际权限" min-width="205" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="submission-permission-cell">
+              <el-tag :type="permissionVerificationType(row.permission_status)" size="small">{{ permissionVerificationLabel(row.permission_status) }}</el-tag>
+              <span>{{ submissionPermissionSummary(effectiveSubmissionRights(row)) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="190" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-button size="small" type="primary" plain @click="openChannelSubmissionEdit(row)">更新状态</el-button>
+              <el-button size="small" @click="openChannelPermissionEdit(row)">调整权限</el-button>
+            </div>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty
+            :description="submissionStatusChannel?.group_name
+              ? '该频道还没有搜索机器人提交记录'
+              : '该频道未设置分组，完善分组后才能提交到搜索机器人'"
+          >
+            <el-button
+              type="primary"
+              :disabled="submissionStatusChannel?.status === 'disabled'"
+              @click="submitFromStatusDialog"
+            >
+              {{ submissionStatusChannel?.group_name ? "提交到搜索机器人" : "先设置频道分组" }}
+            </el-button>
+          </el-empty>
+        </template>
+      </el-table>
+
+      <template #footer>
+        <el-button type="primary" @click="submissionStatusDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="720px">
       <el-descriptions :column="2" border>
@@ -243,7 +318,9 @@
           <el-input v-model="form.delivery_status" class="description-field" placeholder="例如：投放中 / 暂停 / 待投放" />
         </el-descriptions-item>
         <el-descriptions-item label="收录状态">
-          <el-input v-model="form.collection_status" class="description-field" placeholder="例如：已收录 / 未收录 / 待确认" />
+          <div class="readonly-field">
+            <el-input v-model="form.collection_status" class="description-field" disabled />
+          </div>
         </el-descriptions-item>
         <el-descriptions-item label="克隆状态" :span="2">{{ editing?.clone_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="成员数">{{ formatMemberCount(editing) }}</el-descriptions-item>
@@ -361,21 +438,35 @@ import {
   deleteMyChannel,
   getCloneChannels,
   getMyChannels,
+  getSearchBotSubmissions,
   updateCloneChannel,
   updateMyChannel,
 } from "../api/myChannels"
 import BotSelect from "./BotSelect.vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
+import SearchBotPanel from "./SearchBotPanel.vue"
 
 const props = defineProps({
   bots: {
     type: Array,
     default: () => [],
   },
+  accounts: {
+    type: Array,
+    default: () => [],
+  },
+  activeTab: {
+    type: String,
+    default: "targets",
+  },
 })
 
-const activeTab = ref("targets")
+const emit = defineEmits(["update:active-tab"])
+const currentTab = computed({
+  get: () => props.activeTab,
+  set: (value) => emit("update:active-tab", value),
+})
 const channels = ref([])
 const cloneChannels = ref([])
 const dialogVisible = ref(false)
@@ -387,8 +478,13 @@ const cloneLoading = ref(false)
 const saving = ref(false)
 const cloneSaving = ref(false)
 const checkingId = ref(null)
+const searchBotPanelRef = ref(null)
 const checkDialogVisible = ref(false)
 const checkInfo = ref(null)
+const submissionStatusDialogVisible = ref(false)
+const submissionStatusLoading = ref(false)
+const submissionStatusChannel = ref(null)
+const channelSubmissionRows = ref([])
 const filters = reactive({
   keyword: "",
   group_name: "",
@@ -400,12 +496,6 @@ const cloneFilters = reactive({
 })
 const form = reactive(emptyForm())
 const cloneForm = reactive(emptyCloneForm())
-
-const channelStats = computed(() => ({
-  total: channels.value.length,
-  enabled: channels.value.filter((channel) => channel.status === "enabled").length,
-  error: channels.value.filter((channel) => channel.status === "error").length,
-}))
 
 const groupOptions = computed(() => uniqueGroups(channels.value))
 const cloneGroupOptions = computed(() => uniqueGroups(cloneChannels.value))
@@ -466,6 +556,154 @@ async function loadCloneChannels() {
   } finally {
     cloneLoading.value = false
   }
+}
+
+function openChannelSubmit(row) {
+  if (!searchBotPanelRef.value) {
+    ElMessage.error("提交功能初始化失败，请刷新页面后重试")
+    return
+  }
+
+  searchBotPanelRef.value.openSubmitForChannel(row)
+}
+
+async function openChannelSubmissionStatus(row) {
+  submissionStatusChannel.value = row
+  channelSubmissionRows.value = []
+  submissionStatusDialogVisible.value = true
+  submissionStatusLoading.value = true
+
+  try {
+    const res = await getSearchBotSubmissions({ my_channel_id: row.id })
+    channelSubmissionRows.value = res.data.items || []
+  } catch (error) {
+    ElMessage.error(readError(error, "加载频道提交状态失败"))
+  } finally {
+    submissionStatusLoading.value = false
+  }
+}
+
+function submitFromStatusDialog() {
+  const channel = submissionStatusChannel.value
+  submissionStatusDialogVisible.value = false
+  if (!channel) return
+  if (!channel.group_name) {
+    ElMessage.warning("请先设置频道分组，再提交到搜索机器人")
+    openEdit(channel)
+    return
+  }
+  openChannelSubmit(channel)
+}
+
+function openChannelSubmissionEdit(row) {
+  if (!searchBotPanelRef.value) {
+    ElMessage.error("状态更新功能初始化失败，请刷新页面后重试")
+    return
+  }
+  submissionStatusDialogVisible.value = false
+  searchBotPanelRef.value.openSubmissionEdit(row)
+}
+
+function openChannelPermissionEdit(row) {
+  if (!searchBotPanelRef.value) {
+    ElMessage.error("权限调整功能初始化失败，请刷新页面后重试")
+    return
+  }
+  submissionStatusDialogVisible.value = false
+  searchBotPanelRef.value.openPermissionEdit(row)
+}
+
+async function handleSubmissionChanged() {
+  await load()
+}
+
+function submissionPermissionSummary(rights) {
+  const labels = {
+    post_messages: "发布消息",
+    edit_messages: "编辑消息",
+    delete_messages: "删除消息",
+    pin_messages: "置顶消息",
+    change_info: "修改频道信息",
+    invite_users: "邀请用户",
+    ban_users: "管理用户",
+    manage_call: "管理视频聊天",
+    manage_topics: "管理话题",
+    add_admins: "添加管理员",
+    anonymous: "匿名管理",
+    post_stories: "发布动态",
+    edit_stories: "编辑动态",
+    delete_stories: "删除动态",
+    manage_direct_messages: "管理频道私信",
+    manage_ranks: "管理管理员头衔",
+  }
+  const selected = Object.entries(rights || {})
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => labels[key] || key)
+  return selected.length ? selected.join("、") : "最小权限"
+}
+
+function effectiveSubmissionRights(row) {
+  const actual = row?.applied_admin_rights
+  return actual && Object.keys(actual).length ? actual : (row?.admin_rights || {})
+}
+
+function permissionVerificationLabel(status) {
+  return ({
+    pending: "待应用",
+    applying: "应用中",
+    applied: "已验证",
+    mismatch: "不一致",
+    failed: "应用失败",
+    unverified: "人工登记",
+  })[status] || "未验证"
+}
+
+function permissionVerificationType(status) {
+  if (status === "applied") return "success"
+  if (["mismatch", "failed"].includes(status)) return "danger"
+  if (["pending", "applying"].includes(status)) return "warning"
+  return "info"
+}
+
+function submissionOverallState(row) {
+  if (row.block_status === "blocked") return { label: "已拉黑", type: "danger" }
+  if (row.collection_status === "collected") return { label: "已收录", type: "success" }
+  if (row.submit_status === "failed") return { label: "提交失败", type: "danger" }
+  if (row.review_status === "reviewing") return { label: "审核中", type: "warning" }
+  if (row.review_status === "pending") return { label: "待审核", type: "warning" }
+  if (row.review_status === "rejected") return { label: "已拒绝", type: "danger" }
+  if (row.collection_status === "not_collected") return { label: "未收录", type: "info" }
+  if (row.review_status === "approved") return { label: "已通过", type: "success" }
+  if (row.submit_status === "submitting") return { label: "提交中", type: "warning" }
+  if (row.submit_status === "success") return { label: "已提交", type: "info" }
+  if (row.submit_status === "manual") return { label: "手动登记", type: "info" }
+  return { label: "状态未知", type: "info" }
+}
+
+function submissionStatusLabel(status) {
+  return ({
+    queued: "排队中",
+    submitting: "提交中",
+    success: "已提交",
+    manual: "手动登记",
+    failed: "提交失败",
+    unknown: "未知",
+    pending: "待审核",
+    reviewing: "审核中",
+    approved: "已通过",
+    rejected: "已拒绝",
+    collected: "已收录",
+    not_collected: "未收录",
+    normal: "正常",
+    blocked: "已拉黑",
+  })[status] || status || "未知"
+}
+
+function submissionStatusType(status) {
+  if (["success", "approved", "collected", "normal"].includes(status)) return "success"
+  if (["failed", "rejected", "blocked"].includes(status)) return "danger"
+  if (["queued", "submitting", "pending", "reviewing"].includes(status)) return "warning"
+  return "info"
 }
 
 function openCreate() {
@@ -713,30 +951,11 @@ function readError(error, fallback) {
   gap: 14px;
 }
 
-.page-hero,
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-}
-
-.page-hero {
-  padding: 18px 20px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.title {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.subtitle {
-  margin-top: 4px;
-  color: #6b7280;
-  font-size: 13px;
 }
 
 .channel-tabs {
@@ -760,41 +979,6 @@ function readError(error, fallback) {
   width: 150px;
 }
 
-.summary {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.summary-item {
-  min-width: 74px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: #f5f7fa;
-  border: 1px solid #e5e7eb;
-}
-
-.summary-item span {
-  display: block;
-  color: #909399;
-  font-size: 12px;
-}
-
-.summary-item strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 18px;
-  color: #303133;
-}
-
-.summary-item.success strong {
-  color: #67c23a;
-}
-
-.summary-item.danger strong {
-  color: #f56c6c;
-}
-
 .table-card {
   margin-top: 12px;
   border-radius: 8px;
@@ -805,11 +989,73 @@ function readError(error, fallback) {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .row-actions .el-button {
   margin-left: 0;
+}
+
+.submission-dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.submission-dialog-heading > div,
+.submission-bot-cell,
+.readonly-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.submission-dialog-heading span,
+.readonly-field > span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.submission-bot-cell {
+  gap: 2px;
+}
+
+.submission-bot-cell small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.submission-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.submission-status-strip > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.submission-permission-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.submission-permission-cell > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .detail-tags {
@@ -823,7 +1069,6 @@ function readError(error, fallback) {
 }
 
 @media (max-width: 900px) {
-  .page-hero,
   .toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -840,17 +1085,9 @@ function readError(error, fallback) {
     width: 100%;
   }
 
-  .summary {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 520px) {
-  .summary {
-    grid-template-columns: 1fr;
-  }
-
   .detail-tags {
     gap: 4px;
   }
