@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -66,6 +67,7 @@ class PendingAccountLogin:
 class AccountLoginManager:
     def __init__(self):
         self.sessions: dict[str, PendingAccountLogin] = {}
+        self.reserved_session_paths: set[str] = set()
         self.lock = asyncio.Lock()
 
     async def _cleanup_expired(self):
@@ -83,6 +85,9 @@ class AccountLoginManager:
         if not session:
             return
 
+        self.reserved_session_paths.discard(
+            normalize_session_path(session.session_path)
+        )
         try:
             await session.client.disconnect()
         except Exception:
@@ -124,6 +129,41 @@ class AccountLoginManager:
         finally:
             db.close()
 
+    def next_session_path(self):
+        used_paths = {
+            normalize_session_path(session.session_path)
+            for session in self.sessions.values()
+        }
+        used_paths.update(self.reserved_session_paths)
+        db = SessionLocal()
+        try:
+            used_paths.update(
+                normalize_session_path(account.session_path)
+                for account in db.query(Account).all()
+            )
+        finally:
+            db.close()
+
+        session_dir = Path("data/sessions")
+        if session_dir.exists():
+            used_paths.update(
+                normalize_session_path(path)
+                for path in session_dir.glob("collector_*.session")
+            )
+
+        numbers = []
+        for path in used_paths:
+            match = re.fullmatch(r"data/sessions/collector_(\d+)", path)
+            if match:
+                numbers.append(int(match.group(1)))
+
+        number = max(numbers, default=0) + 1
+        while True:
+            candidate = f"data/sessions/collector_{number}"
+            if candidate not in used_paths and not session_file_path(candidate).exists():
+                return candidate
+            number += 1
+
     async def start_login(
         self,
         *,
@@ -140,7 +180,6 @@ class AccountLoginManager:
 
         phone = str(phone or "").strip()
         name = str(name or "").strip()
-        session_path = normalize_session_path(session_path)
         proxy = str(proxy or "").strip()
         remark = str(remark or "").strip()
 
@@ -162,23 +201,24 @@ class AccountLoginManager:
                 }
 
             name = name or account.name or f"账号{account.id}"
-            session_path = session_path or normalize_session_path(account.session_path)
+            session_path = (
+                normalize_session_path(account.session_path)
+                or self.next_session_path()
+            )
             proxy = proxy if proxy != "" else (account.proxy or "")
             remark = remark if remark != "" else (account.remark or "")
+        else:
+            async with self.lock:
+                session_path = self.next_session_path()
+                self.reserved_session_paths.add(session_path)
 
         if not name:
             name = "采集账号"
 
-        if not session_path:
-            return {
-                "ok": False,
-                "code": "session_path_required",
-                "message": "Session 路径不能为空",
-            }
-
         existing = self.find_account_by_session_path(session_path)
         if existing and (not account_id or int(existing["id"]) != int(account_id)):
             if not update_existing:
+                self.reserved_session_paths.discard(session_path)
                 return {
                     "ok": False,
                     "code": "session_path_exists",
@@ -222,6 +262,7 @@ class AccountLoginManager:
                     remark=remark,
                     me=me,
                 )
+                self.reserved_session_paths.discard(session_path)
                 return {
                     "ok": True,
                     "already_authorized": True,
@@ -232,6 +273,7 @@ class AccountLoginManager:
             await client.send_code_request(phone)
         except AuthKeyDuplicatedError:
             await client.disconnect()
+            self.reserved_session_paths.discard(session_path)
             return {
                 "ok": False,
                 "code": "auth_key_duplicated",
@@ -239,6 +281,7 @@ class AccountLoginManager:
             }
         except Exception as e:
             await client.disconnect()
+            self.reserved_session_paths.discard(session_path)
             logger.exception(f"后台账号登录发送验证码失败 | account_id={account_id} | phone={phone} | {e}")
             return {
                 "ok": False,

@@ -99,6 +99,7 @@
       <MyChannelTable
         :bots="bots"
         :accounts="accounts"
+        :accounts-loading="pageLoading.accounts"
         :active-tab="activeChannelTab"
         @update:active-tab="setActiveChannelTab"
       />
@@ -332,7 +333,7 @@ const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
 const SECONDS_PER_MINUTE = 60
 const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "settings", "guide"]
-const VALID_CHANNEL_TABS = ["targets", "sources", "search-bots"]
+const VALID_CHANNEL_TABS = ["targets", "sources", "collections", "search-bots"]
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -754,7 +755,7 @@ async function handleMenuChange(menu) {
   }
 
   if (menu === "my-channels") {
-    await loadBots()
+    await Promise.all([loadBots(), loadAccounts()])
   }
 
   if (menu === "clone") {

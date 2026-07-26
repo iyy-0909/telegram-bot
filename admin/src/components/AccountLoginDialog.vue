@@ -3,7 +3,9 @@
     :model-value="visible"
     @update:model-value="handleVisibleChange"
     :title="isRelogin ? '重新登录采集账号' : '登录新增采集账号'"
-    width="640px"
+    class="account-login-dialog"
+    width="min(640px, calc(100vw - 24px))"
+    append-to-body
     destroy-on-close
   >
     <el-alert
@@ -31,10 +33,6 @@
 
       <el-form-item label="手机号" required>
         <el-input v-model="form.phone" placeholder="例如 +86138xxxx 或 86138xxxx" />
-      </el-form-item>
-
-      <el-form-item label="Session路径" required>
-        <el-input v-model="form.session_path" placeholder="例如 data/sessions/collector_1" />
       </el-form-item>
 
       <el-form-item label="代理">
@@ -104,7 +102,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from "vue"
-import { ElMessage, ElMessageBox } from "element-plus"
+import { ElMessage } from "element-plus"
 import { startAccountLogin, verifyAccountLogin } from "../api/accounts"
 
 const props = defineProps({
@@ -127,7 +125,6 @@ const form = reactive({
   account_id: null,
   name: "",
   phone: "",
-  session_path: "",
   proxy: "",
   remark: "",
   update_existing: false,
@@ -149,7 +146,7 @@ const verifyHint = computed(() => (
 const successText = computed(() => {
   const account = savedAccount.value || {}
   const username = account.username ? `@${account.username}` : "-"
-  return `ID：${account.id || "-"}，用户名：${username}，Session：${account.session_path || "-"}`
+  return `ID：${account.id || "-"}，用户名：${username}，登录凭证已由系统自动保存`
 })
 
 watch(
@@ -159,10 +156,6 @@ watch(
     resetState()
   },
 )
-
-function nextSessionPath() {
-  return "data/sessions/collector_new"
-}
 
 function resetState() {
   const account = props.account || {}
@@ -177,7 +170,6 @@ function resetState() {
   form.account_id = account.id || null
   form.name = account.name || ""
   form.phone = account.phone || ""
-  form.session_path = account.session_path || nextSessionPath()
   form.proxy = account.proxy || ""
   form.remark = account.remark || ""
   form.update_existing = Boolean(account.id)
@@ -202,11 +194,6 @@ function validateBaseForm() {
     return false
   }
 
-  if (!form.session_path) {
-    ElMessage.error("Session 路径不能为空")
-    return false
-  }
-
   return true
 }
 
@@ -222,7 +209,6 @@ async function sendCode() {
       account_id: form.account_id || null,
       name: form.name,
       phone: form.phone,
-      session_path: form.session_path,
       proxy: form.proxy,
       remark: form.remark,
       update_existing: form.update_existing,
@@ -243,20 +229,6 @@ async function sendCode() {
       loginId.value = data.login_id
       activeStep.value = 1
       ElMessage.success(data.message || "验证码已发送")
-      return
-    }
-
-    if (data.code === "session_path_exists" && data.existing_account) {
-      await ElMessageBox.confirm(
-        `该 Session 路径已属于账号 #${data.existing_account.id}：${data.existing_account.name}。是否改为更新这个已有账号？`,
-        "Session 路径已存在",
-        { type: "warning" },
-      )
-
-      form.account_id = data.existing_account.id
-      form.name = data.existing_account.name || form.name
-      form.update_existing = true
-      await sendCode()
       return
     }
 
@@ -319,5 +291,32 @@ async function verifyCode() {
 .verify-panel,
 .success-panel {
   margin-top: 12px;
+}
+
+:global(.account-login-dialog) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 24px);
+  margin: 12px auto !important;
+}
+
+:global(.account-login-dialog .el-dialog__body) {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+:global(.account-login-dialog .el-dialog__header),
+:global(.account-login-dialog .el-dialog__footer) {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 480px) {
+  .login-form {
+    --el-form-label-font-size: 13px;
+  }
+
+  .login-steps :deep(.el-step__title) {
+    font-size: 12px;
+  }
 }
 </style>

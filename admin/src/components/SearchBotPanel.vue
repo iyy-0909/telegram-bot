@@ -139,13 +139,26 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="botDialogVisible" :title="editingBot?.id ? '编辑搜索机器人' : '新增搜索机器人'" width="680px" destroy-on-close>
+    <el-dialog
+      v-model="botDialogVisible"
+      class="search-bot-dialog"
+      :title="editingBot?.id ? '编辑搜索机器人' : '新增搜索机器人'"
+      width="min(680px, calc(100vw - 24px))"
+      append-to-body
+      destroy-on-close
+    >
       <el-form ref="botFormRef" :model="botForm" :rules="botRules" label-position="top">
         <div class="form-grid">
           <el-form-item label="机器人名称" prop="name"><el-input v-model="botForm.name" placeholder="例如：上海搜群机器人A" /></el-form-item>
           <el-form-item label="机器人 ID" prop="username"><el-input v-model="botForm.username" placeholder="例如：@jisou 或 https://t.me/jisou" /></el-form-item>
           <el-form-item label="默认操作账号（选填）" prop="account_id">
-            <el-select v-model="botForm.account_id" clearable filterable placeholder="不使用系统添加时可留空">
+            <el-select
+              v-model="botForm.account_id"
+              clearable
+              filterable
+              :loading="props.accountsLoading"
+              placeholder="不使用系统添加时可留空"
+            >
               <el-option v-for="account in enabledAccounts" :key="account.id" :label="accountLabel(account)" :value="account.id" />
             </el-select>
             <div class="field-help">系统添加时，该账号必须拥有目标频道的添加成员和添加管理员权限。</div>
@@ -186,7 +199,13 @@
           <div v-if="selectedChannel" class="field-help">当前频道分组：{{ selectedChannel.group_name || "未设置" }}</div>
         </el-form-item>
         <el-form-item v-if="submitForm.submission_mode === 'queue'" label="操作账号（选填）" prop="account_id">
-          <el-select v-model="submitForm.account_id" clearable filterable placeholder="留空则使用机器人默认操作账号">
+          <el-select
+            v-model="submitForm.account_id"
+            clearable
+            filterable
+            :loading="props.accountsLoading"
+            placeholder="留空则使用机器人默认操作账号"
+          >
             <el-option v-for="account in enabledAccounts" :key="account.id" :label="accountLabel(account)" :value="account.id" />
           </el-select>
           <div class="field-help">{{ selectedSubmitBot?.account_id ? `当前机器人已配置默认操作账号：${selectedSubmitBot.account_name || `#${selectedSubmitBot.account_id}`}` : "当前机器人没有默认操作账号，请选择拥有目标频道管理权限的账号。" }}</div>
@@ -282,7 +301,13 @@
       </el-descriptions>
       <el-form :model="permissionForm" label-position="top" class="dialog-form">
         <el-form-item label="操作账号（选填）">
-          <el-select v-model="permissionForm.account_id" clearable filterable placeholder="留空则使用原提交账号或机器人默认账号">
+          <el-select
+            v-model="permissionForm.account_id"
+            clearable
+            filterable
+            :loading="props.accountsLoading"
+            placeholder="留空则使用原提交账号或机器人默认账号"
+          >
             <el-option v-for="account in enabledAccounts" :key="account.id" :label="accountLabel(account)" :value="account.id" />
           </el-select>
         </el-form-item>
@@ -334,7 +359,10 @@ import {
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 
-const props = defineProps({ accounts: { type: Array, default: () => [] } })
+const props = defineProps({
+  accounts: { type: Array, default: () => [] },
+  accountsLoading: { type: Boolean, default: false },
+})
 const emit = defineEmits(["submission-changed"])
 const panelView = ref("bots")
 const bots = ref([])
@@ -460,9 +488,17 @@ function adminRightLabels(rights) {
   const value = rights && typeof rights === "object" ? rights : {}
   return allPermissionOptions.filter((item) => value[item.key]).map((item) => item.label)
 }
-async function refreshAll() { await Promise.all([loadBots(), loadChannels(), loadSubmissions()]) }
+async function refreshAll() {
+  await Promise.all([loadBots(), loadChannels(), loadSubmissions()])
+}
 async function loadBots() { botLoading.value = true; try { bots.value = (await getSearchBots(botFilters)).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载搜索机器人失败")) } finally { botLoading.value = false } }
-async function loadChannels() { try { channels.value = (await getMyChannels()).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载频道失败")) } }
+async function loadChannels() {
+  try {
+    channels.value = (await getMyChannels()).data.items || []
+  } catch (error) {
+    ElMessage.error(readError(error, "加载频道失败"))
+  }
+}
 async function loadSubmissions() { submissionLoading.value = true; try { submissions.value = (await getSearchBotSubmissions(submissionFilters)).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载提交记录失败")) } finally { submissionLoading.value = false } }
 function openBotCreate() { editingBot.value = null; Object.assign(botForm, emptyBotForm()); botDialogVisible.value = true }
 function openBotEdit(row) { editingBot.value = row; Object.assign(botForm, { ...emptyBotForm(), ...row }); botDialogVisible.value = true }
@@ -606,6 +642,7 @@ defineExpose({ openSubmitForChannel, openSubmissionEdit, openPermissionEdit })
   line-height: 1.5;
 }
 .permission-panel .el-alert { margin-top: 12px; }
+:global(.search-bot-dialog),
 :global(.submit-channel-dialog),
 :global(.permission-channel-dialog) {
   display: flex;
@@ -613,11 +650,14 @@ defineExpose({ openSubmitForChannel, openSubmissionEdit, openPermissionEdit })
   max-height: calc(100vh - 24px);
   margin: 12px auto !important;
 }
+:global(.search-bot-dialog .el-dialog__body),
 :global(.submit-channel-dialog .el-dialog__body),
 :global(.permission-channel-dialog .el-dialog__body) {
   min-height: 0;
   overflow-y: auto;
 }
+:global(.search-bot-dialog .el-dialog__header),
+:global(.search-bot-dialog .el-dialog__footer),
 :global(.submit-channel-dialog .el-dialog__header),
 :global(.submit-channel-dialog .el-dialog__footer),
 :global(.permission-channel-dialog .el-dialog__header),

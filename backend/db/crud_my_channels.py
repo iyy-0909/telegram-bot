@@ -120,10 +120,6 @@ def list_my_channels(keyword="", status="", group_name="", bot_id=None):
                 MyChannel.title,
                 MyChannel.username,
                 MyChannel.chat_id,
-                MyChannel.group_name,
-                MyChannel.delivery_status,
-                MyChannel.collection_status,
-                MyChannel.clone_status,
             )
             query = query.filter(
                 or_(

@@ -191,8 +191,17 @@
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane label="机器人收录" name="collections">
+        <SearchBotCollectionTable />
+      </el-tab-pane>
+
       <el-tab-pane label="搜索机器人" name="search-bots">
-        <SearchBotPanel ref="searchBotPanelRef" :accounts="accounts" @submission-changed="handleSubmissionChanged" />
+        <SearchBotPanel
+          ref="searchBotPanelRef"
+          :accounts="accounts"
+          :accounts-loading="accountsLoading"
+          @submission-changed="handleSubmissionChanged"
+        />
       </el-tab-pane>
     </el-tabs>
 
@@ -446,6 +455,7 @@ import BotSelect from "./BotSelect.vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 import SearchBotPanel from "./SearchBotPanel.vue"
+import SearchBotCollectionTable from "./SearchBotCollectionTable.vue"
 
 const props = defineProps({
   bots: {
@@ -455,6 +465,10 @@ const props = defineProps({
   accounts: {
     type: Array,
     default: () => [],
+  },
+  accountsLoading: {
+    type: Boolean,
+    default: false,
   },
   activeTab: {
     type: String,

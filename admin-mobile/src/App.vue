@@ -161,6 +161,7 @@
     <div v-else-if="activeTab === 'channels'" class="channel-section">
       <el-tabs v-model="channelView" stretch class="channel-view-tabs">
         <el-tab-pane label="我的频道" name="channels" />
+        <el-tab-pane label="机器人收录" name="collections" />
         <el-tab-pane label="搜索机器人" name="search-bots" />
       </el-tabs>
     <ListPage
@@ -210,6 +211,7 @@
         :page-visible="channelView === 'search-bots'"
         @submission-changed="loadChannels"
       />
+      <MobileSearchBotCollections v-if="channelView === 'collections'" />
     </div>
 
     <MorePage
@@ -298,6 +300,7 @@ import MobileLayout from "./components/MobileLayout.vue"
 import StatusPill from "./components/StatusPill.vue"
 import EmptyState from "./components/EmptyState.vue"
 import MobileSearchBots from "./components/MobileSearchBots.vue"
+import MobileSearchBotCollections from "./components/MobileSearchBotCollections.vue"
 import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
@@ -1795,7 +1798,6 @@ const AccountLoginForm = defineComponent({
       account_id: props.account?.id || null,
       name: props.account?.name || "",
       phone: props.account?.phone || "",
-      session_path: props.account?.session_path || "data/sessions/collector_new",
       proxy: props.account?.proxy || "",
       remark: props.account?.remark || "",
       update_existing: Boolean(props.account?.id),
@@ -1806,8 +1808,8 @@ const AccountLoginForm = defineComponent({
     })
 
     async function start() {
-      if (!form.name || !form.phone || !form.session_path) {
-        ElMessage.warning("账号名称、手机号、Session 路径不能为空")
+      if (!form.name || !form.phone) {
+        ElMessage.warning("账号名称和手机号不能为空")
         return
       }
       const data = await emitAsync(emit, "start", { ...form })
@@ -1847,7 +1849,6 @@ const AccountLoginForm = defineComponent({
       step.value === 0 ? h(resolve("el-form"), { labelPosition: "top" }, [
         loginInput(form, "name", "账号名称"),
         loginInput(form, "phone", "手机号"),
-        loginInput(form, "session_path", "Session 路径"),
         loginInput(form, "proxy", "代理"),
         loginInput(form, "remark", "备注", "textarea"),
       ]) : null,
@@ -1888,7 +1889,6 @@ function loginPlaceholder(key) {
   const map = {
     name: "例如：采集账号，方便后台识别",
     phone: "填写 Telegram 手机号，例如 +8613800000000",
-    session_path: "可留空自动生成，或填写 data/sessions/xxx",
     proxy: "可留空，例如 socks5://127.0.0.1:7890",
     remark: "可留空，填写这个账号的用途",
     code: "填写 Telegram 收到的验证码",
