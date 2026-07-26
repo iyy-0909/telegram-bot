@@ -176,6 +176,11 @@ const AppMenu = defineComponent({
   background: #111827;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mobile-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .main {

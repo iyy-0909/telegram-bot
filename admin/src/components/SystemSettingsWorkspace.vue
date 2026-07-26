@@ -1,50 +1,45 @@
 <template>
-  <div ref="gridRef" class="settings-workspace">
-    <div class="workspace-item workspace-item--compact">
-      <SendSettingsPanel
-        :settings="settings"
-        :saving="settingsSaving"
-        @submit="emit('save-settings', $event)"
-      />
-    </div>
+  <div class="settings-workspace">
+    <SendSettingsPanel
+      :settings="settings"
+      :saving="settingsSaving"
+      @submit="emit('save-settings', $event)"
+    />
 
-    <div
-      v-for="section in allSections"
-      :key="section.key"
-      class="workspace-item"
-      :class="section.compact ? 'workspace-item--compact' : 'workspace-item--table'"
-    >
-      <RuleSectionPanel
-        v-bind="section"
-        :rules="groupRules"
-        :loading="loading"
-        :toggling-id="togglingId"
-        @add="emit('add', $event)"
-        @edit="emit('edit', $event)"
-        @delete="emit('delete', $event)"
-        @toggle="(row, value) => emit('toggle', row, value)"
-      />
-    </div>
+    <section class="rules-workspace">
+      <el-tabs v-model="activeSection" class="section-tabs">
+        <el-tab-pane
+          v-for="section in displaySections"
+          :key="section.key"
+          :name="section.key"
+        >
+          <template #label>
+            <span class="tab-label">
+              <span>{{ section.title }}</span>
+              <span class="tab-count">{{ sectionCount(section) }}</span>
+            </span>
+          </template>
 
-    <div v-if="otherTypes.length" class="workspace-item workspace-item--table">
-      <RuleSectionPanel
-        title="其他配置"
-        subtitle="尚未归类的新配置会自动显示在这里，现有数据不会被隐藏。"
-        :types="otherTypes"
-        :rules="groupRules"
-        :loading="loading"
-        :toggling-id="togglingId"
-        @add="emit('add', $event)"
-        @edit="emit('edit', $event)"
-        @delete="emit('delete', $event)"
-        @toggle="(row, value) => emit('toggle', row, value)"
-      />
-    </div>
+          <RuleSectionPanel
+            :title="section.title"
+            :subtitle="section.subtitle"
+            :types="section.types"
+            :rules="groupRules"
+            :loading="loading"
+            :toggling-id="togglingId"
+            @add="emit('add', $event)"
+            @edit="emit('edit', $event)"
+            @delete="emit('delete', $event)"
+            @toggle="(row, value) => emit('toggle', row, value)"
+          />
+        </el-tab-pane>
+      </el-tabs>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, ref, watch } from "vue"
 import SendSettingsPanel from "./SendSettingsPanel.vue"
 import RuleSectionPanel from "./RuleSectionPanel.vue"
 import { CONTENT_RULE_SECTIONS, knownContentRuleTypes } from "../config/contentRuleSections"
@@ -58,12 +53,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(["save-settings", "add", "edit", "delete", "toggle"])
-const allSections = CONTENT_RULE_SECTIONS
-const gridRef = ref(null)
-const observedItems = new Set()
-const GRID_ROW_HEIGHT = 8
-const GRID_GAP = 12
-let resizeObserver = null
+const activeSection = ref(CONTENT_RULE_SECTIONS[0]?.key || "")
 
 const groupRules = computed(() => props.templates
   .filter((template) => !template.parent_id)
@@ -77,84 +67,107 @@ const groupRules = computed(() => props.templates
 
 const otherTypes = computed(() => {
   const knownTypes = knownContentRuleTypes()
-  return Array.from(new Set(groupRules.value.map((rule) => rule.type).filter((type) => type && !knownTypes.has(type))))
+  return Array.from(
+    new Set(
+      groupRules.value
+        .map((rule) => rule.type)
+        .filter((type) => type && !knownTypes.has(type)),
+    ),
+  )
 })
 
-function updateItemSpan(element) {
-  const height = element.getBoundingClientRect().height
-  const span = Math.max(1, Math.ceil((height + GRID_GAP) / (GRID_ROW_HEIGHT + GRID_GAP)))
-  element.style.gridRowEnd = `span ${span}`
-}
+const displaySections = computed(() => {
+  const sections = CONTENT_RULE_SECTIONS.map((section) => ({
+    ...section,
+    compact: false,
+  }))
 
-function syncObservedItems() {
-  if (!resizeObserver || !gridRef.value) return
-
-  const currentItems = new Set(gridRef.value.querySelectorAll(".workspace-item"))
-  observedItems.forEach((element) => {
-    if (!currentItems.has(element)) {
-      resizeObserver.unobserve(element)
-      observedItems.delete(element)
-    }
-  })
-
-  currentItems.forEach((element) => {
-    if (!observedItems.has(element)) {
-      observedItems.add(element)
-      resizeObserver.observe(element)
-    }
-    updateItemSpan(element)
-  })
-}
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver((entries) => {
-    entries.forEach((entry) => updateItemSpan(entry.target))
-  })
-  syncObservedItems()
+  if (otherTypes.value.length) {
+    sections.push({
+      key: "other",
+      title: "其他配置",
+      subtitle: "尚未归类的配置会统一显示在这里。",
+      types: otherTypes.value,
+      compact: false,
+    })
+  }
+  return sections
 })
 
 watch(
-  [groupRules, otherTypes],
-  async () => {
-    await nextTick()
-    syncObservedItems()
+  displaySections,
+  (sections) => {
+    if (!sections.some((section) => section.key === activeSection.value)) {
+      activeSection.value = sections[0]?.key || ""
+    }
   },
-  { deep: true },
+  { immediate: true },
 )
 
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
-  observedItems.clear()
-})
+function sectionCount(section) {
+  return groupRules.value.filter((rule) => section.types.includes(rule.type)).length
+}
 </script>
 
 <style scoped>
 .settings-workspace {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-auto-flow: dense;
-  grid-auto-rows: 8px;
-  column-gap: 12px;
-  row-gap: 12px;
-  container-type: inline-size;
-}
-.workspace-item {
   min-width: 0;
-  align-self: start;
-}
-.workspace-item--compact { grid-column: span 4; }
-.workspace-item--table { grid-column: span 6; }
-
-@container (max-width: 1139px) {
-  .workspace-item:first-child { grid-column: span 12; }
-  .workspace-item--compact { grid-column: span 6; }
-  .workspace-item--table { grid-column: span 12; }
+  gap: 16px;
 }
 
-@container (max-width: 680px) {
-  .workspace-item--compact,
-  .workspace-item--table {
-    grid-column: span 12;
+.rules-workspace {
+  min-width: 0;
+}
+
+.section-tabs {
+  min-width: 0;
+}
+
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tab-count {
+  display: inline-flex;
+  min-width: 22px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+:deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+:deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+}
+
+@media (max-width: 900px) {
+  .settings-workspace {
+    gap: 12px;
+  }
+
+  :deep(.el-tabs__nav-wrap) {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  :deep(.el-tabs__nav-wrap::-webkit-scrollbar) {
+    display: none;
+  }
+
+  :deep(.el-tabs__nav-scroll) {
+    min-width: max-content;
   }
 }
 </style>

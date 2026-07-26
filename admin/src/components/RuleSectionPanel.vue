@@ -6,9 +6,17 @@
           <div class="section-title">{{ title }}</div>
           <div class="section-subtitle">{{ subtitle }}</div>
         </div>
-        <el-button type="primary" :icon="Plus" @click="emit('add', activeType)">
-          新增
-        </el-button>
+        <div class="section-actions">
+          <el-input
+            v-model="keyword"
+            clearable
+            :prefix-icon="Search"
+            placeholder="搜索配置名称或内容"
+          />
+          <el-button type="primary" :icon="Plus" @click="emit('add', activeType)">
+            新增
+          </el-button>
+        </div>
       </div>
     </template>
 
@@ -21,7 +29,11 @@
       />
     </el-tabs>
 
-    <div v-if="compact" v-loading="loading" class="compact-rule-list">
+    <div
+      v-loading="loading"
+      class="compact-rule-list"
+      :class="{ 'compact-rule-list--mobile': !compact }"
+    >
       <div v-if="visibleRules.length">
         <article v-for="row in visibleRules" :key="row.id" class="compact-rule-item">
           <div class="compact-rule-head">
@@ -36,8 +48,18 @@
             />
           </div>
           <div class="compact-rule-actions">
-            <el-button text type="primary" @click="emit('edit', row)">编辑</el-button>
-            <el-button text type="danger" @click="emit('delete', row.id)">删除</el-button>
+            <el-button size="small" :icon="EditPen" @click="emit('edit', row)">
+              编辑
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :icon="Delete"
+              @click="emit('delete', row.id)"
+            >
+              删除
+            </el-button>
           </div>
         </article>
       </div>
@@ -45,22 +67,23 @@
     </div>
 
     <el-table
-      v-else
+      v-if="!compact"
       :data="visibleRules"
       v-loading="loading"
       border
       stripe
       row-key="id"
       max-height="492"
+      class="desktop-rule-table"
       :empty-text="`暂无${typeMeta(activeType).label}配置，请点击新增创建。`"
     >
-      <el-table-column prop="name" label="配置名称" min-width="145" show-overflow-tooltip />
+      <el-table-column prop="name" label="配置名称" min-width="220" show-overflow-tooltip />
       <el-table-column v-if="types.length > 1" label="类型" width="82" align="center">
         <template #default="{ row }">
           <el-tag :type="typeMeta(row.type).tagType" size="small">{{ typeMeta(row.type).label }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="内容" min-width="180" show-overflow-tooltip>
+      <el-table-column label="内容" min-width="420" show-overflow-tooltip>
         <template #default="{ row }">{{ ruleSummary(row) }}</template>
       </el-table-column>
       <el-table-column label="启用" width="72" align="center">
@@ -72,11 +95,21 @@
           />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="116" fixed="right">
+      <el-table-column label="操作" width="176" align="center">
         <template #default="{ row }">
           <div class="row-actions">
-            <el-button text type="primary" @click="emit('edit', row)">编辑</el-button>
-            <el-button text type="danger" @click="emit('delete', row.id)">删除</el-button>
+            <el-button size="small" :icon="EditPen" @click="emit('edit', row)">
+              编辑
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :icon="Delete"
+              @click="emit('delete', row.id)"
+            >
+              删除
+            </el-button>
           </div>
         </template>
       </el-table-column>
@@ -86,7 +119,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue"
-import { Plus } from "@element-plus/icons-vue"
+import { Delete, EditPen, Plus, Search } from "@element-plus/icons-vue"
 import { CONTENT_RULE_TYPE_META } from "../config/contentRuleSections"
 
 const props = defineProps({
@@ -101,6 +134,7 @@ const props = defineProps({
 
 const emit = defineEmits(["add", "edit", "delete", "toggle"])
 const activeType = ref(props.types[0] || "")
+const keyword = ref("")
 
 watch(
   () => props.types,
@@ -110,7 +144,16 @@ watch(
   { deep: true },
 )
 
-const visibleRules = computed(() => props.rules.filter((rule) => rule.type === activeType.value))
+const visibleRules = computed(() => {
+  const normalizedKeyword = keyword.value.trim().toLowerCase()
+  return props.rules.filter((rule) => {
+    if (rule.type !== activeType.value) return false
+    if (!normalizedKeyword) return true
+    return `${rule.name || ""} ${ruleSummary(rule)}`
+      .toLowerCase()
+      .includes(normalizedKeyword)
+  })
+})
 
 function typeMeta(type) {
   return CONTENT_RULE_TYPE_META[type] || { label: type || "其他", tagType: "info" }
@@ -167,10 +210,24 @@ function stripHtml(value) {
 <style scoped>
 .rule-section { min-width: 0; border-radius: 8px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.section-header > div:first-child { min-width: 0; }
 .section-title { color: var(--el-text-color-primary); font-size: 16px; font-weight: 600; }
 .section-subtitle { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; }
+.section-actions {
+  display: grid;
+  width: min(100%, 380px);
+  flex: 0 0 auto;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+}
 .type-tabs { margin-top: -8px; }
-.row-actions { display: flex; align-items: center; white-space: nowrap; }
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
 .row-actions .el-button { margin-left: 0; }
 .compact-rule-list {
   min-width: 0;
@@ -178,17 +235,32 @@ function stripHtml(value) {
   overflow-x: hidden;
   overflow-y: auto;
 }
+.compact-rule-list--mobile { display: none; }
 .compact-rule-item { padding: 12px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
 .compact-rule-item:last-child { border-bottom: 0; }
 .compact-rule-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .compact-rule-head > div { min-width: 0; }
 .compact-rule-head strong, .compact-rule-head span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compact-rule-head span { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; }
-.compact-rule-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.compact-rule-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 .compact-rule-actions .el-button { margin-left: 0; }
 :deep(.el-table .cell) { white-space: nowrap; }
 
 @media (max-width: 900px) {
   .section-header { align-items: stretch; flex-direction: column; }
+  .section-actions {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .desktop-rule-table { display: none; }
+  .compact-rule-list--mobile { display: block; }
 }
 </style>
