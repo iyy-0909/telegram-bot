@@ -16,8 +16,9 @@ def is_muted_until(mute_until, now: datetime | None = None) -> bool:
     return mute_until > now
 
 
-async def is_chat_muted(client, chat) -> bool:
-    input_peer = await client.get_input_entity(chat)
+async def is_chat_muted(client, chat, input_peer=None) -> bool:
+    if input_peer is None:
+        input_peer = await client.get_input_entity(chat)
     settings = await client(
         functions.account.GetNotifySettingsRequest(
             peer=types.InputNotifyPeer(input_peer),

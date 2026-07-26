@@ -35,9 +35,6 @@ class NotificationService:
 
     def start(self, account_manager):
         self.account_manager = account_manager
-        if not self.config.enabled:
-            logger.info("ntfy 通知模块未启用")
-            return
         if self.sync_task and not self.sync_task.done():
             return
 
@@ -213,7 +210,15 @@ class NotificationService:
 
             if self.config.only_unmuted:
                 try:
-                    muted = await is_chat_muted(event.client, chat)
+                    input_peer = None
+                    get_input_chat = getattr(event, "get_input_chat", None)
+                    if callable(get_input_chat):
+                        input_peer = await get_input_chat()
+                    muted = await is_chat_muted(
+                        event.client,
+                        chat,
+                        input_peer=input_peer,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "ntfy 通知未发送 | reason=notify_settings_error | "

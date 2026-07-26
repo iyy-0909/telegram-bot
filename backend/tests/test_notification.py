@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -26,8 +27,10 @@ class FakeEvent:
         self.client = SimpleNamespace(
             get_me=AsyncMock(
                 return_value=SimpleNamespace(username="collector_account")
-            )
+            ),
+            get_input_entity=AsyncMock(return_value="fallback-input-peer"),
         )
+        self.input_chat = SimpleNamespace(user_id=1001, access_hash=2002)
         self.message = message or SimpleNamespace(
             id=7,
             date=datetime(2026, 7, 27, tzinfo=timezone.utc),
@@ -41,10 +44,13 @@ class FakeEvent:
     async def get_sender(self):
         return SimpleNamespace(first_name="测试用户", last_name="", username="tester")
 
+    async def get_input_chat(self):
+        return self.input_chat
 
-def make_config(*, only_unmuted=True):
+
+def make_config(*, enabled=True, only_unmuted=True):
     return NotificationConfig(
-        enabled=True,
+        enabled=enabled,
         server="https://ntfy.sh",
         topic="test-topic",
         only_unmuted=only_unmuted,
@@ -214,17 +220,35 @@ class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_unmuted_private_message_is_published_as_high(self):
         ntfy = SimpleNamespace(publish=AsyncMock(return_value=200))
         service = self.make_service(make_config(), ntfy)
+        event = FakeEvent(private=True)
 
-        with patch("notification.service.is_chat_muted", AsyncMock(return_value=False)):
-            await service.handle_event(3, FakeEvent(private=True))
+        with patch(
+            "notification.service.is_chat_muted",
+            AsyncMock(return_value=False),
+        ) as mute_check:
+            await service.handle_event(3, event)
 
         ntfy.publish.assert_awaited_once()
+        self.assertIs(
+            mute_check.await_args.kwargs["input_peer"],
+            event.input_chat,
+        )
         kwargs = ntfy.publish.await_args.kwargs
         self.assertEqual(kwargs["title"], "@collector_account")
         self.assertEqual(kwargs["priority"], "high")
         self.assertIn("测试群", kwargs["message"])
         self.assertIn("@tester", kwargs["message"])
         self.assertIn("hello", kwargs["message"])
+
+    async def test_per_account_listener_starts_when_legacy_global_switch_is_disabled(self):
+        config = make_config(enabled=False)
+        service = NotificationService(config, setting_loader=lambda _account_id: None)
+
+        service.start(SimpleNamespace(clients={}))
+        await asyncio.sleep(0)
+
+        self.assertIsNotNone(service.sync_task)
+        await service.stop()
 
     async def test_notify_setting_error_fails_closed(self):
         ntfy = SimpleNamespace(publish=AsyncMock())
