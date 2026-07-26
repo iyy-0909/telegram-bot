@@ -70,6 +70,10 @@
       />
     </div>
 
+    <div v-if="activeMenu === 'notifications'">
+      <NotificationSettings />
+    </div>
+
     <div v-if="activeMenu === 'bots'" class="bot-page">
       <BotTable
         :bots="bots"
@@ -212,6 +216,7 @@ import { knownContentRuleTypes } from "./config/contentRuleSections"
 import AccountTable from "./components/AccountTable.vue"
 import AccountDialog from "./components/AccountDialog.vue"
 import AccountLoginDialog from "./components/AccountLoginDialog.vue"
+import NotificationSettings from "./components/NotificationSettings.vue"
 
 import BotTable from "./components/BotTable.vue"
 import BotDialog from "./components/BotDialog.vue"
@@ -335,7 +340,7 @@ const LISTENER_TASK_LOG_LIMIT = 50
 const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "settings", "guide"]
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "settings", "guide"]
 const VALID_CHANNEL_TABS = ["targets", "sources", "collections", "search-bots"]
 
 function getSavedActiveMenu() {

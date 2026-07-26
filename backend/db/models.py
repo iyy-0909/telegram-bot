@@ -44,6 +44,19 @@ class Account(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class NotificationAccountSetting(Base):
+    __tablename__ = "notification_account_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, nullable=False, unique=True, index=True)
+    ntfy_url = Column(Text, default="")
+    enabled = Column(Boolean, default=False)
+    last_test_status = Column(String, default="")
+    last_test_message = Column(Text, default="")
+    last_test_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CloneTask(Base):
     __tablename__ = "clone_tasks"
 

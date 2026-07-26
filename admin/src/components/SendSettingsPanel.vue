@@ -106,7 +106,12 @@ function submit() {
   color: #909399;
 }
 
-.settings-form { max-width: 520px; }
+.settings-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+}
+.settings-form :deep(.el-form-item) { margin-bottom: 0; }
 :deep(.el-input-number) { width: 100%; }
 
 @media (max-width: 900px) {
@@ -116,8 +121,5 @@ function submit() {
     gap: 10px;
   }
 
-  .settings-form {
-    max-width: none;
-  }
 }
 </style>

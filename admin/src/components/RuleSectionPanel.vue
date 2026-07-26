@@ -51,7 +51,7 @@
       border
       stripe
       row-key="id"
-      height="420"
+      max-height="492"
       :empty-text="`暂无${typeMeta(activeType).label}配置，请点击新增创建。`"
     >
       <el-table-column prop="name" label="配置名称" min-width="145" show-overflow-tooltip />
@@ -174,8 +174,7 @@ function stripHtml(value) {
 .row-actions .el-button { margin-left: 0; }
 .compact-rule-list {
   min-width: 0;
-  min-height: 238px;
-  max-height: 238px;
+  max-height: 492px;
   overflow-x: hidden;
   overflow-y: auto;
 }

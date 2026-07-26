@@ -31,6 +31,7 @@
 <script setup>
 import { defineComponent, h, resolveComponent } from "vue"
 import {
+  Bell,
   ChatDotRound,
   Collection,
   Connection,
@@ -65,6 +66,7 @@ const menuItems = [
   ["bulk-replace", "批量替换", Operation],
   ["support", "客服机器人", ChatDotRound],
   ["accounts", "账号管理", User],
+  ["notifications", "消息通知", Bell],
   ["settings", "系统设置", Setting],
   ["guide", "使用教程", Guide],
 ]

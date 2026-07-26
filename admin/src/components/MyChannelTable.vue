@@ -34,6 +34,17 @@
               <el-option label="已禁用" value="disabled" />
               <el-option label="异常" value="error" />
             </el-select>
+            <el-select
+              v-model="filters.collection_status"
+              clearable
+              placeholder="收录状态"
+              class="status-filter"
+              @change="load"
+            >
+              <el-option label="已收录" value="collected" />
+              <el-option label="审核中" value="reviewing" />
+              <el-option label="未收录" value="not_collected" />
+            </el-select>
             <el-button @click="load">
               <el-icon><Refresh /></el-icon>
               刷新
@@ -72,16 +83,6 @@
                   :value="row.creator_username"
                   :text="row.creator_username"
                   tone="primary"
-                />
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="创建人 ID" min-width="140" show-overflow-tooltip>
-              <template #default="{ row }">
-                <CopyText
-                  v-if="row.can_view_creator && row.creator_user_id"
-                  :value="row.creator_user_id"
-                  :text="row.creator_user_id"
                 />
                 <span v-else>-</span>
               </template>
@@ -532,6 +533,7 @@ const filters = reactive({
   keyword: "",
   group_name: "",
   status: "",
+  collection_status: "",
 })
 const cloneFilters = reactive({
   keyword: "",

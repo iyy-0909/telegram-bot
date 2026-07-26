@@ -78,6 +78,18 @@ from db.crud_settings import (
     get_send_settings,
     update_send_settings,
 )
+from db.crud_notification import (
+    get_notification_setting,
+    list_notification_settings,
+    update_notification_test_result,
+    upsert_notification_setting,
+)
+from notification.config import NotificationConfig
+from notification.ntfy_client import (
+    NtfyClient,
+    generate_ntfy_topic,
+    normalize_ntfy_topic,
+)
 
 from db.crud_support import (
     create_quick_reply,
@@ -345,6 +357,11 @@ class AccountUpdate(BaseModel):
     enabled: bool = True
     remark: str = ""
     is_default: Optional[bool] = None
+
+
+class NotificationSettingUpdate(BaseModel):
+    ntfy_url: str = ""
+    enabled: bool = False
 
 
 class AccountLoginStart(BaseModel):
@@ -1328,6 +1345,7 @@ def api_get_my_channels(
     keyword: str = "",
     status: str = "",
     group_name: str = "",
+    collection_status: str = "",
     bot_id: Optional[int] = None,
 ):
     channels = list_my_channels(
@@ -1337,6 +1355,20 @@ def api_get_my_channels(
         bot_id=bot_id,
     )
     collection_statuses = get_channel_collection_status_map([channel.id for channel in channels])
+    expected_collection_status = {
+        "collected": "已收录",
+        "reviewing": "审核中",
+        "not_collected": "未收录",
+        "已收录": "已收录",
+        "审核中": "审核中",
+        "未收录": "未收录",
+    }.get(collection_status, "")
+    if expected_collection_status:
+        channels = [
+            channel
+            for channel in channels
+            if collection_statuses.get(channel.id, "未收录") == expected_collection_status
+        ]
     return {
         "items": [
             my_channel_to_dict(
@@ -2494,6 +2526,91 @@ def remove_account(account_id: int):
     return {
         "message": "ok",
     }
+
+
+@app.get("/api/notification-settings")
+def api_list_notification_settings():
+    return list_notification_settings()
+
+
+@app.put("/api/notification-settings/{account_id}")
+def api_update_notification_setting(account_id: int, data: NotificationSettingUpdate):
+    ntfy_url = data.ntfy_url.strip()
+    if data.enabled and not ntfy_url:
+        raise HTTPException(status_code=400, detail="启用通知前请填写 ntfy 主题")
+    if ntfy_url:
+        try:
+            ntfy_url = normalize_ntfy_topic(ntfy_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    setting = upsert_notification_setting(account_id, ntfy_url, data.enabled)
+    if not setting:
+        raise HTTPException(status_code=404, detail="Telegram 账号不存在")
+    return setting
+
+
+@app.post("/api/notification-settings/{account_id}/generate")
+def api_generate_notification_setting(account_id: int):
+    account_setting = get_notification_setting(account_id)
+    if not account_setting:
+        raise HTTPException(status_code=404, detail="Telegram 账号不存在")
+
+    try:
+        ntfy_url = generate_ntfy_topic(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    setting = upsert_notification_setting(
+        account_id=account_id,
+        ntfy_url=ntfy_url,
+        enabled=False,
+    )
+    return {
+        "ok": True,
+        "message": "ntfy 主题已自动生成并保存",
+        "setting": setting,
+    }
+
+
+@app.post("/api/notification-settings/{account_id}/test")
+async def api_test_notification_setting(account_id: int):
+    setting = get_notification_setting(account_id)
+    if not setting:
+        raise HTTPException(status_code=404, detail="Telegram 账号不存在")
+    if not setting["configured"]:
+        raise HTTPException(status_code=400, detail="请先填写并保存 ntfy 主题")
+
+    try:
+        config = NotificationConfig.from_env()
+        client = NtfyClient.from_topic(
+            config.server,
+            setting["ntfy_url"],
+            config.request_timeout,
+        )
+        status = await client.publish(
+            title="Telegram消息提醒",
+            message=(
+                f"账号 {setting['account_name']} 的 ntfy 通知配置测试成功。\n"
+                f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}"
+            ),
+            priority="default",
+        )
+        result = update_notification_test_result(
+            account_id,
+            "success",
+            f"ntfy 返回 HTTP {status}",
+        )
+        return {
+            "ok": True,
+            "message": "测试通知已发送",
+            "setting": result,
+        }
+    except Exception as exc:
+        status = getattr(exc, "status_code", "-")
+        message = f"ntfy 推送失败（HTTP {status}）：{exc}"
+        update_notification_test_result(account_id, "error", message)
+        raise HTTPException(status_code=502, detail=message) from exc
 
 
 @app.get("/api/clone-tasks")
