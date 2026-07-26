@@ -334,6 +334,7 @@ class AccountCreate(BaseModel):
     session_path: str
     proxy: str = ""
     remark: str = ""
+    is_default: bool = False
 
 
 class AccountUpdate(BaseModel):
@@ -343,6 +344,7 @@ class AccountUpdate(BaseModel):
     proxy: str = ""
     enabled: bool = True
     remark: str = ""
+    is_default: Optional[bool] = None
 
 
 class AccountLoginStart(BaseModel):
@@ -365,7 +367,7 @@ class CloneTaskCreate(BaseModel):
     name: str
     source_channel: str
     target_channels: str = "[]"
-    account_id: int = 1
+    account_id: Optional[int] = None
     bot_id: Optional[int] = None
 
     clone_limit: int = 100
@@ -607,6 +609,7 @@ class SearchBotSubmissionCreate(BaseModel):
     search_bot_id: int
     my_channel_id: int
     account_id: Optional[int] = None
+    manual_account_id: str = ""
     submission_mode: str = "queue"
     review_status: str = "pending"
     collection_status: str = "unknown"
@@ -949,6 +952,7 @@ def account_to_dict(account):
         "session_path": account.session_path,
         "proxy": account.proxy,
         "enabled": account.enabled,
+        "is_default": bool(getattr(account, "is_default", False)),
         "remark": account.remark,
         "updated_at": str(account.updated_at) if getattr(account, "updated_at", None) else "",
     }
@@ -1446,6 +1450,7 @@ async def execute_search_bot_submission(data):
     if data.submission_mode not in {"queue", "manual"}:
         raise ValueError("提交方式无效")
     manual_mode = data.submission_mode == "manual"
+    manual_account_id = str(data.manual_account_id or "").strip()
     if manual_mode:
         allowed_statuses = {
             "review_status": {"unknown", "pending", "reviewing", "approved", "rejected"},
@@ -1455,6 +1460,14 @@ async def execute_search_bot_submission(data):
         for field, values in allowed_statuses.items():
             if getattr(data, field) not in values:
                 raise ValueError(f"{field} 状态值无效")
+        if data.account_id:
+            manual_account_id = ""
+        elif not manual_account_id:
+            raise ValueError("手动登记需要选择系统账号，或输入系统外账号 ID")
+        elif not manual_account_id.isdigit():
+            raise ValueError("系统外账号 ID 只能填写数字")
+    else:
+        manual_account_id = ""
     account_id = data.account_id if manual_mode else (data.account_id or bot.account_id)
     if not manual_mode and not account_id:
         raise ValueError("系统添加需要选择操作账号，或为搜索机器人配置默认操作账号")
@@ -1467,6 +1480,7 @@ async def execute_search_bot_submission(data):
         channel.id,
         account_id,
         submitted_text,
+        manual_account_id=manual_account_id,
         admin_rights=admin_rights,
         submit_status="manual" if manual_mode else "queued",
         submitted_at=datetime.utcnow() if manual_mode else None,
@@ -2418,6 +2432,7 @@ def add_account(data: AccountCreate):
         session_path=data.session_path,
         proxy=data.proxy,
         remark=data.remark,
+        is_default=data.is_default,
     )
 
     return account_to_dict(account)
@@ -2461,7 +2476,7 @@ async def api_account_login_verify(data: AccountLoginVerify):
 def edit_account(account_id: int, data: AccountUpdate):
     account = update_account(
         account_id,
-        data.dict(),
+        data.dict(exclude_unset=True),
     )
 
     if not account:
@@ -2498,7 +2513,10 @@ def api_create_clone_task(data: CloneTaskCreate):
     task_data = normalize_task_channels(data.dict())
     task_data = validate_clone_task_message_range(task_data)
 
-    task = create_clone_task(task_data)
+    try:
+        task = create_clone_task(task_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     sync_result = sync_clone_task_to_listener_tasks(task)
     legacy_sync_result = sync_clone_task_to_channel_rules(task)
@@ -2518,10 +2536,13 @@ def api_update_clone_task(task_id: int, data: CloneTaskUpdate):
     update_data = normalize_task_channels(data.dict(exclude_unset=True))
     update_data = validate_clone_task_update_message_range(task_id, update_data)
 
-    task = update_clone_task(
-        task_id,
-        update_data,
-    )
+    try:
+        task = update_clone_task(
+            task_id,
+            update_data,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not task:
         return {

@@ -14,13 +14,18 @@ def normalize_username(value):
     if not text:
         return ""
 
-    if text.startswith("@"):
-        return f"@{text[1:].strip().lower()}"
+    normalized = normalize_target_channel(text)
 
-    if text.startswith("-100"):
+    if normalized.startswith("@"):
+        return normalized
+
+    if normalized.startswith("-100"):
         return ""
 
-    return f"@{text.lower()}"
+    if "t.me/" in normalized.lower() or normalized.lower().startswith(("http://", "https://")):
+        return ""
+
+    return f"@{normalized.lower()}"
 
 
 def normalize_channel_data(data):
@@ -153,6 +158,13 @@ def get_channel_collection_status_map(channel_ids):
     result = {channel_id: "未收录" for channel_id in ids}
     db = SessionLocal()
     try:
+        reviewing_ids = db.query(SearchBotChannelSubmission.my_channel_id).filter(
+            SearchBotChannelSubmission.my_channel_id.in_(ids),
+            SearchBotChannelSubmission.review_status == "reviewing",
+        ).distinct().all()
+        for (channel_id,) in reviewing_ids:
+            result[int(channel_id)] = "审核中"
+
         collected_ids = db.query(SearchBotChannelSubmission.my_channel_id).filter(
             SearchBotChannelSubmission.my_channel_id.in_(ids),
             SearchBotChannelSubmission.collection_status == "collected",

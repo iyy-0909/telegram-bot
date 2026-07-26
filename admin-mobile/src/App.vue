@@ -192,7 +192,8 @@
             ['chat_id', compactText(item.chat_id)],
             ['频道类型', compactText(item.channel_type)],
             ['成员数', compactText(item.member_count)],
-            ['创建者', compactText(item.creator_username || item.creator_name || item.creator_user_id)],
+            ['创建人用户名', compactText(item.creator_username)],
+            ['创建人 ID', compactText(item.creator_user_id)],
             ['最后检测', formatDate(item.last_checked_at || item.checked_at)],
             ['克隆状态', compactText(item.clone_status)],
             ['备注', compactText(item.remark)],
@@ -221,6 +222,7 @@
       :support-bots="filteredSupportBots"
       :templates="filteredTemplates"
       :accounts="filteredAccounts"
+      :default-account-setting-id="defaultAccountSettingId"
       :settings="sendSettings"
       :loading="loading"
       :keyword="keyword"
@@ -231,6 +233,7 @@
       @test-bot="testBotAction"
       @test-support="testSupportAction"
       @toggle-account="toggleAccount"
+      @set-default-account="setDefaultAccount"
       @toggle-bot="toggleBot"
       @toggle-support="toggleSupportBot"
       @toggle-template="toggleTemplate"
@@ -301,6 +304,7 @@ import StatusPill from "./components/StatusPill.vue"
 import EmptyState from "./components/EmptyState.vue"
 import MobileSearchBots from "./components/MobileSearchBots.vue"
 import MobileSearchBotCollections from "./components/MobileSearchBotCollections.vue"
+import MobileSettingsPage from "./components/MobileSettingsPage.vue"
 import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
@@ -386,6 +390,7 @@ const uploadingMedia = ref(false)
 const accountLoginVisible = ref(false)
 const accountLoginLoading = ref(false)
 const accountLoginTarget = ref(null)
+const defaultAccountSettingId = ref(null)
 const logLoading = ref(false)
 const logType = ref("listener")
 const logKeyword = ref("")
@@ -432,15 +437,16 @@ const keyword = reactive({
 
 const editTitle = computed(() => {
   const map = {
-    listener: "编辑监听任务",
-    clone: "编辑克隆任务",
-    channel: "编辑频道",
-    bot: "编辑 Bot",
-    support: "编辑客服机器人",
-    template: "编辑内容模板",
-    account: "编辑账号",
+    listener: "监听任务",
+    clone: "克隆任务",
+    channel: "频道",
+    bot: "Bot",
+    support: "客服机器人",
+    template: "内容模板",
+    account: "账号",
   }
-  return map[editType.value] || "编辑"
+  const action = editForm.id ? "编辑" : "新增"
+  return map[editType.value] ? `${action}${map[editType.value]}` : action
 })
 
 const filteredListeners = computed(() => filterItems(listeners.value, keyword.listeners, ["name", "source_channel", "target_channels", "status"]))
@@ -670,10 +676,11 @@ function openEdit(type, row) {
   editVisible.value = true
 }
 
-function openCreate(type) {
+function openCreate(type, templateType = "") {
   editType.value = type
   Object.keys(editForm).forEach((key) => delete editForm[key])
   Object.assign(editForm, defaultForm(type))
+  if (type === "template" && templateType) editForm.type = templateType
   editVisible.value = true
 }
 
@@ -703,7 +710,7 @@ function defaultForm(type) {
       start_message_url: "",
       end_message_url: "",
       target_channels: "[]",
-      account_id: firstAccount.id || 1,
+      account_id: null,
       bot_id: firstBot.id || null,
       single_delay: 3,
       target_delay: 2,
@@ -782,6 +789,10 @@ function defaultForm(type) {
 function payloadFor(type) {
   const data = { ...editForm }
   delete data.prompt_check_after_save
+  if (type === "channel") {
+    data.username = normalizeTelegramUsername(data.username)
+    editForm.username = data.username
+  }
   if (["listener", "clone"].includes(type)) {
     data.target_channels = normalizeJsonList(data.target_channels)
     data.blocked_keywords = normalizeJsonList(data.blocked_keywords)
@@ -850,6 +861,17 @@ function payloadFor(type) {
     delete data.bot_token
   }
   return data
+}
+
+function normalizeTelegramUsername(value) {
+  const text = String(value || "").trim()
+  if (!text) return ""
+
+  const linkMatch = text.match(/^(?:https?:\/\/)?t\.me\/([^/?#]+)/i)
+  const username = linkMatch?.[1] || text.replace(/^@/, "")
+  if (!username || username.startsWith("+") || ["c", "joinchat"].includes(username.toLowerCase())) return text
+
+  return `@${username.toLowerCase()}`
 }
 
 function buildMobileSubscriptionWarning(results) {
@@ -1174,6 +1196,38 @@ function toggleAccount(item) {
   return runAction(() => updateAccount(item.id, { ...item, enabled: !item.enabled }), item.enabled ? "已停用账号" : "已启用账号", loadAccounts)
 }
 
+async function setDefaultAccount(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定将“${item.name || `账号 #${item.id}`}”设为全局默认采集账号？`,
+      "设置默认账号",
+      {
+        confirmButtonText: "设为默认",
+        cancelButtonText: "取消",
+        type: "info",
+      },
+    )
+  } catch (error) {
+    if (error === "cancel" || error === "close") return
+    throw error
+  }
+
+  defaultAccountSettingId.value = item.id
+  try {
+    await updateAccount(item.id, {
+      ...item,
+      enabled: true,
+      is_default: true,
+    })
+    ElMessage.success("全局默认账号已更新")
+    await loadAccounts()
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, "设置默认账号失败"))
+  } finally {
+    defaultAccountSettingId.value = null
+  }
+}
+
 function toggleBot(item) {
   return runAction(() => updateBot(item.id, { ...item, enabled: !item.enabled }), item.enabled ? "已停用 Bot" : "已启用 Bot", loadBots)
 }
@@ -1188,18 +1242,23 @@ function toggleTemplate(item) {
 }
 
 async function saveMobileSendSettings(payload) {
-  await runAction(
-    async () => {
-      const res = await updateSendSettings({
-        global_send_delay: Math.max(Number(payload.global_send_delay) || 0, 0),
-        send_retry_count: Math.max(Number(payload.send_retry_count) || 0, 0),
-        send_retry_delay: Math.max(Number(payload.send_retry_delay) || 0, 0),
-      })
-      sendSettings.value = res.data || sendSettings.value
-    },
-    "系统设置已保存",
-    loadSendSettings,
-  )
+  loading.settings = true
+  try {
+    await runAction(
+      async () => {
+        const res = await updateSendSettings({
+          global_send_delay: Math.max(Number(payload.global_send_delay) || 0, 0),
+          send_retry_count: Math.max(Number(payload.send_retry_count) || 0, 0),
+          send_retry_delay: Math.max(Number(payload.send_retry_delay) || 0, 0),
+        })
+        sendSettings.value = res.data || sendSettings.value
+      },
+      "系统设置已保存",
+      loadSendSettings,
+    )
+  } finally {
+    loading.settings = false
+  }
 }
 
 function normalizeJsonList(value) {
@@ -1483,6 +1542,7 @@ const MorePage = defineComponent({
     supportBots: Array,
     templates: Array,
     accounts: Array,
+    defaultAccountSettingId: Number,
     settings: Object,
     loading: Object,
     keyword: Object,
@@ -1495,6 +1555,7 @@ const MorePage = defineComponent({
     "test-bot",
     "test-support",
     "toggle-account",
+    "set-default-account",
     "toggle-bot",
     "toggle-support",
     "toggle-template",
@@ -1518,6 +1579,25 @@ const MorePage = defineComponent({
           ]),
         ))
       }
+      if (props.page === "settings") {
+        return h("div", [
+          h("div", { class: "search-bar" }, [
+            h(resolve("el-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
+          ]),
+          h("div", { class: "page" }, [
+            h(MobileSettingsPage, {
+              settings: props.settings,
+              templates: props.templates,
+              saving: props.loading?.settings,
+              onSaveSettings: (payload) => emit("save-settings", payload),
+              onCreateTemplate: (type) => emit("create", "template", type),
+              onEditTemplate: (item) => emit("edit", "template", item),
+              onDeleteTemplate: (item) => emit("delete", "template", item),
+              onToggleTemplate: (item) => emit("toggle-template", item),
+            }),
+          ]),
+        ])
+      }
       const config = {
         bots: ["Bot 管理", "搜索 Bot 名称 / username", "bots", props.bots, props.loading?.bots],
         support: ["客服机器人", "搜索名称 / 群 ID / 错误", "support", props.supportBots, props.loading?.support],
@@ -1535,41 +1615,6 @@ const MorePage = defineComponent({
             clearable: true,
           }),
         ]),
-        props.page === "settings"
-          ? h("div", { class: "page" }, [
-            h("article", { class: "data-card settings-editor" }, [
-              h("div", { class: "card-title" }, "发送设置"),
-              h(resolve("el-form"), { labelPosition: "top" }, () => [
-                h(resolve("el-form-item"), { label: "全局发送间隔秒" }, () => h(resolve("el-input-number"), {
-                  modelValue: props.settings?.global_send_delay ?? 3,
-                  min: 0,
-                  controlsPosition: "right",
-                  style: "width:100%",
-                  "onUpdate:modelValue": (value) => { props.settings.global_send_delay = value },
-                })),
-                h(resolve("el-form-item"), { label: "发送异常重试次数" }, () => h(resolve("el-input-number"), {
-                  modelValue: props.settings?.send_retry_count ?? 2,
-                  min: 0,
-                  controlsPosition: "right",
-                  style: "width:100%",
-                  "onUpdate:modelValue": (value) => { props.settings.send_retry_count = value },
-                })),
-                h(resolve("el-form-item"), { label: "重试等待秒" }, () => h(resolve("el-input-number"), {
-                  modelValue: props.settings?.send_retry_delay ?? 5,
-                  min: 0,
-                  controlsPosition: "right",
-                  style: "width:100%",
-                  "onUpdate:modelValue": (value) => { props.settings.send_retry_delay = value },
-                })),
-                h(resolve("el-button"), {
-                  type: "primary",
-                  style: "width:100%",
-                  onClick: () => emit("save-settings", props.settings),
-                }, () => "保存发送设置"),
-              ]),
-            ]),
-          ])
-          : null,
         h("div", { class: "page" }, [
           h("div", { class: "section-head" }, [
             h("div", { class: "section-title" }, config[0]),
@@ -1582,7 +1627,12 @@ const MorePage = defineComponent({
           config[4]
             ? h(resolve("el-skeleton"), { rows: 6, animated: true })
             : config[3]?.length
-              ? h("div", { class: "card-list" }, config[3].map((item) => moreCard(props.page, item, emit)))
+              ? h("div", { class: "card-list" }, config[3].map((item) => moreCard(
+                props.page,
+                item,
+                emit,
+                props.defaultAccountSettingId,
+              )))
               : h(EmptyState, { title: "暂无" + config[0] }),
         ]),
       ])
@@ -1590,7 +1640,7 @@ const MorePage = defineComponent({
   },
 })
 
-function moreCard(type, item, emit) {
+function moreCard(type, item, emit, defaultAccountSettingId = null) {
   if (type === "bots") {
     return h(TaskCard, {
       title: item.name || item.username || `Bot #${item.id}`,
@@ -1666,12 +1716,23 @@ function moreCard(type, item, emit) {
       ["username", item.username],
       ["手机号", item.phone],
       ["启用状态", enabledLabel(item.enabled)],
+      ["默认账号", item.is_default ? "全局默认" : "否"],
       ["Session", item.session_path],
       ["代理", item.proxy],
       ["备注", item.remark],
       ["最后错误", item.last_error],
     ],
   }, () => [
+    item.is_default
+      ? h(resolve("el-tag"), { size: "small", type: "success" }, () => "全局默认")
+      : h(resolve("el-button"), {
+        size: "small",
+        type: "primary",
+        plain: true,
+        disabled: !item.enabled,
+        loading: defaultAccountSettingId === item.id,
+        onClick: () => emit("set-default-account", item),
+      }, () => "设为默认"),
     h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "account", item) }, () => "编辑"),
     h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("login-account", item) }, () => "重新登录"),
     h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-account", item) }, () => item.enabled ? "停用" : "启用"),
@@ -1721,7 +1782,7 @@ const EditForm = defineComponent({
             class: "mobile-steps",
           }, () => sections.map((section) => h(resolve("el-step"), {
             key: section.key,
-            title: section.title,
+            title: mobileStepTitle(section),
           }))),
           h("div", { class: "form-section-panel" }, [
             h("div", { class: "section-title" }, current?.title || "填写信息"),
@@ -1729,7 +1790,10 @@ const EditForm = defineComponent({
             current?.confirm
               ? renderConfirmSummary(props)
               : h(resolve("el-form"), { labelPosition: "top" }, (current?.fields || []).map((field) =>
-                fieldRender(props, emit, field),
+                h(resolve("el-form-item"), {
+                  key: field.key,
+                  label: field.label,
+                }, () => fieldRender(props, emit, field)),
               )),
           ]),
           h("div", { class: "form-actions" }, [
@@ -1771,7 +1835,10 @@ const EditForm = defineComponent({
           }, () => [
             section.tip ? h("div", { class: "section-subtitle form-tip" }, section.tip) : null,
             h(resolve("el-form"), { labelPosition: "top" }, section.fields.map((field) =>
-              fieldRender(props, emit, field),
+              h(resolve("el-form-item"), {
+                key: field.key,
+                label: field.label,
+              }, () => fieldRender(props, emit, field)),
             )),
           ]),
         )),
@@ -1783,6 +1850,20 @@ const EditForm = defineComponent({
     }
   },
 })
+
+function mobileStepTitle(section) {
+  const labels = {
+    channels: "频道",
+    range: "范围",
+    send: "发送",
+    content: "内容",
+    confirm: "确认",
+    basic: "基础",
+    delivery: "分发",
+    advanced: "高级",
+  }
+  return labels[section?.key] || section?.title || ""
+}
 
 const AccountLoginForm = defineComponent({
   props: {
@@ -1986,6 +2067,10 @@ function renderConfirmSummary(props) {
 function formSummaryRows(type, form, props) {
   const botName = optionName(props.bots, form.bot_id)
   const accountName = optionName(props.accounts, form.account_id)
+  const defaultAccountName = optionName(
+    props.accounts,
+    (props.accounts || []).find((item) => item.enabled && item.is_default)?.id,
+  )
   const filterName = optionName(props.templates, form.selected_filter_template_group_id)
   const linkName = optionName(props.templates, form.selected_link_template_group_id)
   const contactName = optionName(props.templates, form.selected_contact_template_group_id)
@@ -2014,6 +2099,7 @@ function formSummaryRows(type, form, props) {
       ["开始链接", form.start_message_url || "从默认位置开始"],
       ["结束链接", form.end_message_url || "到当前最新内容"],
       ["克隆数量", form.clone_limit],
+      ["采集账号", accountName || `${defaultAccountName || "未设置"}（全局默认）`],
       ["分发 Bot", botName],
       ["完成后监听", form.enable_listener ? "开启" : "关闭"],
       ...commonContent,
@@ -2144,6 +2230,12 @@ function formSections(type, isCreate, form) {
       key: "send",
       title: "发送设置",
       fields: [
+        {
+          key: "account_id",
+          label: "采集账号（可选）",
+          input: "account",
+          placeholder: "可留空，使用账号管理中的全局默认账号",
+        },
         { key: "bot_id", label: "分发 Bot", input: "bot" },
         { key: "single_delay", label: "内容间隔分钟", input: "number" },
         { key: "target_delay", label: "目标间隔秒", input: "number" },
@@ -2632,7 +2724,8 @@ function selectOptions(props, inputType) {
     return (props.accounts || []).map((item) => h(resolve("el-option"), {
       key: item.id,
       value: item.id,
-      label: `${item.name || item.username || "账号"}${item.username ? ` / @${String(item.username).replace(/^@/, "")}` : ""}`,
+      label: `${item.name || item.username || "账号"}${item.username ? ` / @${String(item.username).replace(/^@/, "")}` : ""}${item.is_default ? " [全局默认]" : ""}`,
+      disabled: item.enabled === false,
     }))
   }
   const type = inputType.replace("template-", "")

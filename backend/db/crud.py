@@ -314,6 +314,38 @@ def delete_channel_rules_by_clone_task_id(clone_task_id: int):
 # 账号 CRUD
 # =========================
 
+def ensure_default_account_in_session(db):
+    default_account = db.query(Account).filter(
+        Account.enabled == True,
+        Account.is_default == True,
+    ).order_by(Account.id.asc()).first()
+    if default_account:
+        return default_account
+
+    db.query(Account).update(
+        {Account.is_default: False},
+        synchronize_session=False,
+    )
+    default_account = db.query(Account).filter(
+        Account.enabled == True,
+    ).order_by(Account.id.asc()).first()
+    if default_account:
+        default_account.is_default = True
+    return default_account
+
+
+def ensure_default_account():
+    db = SessionLocal()
+    try:
+        account = ensure_default_account_in_session(db)
+        db.commit()
+        if account:
+            db.refresh(account)
+        return account
+    finally:
+        db.close()
+
+
 def get_all_accounts():
     db = SessionLocal()
 
@@ -330,6 +362,7 @@ def create_account(
     username: str = "",
     proxy: str = "",
     remark: str = "",
+    is_default: bool = False,
 ):
     db = SessionLocal()
 
@@ -340,10 +373,19 @@ def create_account(
             session_path=session_path,
             proxy=proxy,
             enabled=True,
+            is_default=bool(is_default),
             remark=remark,
         )
 
+        if account.is_default:
+            db.query(Account).update(
+                {Account.is_default: False},
+                synchronize_session=False,
+            )
+
         db.add(account)
+        db.flush()
+        ensure_default_account_in_session(db)
         db.commit()
         db.refresh(account)
 
@@ -366,7 +408,21 @@ def update_account(account_id: int, data: dict):
         if not account:
             return None
 
+        requested_default = data.get("is_default")
+        if requested_default is True:
+            db.query(Account).filter(Account.id != account_id).update(
+                {Account.is_default: False},
+                synchronize_session=False,
+            )
+            account.is_default = True
+            account.enabled = True
+
         for key, value in data.items():
+            if key == "is_default":
+                if value is False:
+                    account.is_default = False
+                continue
+
             if key == "username":
                 account.username = (value or "").strip().lstrip("@")
                 continue
@@ -374,6 +430,11 @@ def update_account(account_id: int, data: dict):
             if hasattr(account, key):
                 setattr(account, key, value)
 
+        if not account.enabled:
+            account.is_default = False
+
+        db.flush()
+        ensure_default_account_in_session(db)
         db.commit()
         db.refresh(account)
 
@@ -397,6 +458,8 @@ def delete_account(account_id: int):
             return False
 
         db.delete(account)
+        db.flush()
+        ensure_default_account_in_session(db)
         db.commit()
 
         return True

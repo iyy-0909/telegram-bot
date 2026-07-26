@@ -15,8 +15,17 @@
               <el-input v-model="localForm.name" placeholder="例如：杭州频道克隆" />
             </el-form-item>
 
-            <el-form-item label="采集账号">
-              <el-input :model-value="collectorAccountLabel" disabled />
+            <el-form-item label="采集账号（可选）">
+              <div class="account-field">
+                <AccountSelect
+                  v-model="localForm.account_id"
+                  :accounts="props.accounts"
+                  :placeholder="accountPlaceholder"
+                />
+                <div class="field-help">
+                  {{ accountHelp }}
+                </div>
+              </div>
             </el-form-item>
 
             <el-form-item label="开始内容链接">
@@ -199,6 +208,7 @@
 
 <script setup>
 import { computed, reactive, watch } from "vue"
+import AccountSelect from "./AccountSelect.vue"
 import BotSelect from "./BotSelect.vue"
 import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
@@ -231,7 +241,7 @@ const localForm = reactive({
   start_message_url: "",
   end_message_url: "",
   target_channels: "[]",
-  account_id: 1,
+  account_id: null,
   bot_id: null,
   single_delay: 3,
   target_delay: 2,
@@ -276,19 +286,23 @@ const blockedKeywordList = computed({
   },
 })
 
-const collectorAccount = computed(() => (
-  props.accounts.find((account) => account.enabled)
-  || props.accounts[0]
+const defaultAccount = computed(() => (
+  props.accounts.find((account) => account.enabled && account.is_default)
   || null
 ))
 
-const collectorAccountLabel = computed(() => {
-  if (!collectorAccount.value) {
-    return "暂无可用采集账号"
+const accountPlaceholder = computed(() => {
+  if (!defaultAccount.value) {
+    return "可留空，请先在账号管理设置默认账号"
   }
+  return `可留空，默认使用：${defaultAccount.value.name || `账号 #${defaultAccount.value.id}`}`
+})
 
-  const username = collectorAccount.value.username ? ` @${collectorAccount.value.username}` : ""
-  return `${collectorAccount.value.id} - ${collectorAccount.value.name || "采集账号"}${username}`
+const accountHelp = computed(() => {
+  if (!defaultAccount.value) {
+    return "当前没有可用的全局默认账号，留空将无法创建任务。"
+  }
+  return `留空将使用全局默认账号：${defaultAccount.value.name || `账号 #${defaultAccount.value.id}`}（#${defaultAccount.value.id}）。`
 })
 
 watch(
@@ -325,7 +339,7 @@ function submit() {
     target_channels: JSON.stringify(uniqueChannels(parseChannels(localForm.target_channels))),
     start_message_url: (localForm.start_message_url || "").trim(),
     end_message_url: (localForm.end_message_url || "").trim(),
-    account_id: collectorAccount.value?.id || toPositiveNumber(localForm.account_id, 1),
+    account_id: normalizeTemplateId(localForm.account_id),
     bot_id: normalizeBotId(localForm.bot_id),
     single_delay: toPositiveNumber(localForm.single_delay, 3),
     target_delay: toPositiveNumber(localForm.target_delay, 2),
@@ -491,6 +505,17 @@ function updateTemplateField({ key, value }) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.account-field {
+  width: 100%;
+}
+
+.field-help {
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .section-row {

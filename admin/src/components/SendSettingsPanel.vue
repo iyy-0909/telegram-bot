@@ -7,13 +7,13 @@
           <div class="card-subtitle">控制所有任务共享的 Bot API 发送节奏</div>
         </div>
 
-        <el-button type="primary" @click="submit">
+        <el-button type="primary" :loading="saving" @click="submit">
           保存设置
         </el-button>
       </div>
     </template>
 
-    <el-form label-width="180px" class="settings-form">
+    <el-form label-position="top" class="settings-form">
       <el-form-item label="全局发送间隔秒">
         <el-input-number v-model="localForm.global_send_delay" :min="0" :step="1" />
       </el-form-item>
@@ -36,6 +36,10 @@ const props = defineProps({
   settings: {
     type: Object,
     required: true,
+  },
+  saving: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -102,9 +106,8 @@ function submit() {
   color: #909399;
 }
 
-.settings-form {
-  max-width: 520px;
-}
+.settings-form { max-width: 520px; }
+:deep(.el-input-number) { width: 100%; }
 
 @media (max-width: 900px) {
   .card-header {

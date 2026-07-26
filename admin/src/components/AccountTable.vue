@@ -22,10 +22,10 @@
       height="492"
       empty-text="暂无采集账号，请运行 login_account.py 登录或点击新增账号。"
     >
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="name" label="账号名称" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="id" label="ID" width="60" />
+      <el-table-column prop="name" label="账号名称" width="110" show-overflow-tooltip />
 
-      <el-table-column label="Telegram 用户名" min-width="160">
+      <el-table-column label="Telegram 用户名" width="130">
         <template #default="{ row }">
           <CopyText
             v-if="row.username"
@@ -37,49 +37,67 @@
         </template>
       </el-table-column>
 
-      <el-table-column prop="phone" label="手机号" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="session_path" label="Session" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="phone" label="手机号" width="110" show-overflow-tooltip />
+      <el-table-column prop="session_path" label="Session" width="160" show-overflow-tooltip />
 
-      <el-table-column label="启用" width="100">
+      <el-table-column label="默认账号" width="100" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.is_default" type="success" size="small">全局默认</el-tag>
+          <el-button
+            v-else
+            text
+            type="primary"
+            :disabled="!row.enabled"
+            :loading="defaultSettingId === row.id"
+            @click="$emit('set-default', row)"
+          >
+            设为默认
+          </el-button>
+        </template>
+      </el-table-column>
+
+      <el-table-column label="启用" width="80">
         <template #default="{ row }">
           <StatusTag :status="row.enabled ? 'enabled' : 'disabled'" />
         </template>
       </el-table-column>
 
-      <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="remark" label="备注" min-width="100" show-overflow-tooltip />
 
-      <el-table-column label="操作" width="300">
+      <el-table-column label="操作" width="285">
         <template #default="{ row }">
-          <el-button
-            size="small"
-            type="primary"
-            plain
-            @click="$emit('relogin', row)"
-          >
-            重新登录
-          </el-button>
+          <div class="row-actions">
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              @click="$emit('relogin', row)"
+            >
+              重新登录
+            </el-button>
 
-          <el-button
-            size="small"
-            @click="$emit('edit', row)"
-          >
-            编辑
-          </el-button>
+            <el-button
+              size="small"
+              @click="$emit('edit', row)"
+            >
+              编辑
+            </el-button>
 
-          <el-button
-            size="small"
-            @click="toggleAccount(row)"
-          >
-            {{ row.enabled ? "禁用" : "启用" }}
-          </el-button>
+            <el-button
+              size="small"
+              @click="toggleAccount(row)"
+            >
+              {{ row.enabled ? "禁用" : "启用" }}
+            </el-button>
 
-          <el-button
-            size="small"
-            type="danger"
-            @click="$emit('delete', row.id)"
-          >
-            删除
-          </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              @click="$emit('delete', row.id)"
+            >
+              删除
+            </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -99,6 +117,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  defaultSettingId: {
+    type: Number,
+    default: null,
+  },
 })
 
 const emit = defineEmits([
@@ -108,6 +130,7 @@ const emit = defineEmits([
   "edit",
   "delete",
   "toggle",
+  "set-default",
 ])
 
 function formatUsername(username) {
@@ -140,6 +163,13 @@ function toggleAccount(row) {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

@@ -8,12 +8,12 @@
     <el-form label-width="110px">
       <el-form-item label="规则类型">
         <el-select v-model="localForm.type">
-          <el-option label="头部 head" value="head" />
-          <el-option label="正文 body" value="body" />
-          <el-option label="底部 footer" value="footer" />
-          <el-option label="过滤关键词 filter" value="filter" />
-          <el-option label="链接配置 link" value="link" />
-          <el-option label="联系方式删除 contact" value="contact" />
+          <el-option
+            v-for="option in ruleTypeOptions"
+            :key="option.value"
+            :label="`${option.label} ${option.value}`"
+            :value="option.value"
+          />
         </el-select>
       </el-form-item>
 
@@ -157,7 +157,7 @@
         </div>
       </div>
 
-      <el-button v-if="localForm.type !== 'link'" class="add-content-button" @click="addItem">
+      <el-button v-if="!['link', 'contact'].includes(localForm.type)" class="add-content-button" @click="addItem">
         添加一条{{ localForm.type === "filter" ? "关键词组" : "内容" }}
       </el-button>
     </el-form>
@@ -171,6 +171,7 @@
 
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from "vue"
+import { CONTENT_RULE_TYPE_META } from "../config/contentRuleSections"
 
 const props = defineProps({
   visible: Boolean,
@@ -179,6 +180,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(["update:visible", "submit"])
+const ruleTypeOptions = Object.entries(CONTENT_RULE_TYPE_META).map(([value, meta]) => ({ value, label: meta.label }))
 
 let localKeySeed = 1
 

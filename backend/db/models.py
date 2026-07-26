@@ -39,6 +39,7 @@ class Account(Base):
     session_path = Column(String, nullable=False)
     proxy = Column(String, default="")
     enabled = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)
     remark = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -400,6 +401,7 @@ class SearchBotChannelSubmission(Base):
     search_bot_id = Column(Integer, nullable=False, index=True)
     my_channel_id = Column(Integer, nullable=False, index=True)
     account_id = Column(Integer, nullable=True, index=True)
+    manual_account_id = Column(String, default="")
     submit_status = Column(String, default="queued", index=True)
     review_status = Column(String, default="unknown", index=True)
     collection_status = Column(String, default="unknown", index=True)

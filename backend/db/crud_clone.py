@@ -1,15 +1,15 @@
 from db.database import SessionLocal
-from db.models import CloneTask
+from db.models import Account, CloneTask
 
 
 NUMERIC_DEFAULTS = {
-    "account_id": 1,
     "single_delay": 3,
     "album_delay": 8,
     "target_delay": 2,
 }
 
 OPTIONAL_NUMERIC_FIELDS = {
+    "account_id",
     "bot_id",
     "selected_head_template_group_id",
     "selected_body_template_group_id",
@@ -21,6 +21,30 @@ OPTIONAL_NUMERIC_FIELDS = {
     "selected_body_template_id",
     "selected_footer_template_id",
 }
+
+
+def resolve_clone_account_id(db, account_id=None):
+    if account_id not in (None, "", 0):
+        try:
+            requested_id = int(account_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("采集账号格式不正确") from exc
+
+        account = db.query(Account).filter(
+            Account.id == requested_id,
+            Account.enabled == True,
+        ).first()
+        if not account:
+            raise ValueError("所选采集账号不存在或未启用")
+        return account.id
+
+    account = db.query(Account).filter(
+        Account.is_default == True,
+        Account.enabled == True,
+    ).order_by(Account.id.asc()).first()
+    if not account:
+        raise ValueError("未选择采集账号，且账号管理中没有启用的全局默认账号")
+    return account.id
 
 
 def normalize_numeric_fields(data: dict):
@@ -89,6 +113,10 @@ def create_clone_task(data: dict):
 
     try:
         data = normalize_numeric_fields(data)
+        data["account_id"] = resolve_clone_account_id(
+            db,
+            data.get("account_id"),
+        )
         task = CloneTask(**data)
 
         db.add(task)
@@ -113,6 +141,11 @@ def update_clone_task(task_id: int, data: dict):
             return None
 
         data = normalize_numeric_fields(data)
+        if "account_id" in data:
+            data["account_id"] = resolve_clone_account_id(
+                db,
+                data.get("account_id"),
+            )
 
         for key, value in data.items():
             if hasattr(task, key):

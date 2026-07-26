@@ -10,6 +10,7 @@ from telethon.network import ConnectionTcpFull
 
 from config import API_ID, API_HASH
 from db.database import DATABASE_URL, SessionLocal
+from db.crud import ensure_default_account_in_session
 from db.models import Account
 from init_db import init_db
 from utils.proxy_utils import normalize_proxy_for_runtime
@@ -131,6 +132,8 @@ def update_account_record(db, account, *, name, session_path, me):
     account.enabled = True
     if hasattr(account, "updated_at"):
         account.updated_at = datetime.utcnow()
+    db.flush()
+    ensure_default_account_in_session(db)
     db.commit()
     db.refresh(account)
     return account
@@ -147,6 +150,8 @@ def create_account_record(db, *, name, session_path, me):
         remark="",
     )
     db.add(account)
+    db.flush()
+    ensure_default_account_in_session(db)
     db.commit()
     db.refresh(account)
     return account

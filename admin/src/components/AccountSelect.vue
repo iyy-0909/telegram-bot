@@ -54,7 +54,8 @@ const options = computed(() => (
 function accountLabel(account) {
   const username = account.username ? ` @${String(account.username).replace(/^@/, "")}` : ""
   const phone = account.phone ? ` ${account.phone}` : ""
-  return `${account.name || "账号"}${username}${phone} (#${account.id})`
+  const defaultLabel = account.is_default ? " [全局默认]" : ""
+  return `${account.name || "账号"}${username}${phone} (#${account.id})${defaultLabel}`
 }
 </script>
 

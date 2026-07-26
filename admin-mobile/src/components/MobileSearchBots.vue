@@ -21,7 +21,7 @@
               <StatusPill :status="bot.status" />
             </div>
             <dl>
-              <div><dt>月活</dt><dd>{{ bot.monthly_active_users ?? "需手动维护" }}</dd></div>
+              <div><dt>备注</dt><dd :title="bot.remark || '-'">{{ bot.remark || "-" }}</dd></div>
               <div><dt>当前收录</dt><dd>{{ bot.current_channel_count || 0 }}</dd></div>
               <div><dt>拉黑记录</dt><dd>{{ bot.blocked_channel_count || 0 }}</dd></div>
               <div><dt>最后检测</dt><dd>{{ formatDate(bot.last_check_at) }}</dd></div>
@@ -49,6 +49,7 @@
               <div><dt>审核</dt><dd>{{ statusLabel(row.review_status) }}</dd></div>
               <div><dt>收录</dt><dd>{{ statusLabel(row.collection_status) }}</dd></div>
               <div><dt>当前有效</dt><dd>{{ row.is_current ? "是" : "否" }}</dd></div>
+              <div><dt>提交账号</dt><dd>{{ submissionAccountLabel(row) }}</dd></div>
               <div><dt>权限验证</dt><dd>{{ permissionStatusLabel(row.permission_status) }}</dd></div>
               <div><dt>实际权限</dt><dd>{{ adminRightLabels(row.applied_admin_rights || row.admin_rights).join("、") || "最小权限" }}</dd></div>
             </dl>
@@ -69,7 +70,6 @@
         <el-form-item label="机器人名称" prop="name"><el-input v-model="botForm.name" placeholder="例如：上海搜群机器人A" /></el-form-item>
         <el-form-item label="机器人 ID" prop="username"><el-input v-model="botForm.username" placeholder="@jisou 或 https://t.me/jisou" /></el-form-item>
         <el-form-item label="默认操作账号（选填）" prop="account_id"><el-select v-model="botForm.account_id" clearable filterable placeholder="不使用系统添加时可留空"><el-option v-for="account in enabledAccounts" :key="account.id" :label="account.name || account.username || `账号 #${account.id}`" :value="account.id" /></el-select><small>该账号必须拥有目标频道的添加成员和添加管理员权限。</small></el-form-item>
-        <el-form-item label="月活（人工维护）"><el-input-number v-model="botForm.monthly_active_users" :min="0" /></el-form-item>
         <el-form-item label="状态"><el-select v-model="botForm.status"><el-option label="正常" value="enabled" /><el-option label="已停用" value="disabled" /><el-option label="异常" value="error" /></el-select></el-form-item>
         <el-form-item label="备注"><el-input v-model="botForm.remark" type="textarea" :rows="2" placeholder="记录机器人规则或限制" /></el-form-item>
       </el-form>
@@ -115,6 +115,7 @@
             <span>收录 <el-tag size="small" :type="statusType(row.collection_status)">{{ statusLabel(row.collection_status) }}</el-tag></span>
             <span>权限 <el-tag size="small" :type="row.permission_status === 'applied' ? 'success' : 'warning'">{{ permissionStatusLabel(row.permission_status) }}</el-tag></span>
           </div>
+          <div class="submission-account">提交账号：{{ submissionAccountLabel(row) }}</div>
           <div v-if="row.last_error" class="error-line">{{ row.last_error }}</div>
           <div class="icon-actions">
             <el-button circle type="primary" plain aria-label="更新状态" title="更新状态" @click="openStatus(row)"><el-icon><EditPen /></el-icon></el-button>
@@ -142,10 +143,27 @@
     <el-drawer v-model="submitDrawer" direction="btt" size="92%" title="提交频道" destroy-on-close>
       <el-alert type="info" :closable="false" :title="submitForm.submission_mode === 'manual' ? '登记已在 Telegram 手动完成的提交，不执行 Telegram 操作。' : '将搜索机器人添加为频道管理员，并授予下方选择的频道权限。'" />
       <el-form ref="submitFormRef" :model="submitForm" :rules="submitRules" label-position="top" class="drawer-form">
-        <el-form-item label="提交方式"><el-radio-group v-model="submitForm.submission_mode" class="mode-switch"><el-radio-button value="queue">自动添加机器人</el-radio-button><el-radio-button value="manual">手动登记</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item label="提交方式"><el-radio-group v-model="submitForm.submission_mode" class="mode-switch" @change="handleSubmissionModeChange"><el-radio-button value="queue">自动添加机器人</el-radio-button><el-radio-button value="manual">手动登记</el-radio-button></el-radio-group></el-form-item>
         <el-form-item label="我的频道" prop="my_channel_id"><el-select v-model="submitForm.my_channel_id" filterable placeholder="选择频道"><el-option v-for="channel in enabledChannels" :key="channel.id" :label="`${channel.title || channel.username} / ${channel.group_name}`" :value="channel.id" /></el-select></el-form-item>
         <el-form-item label="搜索机器人" prop="search_bot_id"><el-select v-model="submitForm.search_bot_id" filterable placeholder="选择搜索机器人"><el-option v-for="bot in availableBots" :key="bot.id" :label="`${bot.name} / ${bot.username}`" :value="bot.id" /></el-select></el-form-item>
         <el-form-item v-if="submitForm.submission_mode === 'queue'" label="操作账号（选填）"><el-select v-model="submitForm.account_id" clearable filterable placeholder="留空则使用机器人默认操作账号"><el-option v-for="account in enabledAccounts" :key="account.id" :label="account.name || account.username || `账号 #${account.id}`" :value="account.id" /></el-select><small>{{ selectedSubmitBot?.account_id ? `已配置默认操作账号：${selectedSubmitBot.account_name || `#${selectedSubmitBot.account_id}`}` : "请选择拥有目标频道管理权限的账号。" }}</small></el-form-item>
+        <template v-if="submitForm.submission_mode === 'manual'">
+          <el-form-item label="提交收录账号来源">
+            <el-radio-group v-model="manualAccountSource" class="mode-switch" @change="handleManualAccountSourceChange">
+              <el-radio-button value="system" :disabled="!enabledAccounts.length">系统账号</el-radio-button>
+              <el-radio-button value="manual">手动输入 ID</el-radio-button>
+            </el-radio-group>
+            <small>优先选择系统账号；系统中没有时填写 Telegram 数字 ID。</small>
+          </el-form-item>
+          <el-form-item v-if="manualAccountSource === 'system'" label="提交收录账号" prop="account_id">
+            <el-select v-model="submitForm.account_id" clearable filterable placeholder="选择系统账号">
+              <el-option v-for="account in enabledAccounts" :key="account.id" :label="account.name || account.username || `账号 #${account.id}`" :value="account.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else label="系统外账号 ID" prop="manual_account_id">
+            <el-input v-model="submitForm.manual_account_id" inputmode="numeric" maxlength="20" placeholder="例如 5397112677" @input="submitFormRef?.clearValidate('manual_account_id')" />
+          </el-form-item>
+        </template>
         <div class="permission-panel">
           <div class="permission-head">
             <strong>搜索机器人在频道中的权限</strong>
@@ -233,6 +251,7 @@ const pendingSubmitOpen = ref(false)
 const saving = ref(false), submitting = ref(false), savingStatus = ref(false), savingPermissions = ref(false)
 const editingBot = ref(null), editingRecord = ref(null), permissionRecord = ref(null), channelStatusChannel = ref(null)
 const botFormRef = ref(null), submitFormRef = ref(null)
+const manualAccountSource = ref("system")
 const permissionSections = [
   { title: "内容管理", items: [{ key: "post_messages", label: "发布消息" }, { key: "edit_messages", label: "编辑消息" }, { key: "delete_messages", label: "删除消息" }, { key: "pin_messages", label: "置顶消息" }, { key: "post_stories", label: "发布动态" }, { key: "edit_stories", label: "编辑动态" }, { key: "delete_stories", label: "删除动态" }] },
   { title: "频道管理", items: [{ key: "change_info", label: "修改频道信息" }, { key: "invite_users", label: "邀请用户" }, { key: "ban_users", label: "管理用户" }, { key: "manage_call", label: "管理视频聊天" }, { key: "manage_topics", label: "管理话题" }, { key: "manage_direct_messages", label: "管理频道私信" }] },
@@ -241,7 +260,27 @@ const permissionSections = [
 const allPermissionOptions = permissionSections.flatMap((section) => section.items)
 const botForm = reactive(emptyBot()), submitForm = reactive(emptySubmit()), statusForm = reactive({ review_status: "unknown", collection_status: "unknown", block_status: "unknown", is_current: false }), permissionForm = reactive({ account_id: null, admin_rights: emptyAdminRights() })
 const botRules = { name: [{ required: true, message: "请填写机器人名称", trigger: "blur" }], username: [{ required: true, message: "请填写机器人 ID", trigger: "blur" }] }
-const submitRules = { my_channel_id: [{ required: true, message: "请选择频道", trigger: "change" }], search_bot_id: [{ required: true, message: "请选择搜索机器人", trigger: "change" }] }
+const submitRules = {
+  my_channel_id: [{ required: true, message: "请选择频道", trigger: "change" }],
+  search_bot_id: [{ required: true, message: "请选择搜索机器人", trigger: "change" }],
+  account_id: [{
+    validator: (_rule, value, callback) => {
+      if (submitForm.submission_mode === "manual" && manualAccountSource.value === "system" && !value) return callback(new Error("请选择提交收录的系统账号"))
+      callback()
+    },
+    trigger: "change",
+  }],
+  manual_account_id: [{
+    validator: (_rule, value, callback) => {
+      if (submitForm.submission_mode !== "manual" || manualAccountSource.value !== "manual") return callback()
+      const accountId = String(value || "").trim()
+      if (!accountId) return callback(new Error("请填写系统外账号 ID"))
+      if (!/^\d+$/.test(accountId)) return callback(new Error("账号 ID 只能填写数字"))
+      callback()
+    },
+    trigger: "blur",
+  }],
+}
 const enabledAccounts = computed(() => accounts.value.filter((item) => item.enabled !== false))
 const enabledChannels = computed(() => channels.value.filter((item) => item.status !== "disabled" && item.group_name))
 const selectedSubmitBot = computed(() => bots.value.find((item) => Number(item.id) === Number(submitForm.search_bot_id)))
@@ -256,7 +295,7 @@ const visibleAdjustmentPermissionSections = computed(() => permissionSectionsFor
 onMounted(loadAll)
 function emptyBot() { return { name: "", username: "", account_id: null, monthly_active_users: null, status: "enabled", submit_template: "{{channel_link}}", remark: "" } }
 function emptyAdminRights() { return Object.fromEntries(allPermissionOptions.map((item) => [item.key, false])) }
-function emptySubmit() { return { my_channel_id: null, search_bot_id: null, account_id: null, submission_mode: "queue", review_status: "pending", collection_status: "unknown", block_status: "normal", is_current: false, admin_rights: emptyAdminRights() } }
+function emptySubmit() { return { my_channel_id: null, search_bot_id: null, account_id: null, manual_account_id: "", submission_mode: "queue", review_status: "pending", collection_status: "unknown", block_status: "normal", is_current: false, admin_rights: emptyAdminRights() } }
 function applyPermissionPreset(preset) {
   const available = visibleSubmitPermissionSections.value.flatMap((section) => section.items)
   const enabled = preset === "all" ? new Set(available.map((item) => item.key)) : preset === "common" ? new Set(["post_messages", "edit_messages", "delete_messages"].filter((key) => available.some((item) => item.key === key))) : new Set()
@@ -283,7 +322,7 @@ function openBotEdit(bot) { editingBot.value = bot; Object.assign(botForm, { ...
 async function saveBot() { if (!(await botFormRef.value?.validate().catch(() => false))) return; saving.value = true; try { editingBot.value?.id ? await updateSearchBot(editingBot.value.id, botForm) : await createSearchBot(botForm); ElMessage.success("搜索机器人已保存"); botDrawer.value = false; await loadAll() } catch (error) { ElMessage.error(getErrorMessage(error, "保存失败")) } finally { saving.value = false } }
 async function detect(bot) { checkingId.value = bot.id; try { const res = await checkSearchBot(bot.id); res.data.ok ? ElMessage.success(res.data.message) : ElMessage.warning(res.data.message); await loadAll() } catch (error) { ElMessage.error(getErrorMessage(error, "检测失败")) } finally { checkingId.value = null } }
 async function removeBot(bot) { try { await ElMessageBox.confirm(`确定删除“${bot.name}”？已有提交记录时只能停用。`, "删除机器人", { type: "warning" }); await deleteSearchBot(bot.id); ElMessage.success("已删除"); await loadAll() } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(getErrorMessage(error, "删除失败")) } }
-async function openSubmitForChannel(channel) { if (!channel?.id) return; channelStatusChannel.value = channel; if (!bots.value.length || !channels.value.length) await loadAll(); Object.assign(submitForm, emptySubmit(), { my_channel_id: channel.id }); if (channelStatusDrawer.value) { pendingSubmitOpen.value = true; channelStatusDrawer.value = false; return } submitDrawer.value = true }
+async function openSubmitForChannel(channel) { if (!channel?.id) return; channelStatusChannel.value = channel; if (!bots.value.length || !channels.value.length) await loadAll(); Object.assign(submitForm, emptySubmit(), { my_channel_id: channel.id }); resetManualAccountSource(); if (channelStatusDrawer.value) { pendingSubmitOpen.value = true; channelStatusDrawer.value = false; return } submitDrawer.value = true }
 function openPendingSubmit() { if (!pendingSubmitOpen.value) return; pendingSubmitOpen.value = false; submitDrawer.value = true }
 async function openChannelStatus(channel) { if (!channel?.id) return; channelStatusChannel.value = channel; channelStatusDrawer.value = true; await loadAll() }
 async function submitChannel() { if (!(await submitFormRef.value?.validate().catch(() => false))) return; const bot = selectedSubmitBot.value; if (submitForm.submission_mode === "queue" && !submitForm.account_id && !bot?.account_id) return ElMessage.warning("请选择操作账号，或先为机器人配置默认操作账号"); submitting.value = true; try { const response = await createSearchBotSubmission(submitForm); const item = response.data?.item; if (item?.submit_status === "failed") throw new Error(item.last_error || "添加失败"); ElMessage.success(submitForm.submission_mode === "manual" ? "手动提交记录已登记" : "搜索机器人已添加到频道"); submitDrawer.value = false; await loadAll(); channelStatusDrawer.value = true; emit("submission-changed") } catch (error) { ElMessage.error(getErrorMessage(error, "提交失败")) } finally { submitting.value = false } }
@@ -293,6 +332,10 @@ function openPermissionEdit(row) { permissionRecord.value = row; Object.assign(p
 async function savePermissions() { savingPermissions.value = true; try { const response = await updateSearchBotSubmissionPermissions(permissionRecord.value.id, permissionForm); if (!response.data?.ok) throw new Error(response.data?.message || "Telegram 权限回查未通过"); ElMessage.success("频道权限已更新并通过回查"); permissionDrawer.value = false; await loadAll(); emit("submission-changed") } catch (error) { ElMessage.error(getErrorMessage(error, "调整权限失败")) } finally { savingPermissions.value = false } }
 function formatDate(value) { return value ? String(value).replace("T", " ").slice(0, 16) : "-" }
 function statusLabel(status) { return ({ enabled: "正常", disabled: "已停用", error: "异常", queued: "排队中", submitting: "添加中", success: "已添加", manual: "手动登记", failed: "失败", unknown: "未知", pending: "待审核", reviewing: "审核中", approved: "已通过", rejected: "已拒绝", collected: "已收录", not_collected: "未收录", normal: "正常", blocked: "已拉黑" })[status] || status || "未知" }
+function submissionAccountLabel(row) { if (row.account_name) return `${row.account_name}（系统账号）`; if (row.account_id) return `系统账号 #${row.account_id}`; if (row.manual_account_id) return `账号 ID ${row.manual_account_id}`; return "-" }
+function resetManualAccountSource() { manualAccountSource.value = enabledAccounts.value.length ? "system" : "manual"; handleManualAccountSourceChange(manualAccountSource.value) }
+function handleSubmissionModeChange(mode) { if (mode === "manual") return resetManualAccountSource(); submitForm.manual_account_id = "" }
+function handleManualAccountSourceChange(source) { if (source === "system") submitForm.manual_account_id = ""; else submitForm.account_id = null; submitFormRef.value?.clearValidate(["account_id", "manual_account_id"]) }
 function statusType(status) { if (["success", "approved", "collected", "normal"].includes(status)) return "success"; if (["failed", "rejected", "blocked"].includes(status)) return "danger"; if (["queued", "submitting", "pending", "reviewing"].includes(status)) return "warning"; return "info" }
 function permissionStatusLabel(status) { return ({ pending: "待应用", applying: "应用中", applied: "已验证", mismatch: "权限不一致", failed: "应用失败", unverified: "人工登记" })[status] || "未验证" }
 defineExpose({ openSubmitForChannel, openChannelStatus })
@@ -328,6 +371,7 @@ dd { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: no
 .submission-card { padding: 12px; }
 .submission-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
 .submission-status-grid span { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; padding: 7px 8px; background: var(--el-fill-color-lighter); border-radius: 6px; font-size: 12px; }
+.submission-account { margin: -4px 0 12px; color: var(--el-text-color-regular); font-size: 12px; }
 .el-select, .el-input-number { width: 100%; }
 small { display: block; margin-top: 5px; color: var(--el-text-color-secondary); line-height: 1.5; }
 .mode-switch { width: 100%; display: flex; }

@@ -37,13 +37,13 @@
     </div>
 
     <div v-if="activeMenu === 'settings'">
-      <SendSettingsPanel
+      <SystemSettingsWorkspace
         :settings="sendSettings"
-        @submit="saveSendSettings"
-      />
-      <ContentTemplateTable
         :templates="contentTemplates"
         :loading="pageLoading.templates"
+        :settings-saving="settingsSaving"
+        :toggling-id="templateTogglingId"
+        @save-settings="saveSendSettings"
         @add="openAddContentTemplateDialog"
         @edit="openEditContentTemplateDialog"
         @delete="deleteContentTemplateHandler"
@@ -59,12 +59,14 @@
       <AccountTable
         :accounts="accounts"
         :loading="pageLoading.accounts"
+        :default-setting-id="defaultAccountSettingId"
         @add="openAddAccountDialog"
         @login="openAccountLoginDialog"
         @relogin="openAccountReloginDialog"
         @edit="openEditAccountDialog"
         @delete="deleteAccount"
         @toggle="saveAccount"
+        @set-default="setDefaultAccount"
       />
     </div>
 
@@ -201,11 +203,11 @@ import MainLayout from "./layouts/MainLayout.vue"
 import StatusCards from "./components/StatusCards.vue"
 import ListenerTaskTable from "./components/ListenerTaskTable.vue"
 import ListenerTaskDialog from "./components/ListenerTaskDialog.vue"
-import SendSettingsPanel from "./components/SendSettingsPanel.vue"
+import SystemSettingsWorkspace from "./components/SystemSettingsWorkspace.vue"
 import UserGuide from "./components/UserGuide.vue"
 import LoginPanel from "./components/LoginPanel.vue"
-import ContentTemplateTable from "./components/ContentTemplateTable.vue"
 import ContentTemplateDialog from "./components/ContentTemplateDialog.vue"
+import { knownContentRuleTypes } from "./config/contentRuleSections"
 
 import AccountTable from "./components/AccountTable.vue"
 import AccountDialog from "./components/AccountDialog.vue"
@@ -322,6 +324,7 @@ const pageLoading = reactive({
   templates: false,
   runtime: false,
 })
+const defaultAccountSettingId = ref(null)
 
 const MENU_STORAGE_KEY = "clonebot_active_menu"
 const CHANNEL_TAB_STORAGE_KEY = "clonebot_channel_tab"
@@ -381,6 +384,8 @@ const isCloneTaskEdit = ref(false)
 
 const contentTemplateDialogVisible = ref(false)
 const isContentTemplateEdit = ref(false)
+const settingsSaving = ref(false)
+const templateTogglingId = ref(null)
 
 let cloneRefreshTimer = null
 let cloneLogRefreshTimer = null
@@ -437,6 +442,7 @@ const currentAccount = reactive({
   session_path: "",
   proxy: "",
   enabled: true,
+  is_default: false,
   remark: "",
 })
 
@@ -465,7 +471,7 @@ const currentCloneTask = reactive({
   name: "",
   source_channel: "",
   target_channels: "[]",
-  account_id: 1,
+  account_id: null,
   bot_id: null,
   start_message_url: "",
   end_message_url: "",
@@ -794,8 +800,9 @@ function resetCurrentContentTemplate() {
 }
 
 
-function openAddContentTemplateDialog() {
+function openAddContentTemplateDialog(type = "footer") {
   resetCurrentContentTemplate()
+  currentContentTemplate.type = type || "footer"
   isContentTemplateEdit.value = false
   contentTemplateDialogVisible.value = true
 }
@@ -818,7 +825,7 @@ function openEditContentTemplateDialog(row) {
 async function submitContentTemplate(formData) {
   Object.assign(currentContentTemplate, formData)
 
-  if (!["head", "body", "footer", "filter", "link", "contact"].includes(currentContentTemplate.type)) {
+  if (!knownContentRuleTypes().has(currentContentTemplate.type)) {
     ElMessage.error("模板类型不正确")
     return
   }
@@ -859,12 +866,17 @@ async function submitContentTemplate(formData) {
 
 
 async function toggleContentTemplateHandler(row, value) {
-  await updateContentTemplateRule(row.id, {
-    enabled: value,
-  })
+  templateTogglingId.value = row.id
+  try {
+    await updateContentTemplateRule(row.id, {
+      enabled: value,
+    })
 
-  ElMessage.success(value ? "模板已启用" : "模板已停用")
-  await loadContentTemplates()
+    ElMessage.success(value ? "配置已启用" : "配置已停用")
+    await loadContentTemplates()
+  } finally {
+    templateTogglingId.value = null
+  }
 }
 
 
@@ -1571,6 +1583,7 @@ function resetCurrentAccount() {
   currentAccount.session_path = ""
   currentAccount.proxy = ""
   currentAccount.enabled = true
+  currentAccount.is_default = false
   currentAccount.remark = ""
 }
 
@@ -1653,6 +1666,42 @@ async function saveAccount(row) {
   })
 
   ElMessage.success("账号状态已更新")
+}
+
+async function setDefaultAccount(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定将“${row.name || `账号 #${row.id}`}”设为全局默认采集账号？以后新建克隆任务留空时会使用该账号。`,
+      "设置默认账号",
+      {
+        confirmButtonText: "设为默认",
+        cancelButtonText: "取消",
+        type: "info",
+      },
+    )
+  } catch (error) {
+    if (error === "cancel" || error === "close") return
+    throw error
+  }
+
+  defaultAccountSettingId.value = row.id
+  try {
+    await updateAccount(row.id, {
+      name: row.name,
+      username: row.username,
+      session_path: row.session_path,
+      proxy: row.proxy,
+      enabled: true,
+      remark: row.remark,
+      is_default: true,
+    })
+    ElMessage.success("全局默认账号已更新")
+    await loadAccounts()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || "设置默认账号失败")
+  } finally {
+    defaultAccountSettingId.value = null
+  }
 }
 
 
@@ -1894,7 +1943,7 @@ function resetCurrentCloneTask() {
     name: "",
     source_channel: "",
     target_channels: "[]",
-    account_id: 1,
+    account_id: null,
     bot_id: bots.value.find((bot) => bot.enabled)?.id || null,
     start_message_url: "",
     end_message_url: "",
@@ -1944,7 +1993,7 @@ async function openEditCloneTaskDialog(row) {
     name: row.name || "",
     source_channel: row.source_channel || "",
     target_channels: row.target_channels || "[]",
-    account_id: toPositiveNumber(row.account_id, 1),
+    account_id: normalizeTemplateId(row.account_id),
     bot_id: normalizeTemplateId(row.bot_id),
     start_message_url: row.start_message_url || "",
     end_message_url: row.end_message_url || "",
@@ -2057,7 +2106,7 @@ async function submitCloneTask(formData) {
     name: currentCloneTask.name,
     source_channel: sourceChannel,
     target_channels: JSON.stringify(targetChannels),
-    account_id: toPositiveNumber(currentCloneTask.account_id, 1),
+    account_id: normalizeTemplateId(currentCloneTask.account_id),
     bot_id: normalizeTemplateId(currentCloneTask.bot_id),
     start_message_url: (currentCloneTask.start_message_url || "").trim(),
     end_message_url: (currentCloneTask.end_message_url || "").trim(),
@@ -2186,15 +2235,20 @@ async function handleStopCloneTask(id) {
 
 
 async function saveSendSettings(formData) {
-  const payload = {
-    global_send_delay: toNonNegativeNumber(formData.global_send_delay, 3),
-    send_retry_count: toNonNegativeNumber(formData.send_retry_count, 2),
-    send_retry_delay: toNonNegativeNumber(formData.send_retry_delay, 5),
-  }
+  settingsSaving.value = true
+  try {
+    const payload = {
+      global_send_delay: toNonNegativeNumber(formData.global_send_delay, 3),
+      send_retry_count: toNonNegativeNumber(formData.send_retry_count, 2),
+      send_retry_delay: toNonNegativeNumber(formData.send_retry_delay, 5),
+    }
 
-  const res = await updateSendSettings(payload)
-  sendSettings.value = res.data
-  ElMessage.success("发送设置已保存")
+    const res = await updateSendSettings(payload)
+    sendSettings.value = res.data
+    ElMessage.success("发送设置已保存")
+  } finally {
+    settingsSaving.value = false
+  }
 }
 
 

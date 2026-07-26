@@ -156,25 +156,38 @@ async def add_search_bot_as_channel_admin(
         admin_rights,
     )
     already_member = False
-    try:
-        await client(InviteToChannelRequest(channel=channel, users=[bot_entity]))
-    except UserAlreadyParticipantError:
-        already_member = True
-    except Exception as exc:
-        raise PermissionApplicationError(
-            "invite_bot",
-            f"把搜索机器人加入频道失败：{_readable_error(exc)}",
-        ) from exc
-
     already_admin = False
-    try:
-        permissions = await client.get_permissions(channel, bot_entity)
-        already_admin = bool(
-            getattr(permissions, "is_admin", False)
-            or getattr(permissions, "is_creator", False)
-        )
-    except Exception:
-        pass
+
+    if channel_kind == "broadcast":
+        # Telegram 不允许 Bot 作为普通成员进入广播频道，必须直接添加为管理员。
+        try:
+            permissions = await client.get_permissions(channel, bot_entity)
+            already_admin = bool(
+                getattr(permissions, "is_admin", False)
+                or getattr(permissions, "is_creator", False)
+            )
+            already_member = already_admin
+        except Exception:
+            pass
+    else:
+        try:
+            await client(InviteToChannelRequest(channel=channel, users=[bot_entity]))
+        except UserAlreadyParticipantError:
+            already_member = True
+        except Exception as exc:
+            raise PermissionApplicationError(
+                "invite_bot",
+                f"把搜索机器人加入群组失败：{_readable_error(exc)}",
+            ) from exc
+
+        try:
+            permissions = await client.get_permissions(channel, bot_entity)
+            already_admin = bool(
+                getattr(permissions, "is_admin", False)
+                or getattr(permissions, "is_creator", False)
+            )
+        except Exception:
+            pass
 
     try:
         await client(EditAdminRequest(
@@ -184,10 +197,13 @@ async def add_search_bot_as_channel_admin(
             rank="搜索机器人",
         ))
     except Exception as exc:
-        state = "机器人已在频道内" if already_member else "机器人已加入频道"
+        if channel_kind == "broadcast":
+            state = "机器人已是频道管理员，更新权限" if already_admin else "直接添加机器人为频道管理员"
+        else:
+            state = "机器人已在群组内" if already_member else "机器人已加入群组"
         raise PermissionApplicationError(
             "apply_permissions",
-            f"{state}，但设置管理员权限失败：{_readable_error(exc)}",
+            f"{state}失败：{_readable_error(exc)}",
         ) from exc
 
     try:

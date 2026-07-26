@@ -307,10 +307,12 @@ def rebuild_support_customers_without_unique_index(conn):
 
 
 def ensure_defaults():
+    from db.crud import ensure_default_account
     from db.crud_settings import ensure_default_settings
     from db.crud_support import ensure_support_defaults
     from db.crud_templates import ensure_default_contact_rule
 
+    ensure_default_account()
     ensure_default_settings()
     ensure_support_defaults()
     ensure_default_contact_rule()

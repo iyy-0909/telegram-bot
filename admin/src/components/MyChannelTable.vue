@@ -65,6 +65,27 @@
                 <span v-else>-</span>
               </template>
             </el-table-column>
+            <el-table-column label="创建人用户名" min-width="155" show-overflow-tooltip>
+              <template #default="{ row }">
+                <CopyText
+                  v-if="row.can_view_creator && row.creator_username"
+                  :value="row.creator_username"
+                  :text="row.creator_username"
+                  tone="primary"
+                />
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="创建人 ID" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <CopyText
+                  v-if="row.can_view_creator && row.creator_user_id"
+                  :value="row.creator_user_id"
+                  :text="row.creator_user_id"
+                />
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="group_name" label="分组" min-width="120" show-overflow-tooltip />
             <el-table-column label="绑定 Bot" min-width="130" show-overflow-tooltip>
               <template #default="{ row }">
@@ -82,7 +103,7 @@
             </el-table-column>
             <el-table-column prop="collection_status" label="收录状态" min-width="120" show-overflow-tooltip>
               <template #default="{ row }">
-                <el-tag :type="row.collection_status === '已收录' ? 'success' : 'info'" size="small">
+                <el-tag :type="collectionStatusType(row.collection_status)" size="small">
                   {{ row.collection_status || "未收录" }}
                 </el-tag>
               </template>
@@ -218,7 +239,7 @@
           <span>{{ submissionStatusChannel?.username || submissionStatusChannel?.chat_id || "-" }}</span>
         </div>
         <el-tag
-          :type="submissionStatusChannel?.collection_status === '已收录' ? 'success' : 'info'"
+          :type="collectionStatusType(submissionStatusChannel?.collection_status)"
           size="small"
         >
           {{ submissionStatusChannel?.collection_status || "未收录" }}
@@ -246,6 +267,9 @@
               <small>{{ formatDateTime(row.updated_at || row.last_checked_at) }}</small>
             </div>
           </template>
+        </el-table-column>
+        <el-table-column label="提交账号" min-width="155" show-overflow-tooltip>
+          <template #default="{ row }">{{ submissionAccountLabel(row) }}</template>
         </el-table-column>
         <el-table-column label="提交进度" min-width="350">
           <template #default="{ row }">
@@ -308,7 +332,12 @@
           </el-select>
         </el-descriptions-item>
         <el-descriptions-item label="username">
-          <el-input v-model="form.username" class="description-field" placeholder="@channel_username" />
+          <el-input
+            v-model="form.username"
+            class="description-field"
+            placeholder="@channel_username 或 https://t.me/channel_username"
+            @blur="normalizeChannelUsername"
+          />
         </el-descriptions-item>
         <el-descriptions-item label="chat_id">
           <el-input v-model="form.chat_id" class="description-field" placeholder="-100xxxxxxxxxx，可选" />
@@ -656,6 +685,13 @@ function submissionPermissionSummary(rights) {
   return selected.length ? selected.join("、") : "最小权限"
 }
 
+function submissionAccountLabel(row) {
+  if (row.account_name) return `${row.account_name}（系统账号）`
+  if (row.account_id) return `系统账号 #${row.account_id}`
+  if (row.manual_account_id) return `账号 ID ${row.manual_account_id}`
+  return "-"
+}
+
 function effectiveSubmissionRights(row) {
   const actual = row?.applied_admin_rights
   return actual && Object.keys(actual).length ? actual : (row?.admin_rights || {})
@@ -692,6 +728,12 @@ function submissionOverallState(row) {
   if (row.submit_status === "success") return { label: "已提交", type: "info" }
   if (row.submit_status === "manual") return { label: "手动登记", type: "info" }
   return { label: "状态未知", type: "info" }
+}
+
+function collectionStatusType(status) {
+  if (status === "已收录") return "success"
+  if (status === "审核中") return "warning"
+  return "info"
 }
 
 function submissionStatusLabel(status) {
@@ -763,6 +805,8 @@ function openCloneEdit(row) {
 }
 
 async function save() {
+  normalizeChannelUsername()
+
   if (!form.username && !form.chat_id) {
     ElMessage.error("username 和 chat_id 至少填写一个")
     return
@@ -785,6 +829,17 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+function normalizeChannelUsername() {
+  const value = String(form.username || "").trim()
+  if (!value) return
+
+  const linkMatch = value.match(/^(?:https?:\/\/)?t\.me\/([^/?#]+)/i)
+  const username = linkMatch?.[1] || value.replace(/^@/, "")
+  if (!username || username.startsWith("+") || ["c", "joinchat"].includes(username.toLowerCase())) return
+
+  form.username = `@${username.toLowerCase()}`
 }
 
 async function saveClone() {

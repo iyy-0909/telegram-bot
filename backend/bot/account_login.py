@@ -13,6 +13,7 @@ from bot.logger import logger
 from config import API_HASH, API_ID
 from db.database import SessionLocal
 from db.models import Account
+from db.crud import ensure_default_account_in_session
 from utils.proxy_utils import normalize_proxy_for_runtime
 
 
@@ -437,6 +438,8 @@ class AccountLoginManager:
             if hasattr(account, "updated_at"):
                 account.updated_at = datetime.utcnow()
 
+            db.flush()
+            ensure_default_account_in_session(db)
             db.commit()
             db.refresh(account)
             return account
