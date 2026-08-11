@@ -215,6 +215,11 @@
       <MobileSearchBotCollections v-if="channelView === 'collections'" />
     </div>
 
+    <MobileControlAlerts
+      v-else-if="morePage === 'alerts'"
+      @back="morePage = 'menu'"
+    />
+
     <MorePage
       v-else
       :page="morePage"
@@ -305,6 +310,7 @@ import EmptyState from "./components/EmptyState.vue"
 import MobileSearchBots from "./components/MobileSearchBots.vue"
 import MobileSearchBotCollections from "./components/MobileSearchBotCollections.vue"
 import MobileSettingsPage from "./components/MobileSettingsPage.vue"
+import MobileControlAlerts from "./components/MobileControlAlerts.vue"
 import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
@@ -1565,6 +1571,7 @@ const MorePage = defineComponent({
   ],
   setup(props, { emit }) {
     const entries = [
+      ["alerts", "系统告警", "查看错误、警告并在系统内确认"],
       ["bots", "Bot 管理", "测试、启用和维护分发 Bot"],
       ["support", "客服机器人", "查看状态、测试和调整欢迎语"],
       ["settings", "系统设置", "发送设置、联系方式和内容规则模板"],

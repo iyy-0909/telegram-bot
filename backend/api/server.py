@@ -16,7 +16,7 @@ from bot.clone_manager import clone_manager
 from db.crud_bot import get_bot
 from bot.bot_sender import bot_get_me, bot_send_text, request_post
 
-from bot.notifier import notify_text
+from bot.notifier import send_control_alert
 from bot.message_links import parse_message_url
 from bot.clone_send_events import get_clone_send_events
 from bot.listener_events import get_listener_send_events
@@ -28,8 +28,18 @@ from bot.search_bot_submissions import (
     run_search_bot_submission,
     update_search_bot_submission_permissions,
 )
-from bot.listener_auto_catchup import catchup_latest_listener_message
+from bot.listener_auto_catchup import (
+    catchup_latest_listener_message,
+    is_listener_catchup_running,
+    start_listener_catchup_background,
+)
 from bot.listener_catchup import build_listener_catchup_plan
+from db.crud_control_alerts import (
+    acknowledge_ack_alert,
+    acknowledge_all_control_alerts,
+    get_control_alert_stats,
+    list_control_alerts,
+)
 from accounts.manager import account_manager
 from bot.channel_utils import normalize_channel_identifier, normalize_channel_list_json
 from bot.support_bot import (
@@ -2432,17 +2442,49 @@ async def api_listener_catchup_latest(
     background = bool(payload.background) if payload else False
 
     if background:
-        asyncio.create_task(
-            catchup_latest_listener_message(
-                task,
-                force=force,
-                limit=limit,
-            )
+        if is_listener_catchup_running(task.id):
+            return {
+                "ok": False,
+                "message": "该监听任务已有补齐任务正在执行，请勿重复提交",
+                "background": True,
+            }
+
+        targets = parse_listener_targets(task.target_channels)
+        queue_item_id = runtime_queue_state.add_waiting({
+            "source_type": "listener_catchup",
+            "queue_kind": "batch_progress",
+            "task_id": task.id,
+            "task_name": task.name,
+            "source_channel": task.source_channel,
+            "target_channel": ", ".join(targets),
+            "message_type": "批量补齐",
+            "reason": "正在检查可补齐内容",
+            "requested_count": limit,
+            "total_count": 0,
+            "processed_count": 0,
+            "sent_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "progress_text": "0/?",
+        })
+        worker = start_listener_catchup_background(
+            task,
+            force=force,
+            limit=limit,
+            queue_item_id=queue_item_id,
         )
+        if worker is None:
+            runtime_queue_state.cancel(queue_item_id, "已有补齐任务正在执行")
+            return {
+                "ok": False,
+                "message": "该监听任务已有补齐任务正在执行，请勿重复提交",
+                "background": True,
+            }
         return {
             "ok": True,
             "message": "补齐任务已开始，发送进度会显示在首页排队任务列表",
             "background": True,
+            "queue_item_id": queue_item_id,
         }
 
     return await catchup_latest_listener_message(task, force=force, limit=limit)
@@ -2910,6 +2952,53 @@ async def api_test_bot(bot_id: int):
         }
     
 
+@app.get("/api/control-alerts")
+def api_control_alerts(
+    status: str = "all",
+    level: str = "all",
+    module: str = "",
+    q: str = "",
+    limit: int = 100,
+    offset: int = 0,
+):
+    result = list_control_alerts(
+        status=status,
+        level=level,
+        module=module,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "ok": True,
+        **result,
+        "stats": get_control_alert_stats(),
+        "telegram_notifications_enabled": False,
+    }
+
+
+@app.post("/api/control-alerts/acknowledge-all")
+def api_acknowledge_all_control_alerts():
+    count = acknowledge_all_control_alerts("web_admin")
+    return {
+        "ok": True,
+        "message": f"已确认 {count} 条告警",
+        "acknowledged_count": count,
+    }
+
+
+@app.post("/api/control-alerts/{alert_id}/acknowledge")
+def api_acknowledge_control_alert(alert_id: int):
+    alert = acknowledge_ack_alert(alert_id, "web_admin")
+    if not alert:
+        raise HTTPException(status_code=404, detail="告警不存在")
+    return {
+        "ok": True,
+        "message": "告警已确认",
+        "alert": alert,
+    }
+
+
 @app.post("/api/bots/{bot_id}/send-test")
 async def api_bot_send_test(bot_id: int, data: BotSendTestRequest):
     """测试 Bot 是否能发送到目标频道"""
@@ -2948,11 +3037,20 @@ async def api_bot_send_test(bot_id: int, data: BotSendTestRequest):
     
 @app.get("/api/notify/test")
 async def api_notify_test():
-    ok = await notify_text("✅ CloneBot 告警频道测试成功")
+    alert = await send_control_alert(
+        "系统告警测试",
+        "这是一条后台系统告警测试，不会发送到 Telegram。",
+        level="warning",
+        context={
+            "module": "系统告警",
+            "alert_key": "system_alert_test",
+        },
+    )
 
     return {
-        "ok": ok,
-        "message": "sent" if ok else "failed",
+        "ok": bool(alert),
+        "message": "系统测试告警已创建" if alert else "系统测试告警创建失败",
+        "alert": alert,
     }
 
 

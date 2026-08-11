@@ -67,8 +67,8 @@ def notification_priority(event) -> str:
 def format_notification_body(chat_title: str, username: str, text: str, sent_at: datetime) -> str:
     local_time = sent_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     return (
+        f"消息:\n{text}\n\n"
         f"聊天名称:\n{chat_title}\n\n"
         f"用户名:\n{username}\n\n"
-        f"消息:\n{text}\n\n"
         f"时间:\n{local_time}"
     )

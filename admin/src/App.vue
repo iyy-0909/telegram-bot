@@ -74,6 +74,10 @@
       <NotificationSettings />
     </div>
 
+    <div v-if="activeMenu === 'alerts'">
+      <ControlAlertCenter />
+    </div>
+
     <div v-if="activeMenu === 'bots'" class="bot-page">
       <BotTable
         :bots="bots"
@@ -217,6 +221,7 @@ import AccountTable from "./components/AccountTable.vue"
 import AccountDialog from "./components/AccountDialog.vue"
 import AccountLoginDialog from "./components/AccountLoginDialog.vue"
 import NotificationSettings from "./components/NotificationSettings.vue"
+import ControlAlertCenter from "./components/ControlAlertCenter.vue"
 
 import BotTable from "./components/BotTable.vue"
 import BotDialog from "./components/BotDialog.vue"
@@ -338,9 +343,9 @@ const LISTENER_TASK_LOG_STORAGE_KEY = "clonebot_listener_task_logs"
 const CLONE_TASK_LOG_LIMIT = 50
 const LISTENER_TASK_LOG_LIMIT = 50
 const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
-const SEND_LOG_REFRESH_INTERVAL = AUTO_REFRESH_INTERVAL
+const SEND_LOG_REFRESH_INTERVAL = 10 * 1000
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "settings", "guide"]
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "alerts", "settings", "guide"]
 const VALID_CHANNEL_TABS = ["targets", "sources", "collections", "search-bots"]
 
 function getSavedActiveMenu() {
@@ -1364,7 +1369,14 @@ async function checkListenerCatchupHandlerV2Legacy(id) {
     } else {
       ElMessage.warning(catchupData.message || "补齐失败")
     }
-  } catch {
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(
+        error?.response?.data?.message
+          || error?.message
+          || "补齐任务提交失败，请稍后重试",
+      )
+    }
     await loadListenerTaskLogs()
     return
   }
@@ -1442,7 +1454,14 @@ async function checkListenerCatchupHandlerV2(id) {
     } else {
       ElMessage.warning(catchupData.message || "补齐失败")
     }
-  } catch {
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(
+        error?.response?.data?.message
+          || error?.message
+          || "补齐任务提交失败，请稍后重试",
+      )
+    }
     await loadListenerTaskLogs()
     return
   }

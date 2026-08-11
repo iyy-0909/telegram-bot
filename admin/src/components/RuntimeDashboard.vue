@@ -145,6 +145,14 @@
         </el-table-column>
         <el-table-column prop="source_message_id" label="源消息ID" min-width="100" />
         <el-table-column prop="message_type" label="内容类型" min-width="100" />
+        <el-table-column label="进度" min-width="170">
+          <template #default="{ row }">
+            <span v-if="row.queue_kind === 'batch_progress'">
+              {{ formatBatchProgress(row) }}
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" min-width="100">
           <template #default="{ row }">
             <StatusTag :status="row.status" />
@@ -218,6 +226,7 @@ const nowTick = ref(Date.now())
 let tickTimer = null
 let currentPollingTimer = null
 let pollingItemId = ""
+let dashboardRefreshTimer = null
 
 function sourceTypeLabel(value) {
   if (value === "listener_catchup") return "监听补齐"
@@ -270,6 +279,16 @@ function formatCountdown(row) {
   return `${Math.max(seconds, 0)} 秒后`
 }
 
+function formatBatchProgress(row) {
+  const processed = Number(row?.processed_count || 0)
+  const total = Number(row?.total_count || 0)
+  const sent = Number(row?.sent_count || 0)
+  const skipped = Number(row?.skipped_count || 0)
+  const failed = Number(row?.failed_count || 0)
+  const progress = total > 0 ? `${processed}/${total}` : row?.progress_text || "准备中"
+  return `${progress} · 成功 ${sent} · 跳过 ${skipped} · 失败 ${failed}`
+}
+
 function stopCurrentPolling() {
   if (currentPollingTimer) {
     window.clearInterval(currentPollingTimer)
@@ -290,6 +309,10 @@ function startCurrentPolling() {
 }
 
 onMounted(() => {
+  dashboardRefreshTimer = window.setInterval(() => {
+    emit("refresh")
+  }, 5000)
+
   tickTimer = window.setInterval(() => {
     nowTick.value = Date.now()
 
@@ -320,6 +343,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (dashboardRefreshTimer) {
+    window.clearInterval(dashboardRefreshTimer)
+    dashboardRefreshTimer = null
+  }
   if (tickTimer) {
     window.clearInterval(tickTimer)
     tickTimer = null

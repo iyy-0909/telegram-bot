@@ -39,6 +39,7 @@ import {
   Guide,
   House,
   Operation,
+  Warning,
   Setting,
   Switch,
   User,
@@ -67,6 +68,7 @@ const menuItems = [
   ["support", "客服机器人", ChatDotRound],
   ["accounts", "账号管理", User],
   ["notifications", "消息通知", Bell],
+  ["alerts", "系统告警", Warning],
   ["settings", "系统设置", Setting],
   ["guide", "使用教程", Guide],
 ]

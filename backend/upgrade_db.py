@@ -177,6 +177,18 @@ def main():
     cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_support_bot_id ON control_ack_alerts (support_bot_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_last_sent_at ON control_ack_alerts (last_sent_at)")
 
+    for column_name, sql in [
+        ("level", "ALTER TABLE control_ack_alerts ADD COLUMN level VARCHAR DEFAULT 'warning'"),
+        ("task_id", "ALTER TABLE control_ack_alerts ADD COLUMN task_id INTEGER"),
+        ("channel", "ALTER TABLE control_ack_alerts ADD COLUMN channel VARCHAR DEFAULT ''"),
+        ("target", "ALTER TABLE control_ack_alerts ADD COLUMN target VARCHAR DEFAULT ''"),
+        ("bot_name", "ALTER TABLE control_ack_alerts ADD COLUMN bot_name VARCHAR DEFAULT ''"),
+        ("context_json", "ALTER TABLE control_ack_alerts ADD COLUMN context_json TEXT DEFAULT '{}'"),
+    ]:
+        add_column_if_missing(cur, "control_ack_alerts", column_name, sql)
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_level ON control_ack_alerts (level)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_control_ack_alerts_task_id ON control_ack_alerts (task_id)")
+
     add_column_if_missing(
         cur,
         "my_channels",

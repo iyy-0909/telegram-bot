@@ -1,5 +1,6 @@
 from db.database import SessionLocal
 from db.models import ListenerSendEvent
+from db.crud_listener import get_listener_task
 from bot.logger import logger
 from bot.notifier import send_control_alert
 from utils.time_utils import format_app_time
@@ -83,6 +84,23 @@ async def notify_listener_event(event):
     event_type = (event.get("event_type") or event.get("status") or "").strip()
 
     if event_type in LISTENER_CONTROL_NOTIFY_SKIP_TYPES:
+        return False
+
+    task_id = event.get("task_id")
+    task = get_listener_task(task_id) if task_id else None
+    task_running = bool(
+        task
+        and getattr(task, "enabled", False)
+        and str(getattr(task, "status", "") or "").strip().lower() == "running"
+    )
+    if not task_running:
+        logger.info(
+            "监听任务未运行，跳过事件告警"
+            f" | task_id={task_id or '-'}"
+            f" | event_type={event_type or '-'}"
+            f" | enabled={getattr(task, 'enabled', None)}"
+            f" | status={getattr(task, 'status', None)}"
+        )
         return False
 
     detail_lines = [

@@ -43,7 +43,19 @@ class CloneWorkerManager:
         stop_event = asyncio.Event()
         self.stop_events[task_id] = stop_event
 
-        update_clone_task(task_id, {"status": "running"})
+        task = update_clone_task(task_id, {"status": "running"})
+
+        if task:
+            from bot.handlers import reload_handlers
+            from db.crud_listener import sync_clone_task_to_listener_tasks
+
+            listener_sync = sync_clone_task_to_listener_tasks(task)
+            if listener_sync.get("suspended"):
+                reload_handlers()
+                logger.info(
+                    "克隆启动，关联监听已暂停 | "
+                    f"task_id={task_id} | listener_sync={listener_sync}"
+                )
 
         worker = asyncio.create_task(
             self._run(task_id, stop_event)

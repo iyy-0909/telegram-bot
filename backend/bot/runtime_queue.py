@@ -116,6 +116,19 @@ class RuntimeQueueState:
         item.pop("_estimated_send_monotonic", None)
         return item
 
+    def update_waiting(self, item_id, **fields):
+        item = self.waiting.get(item_id)
+        if item is None:
+            return None
+
+        if "estimated_send_remaining_seconds" in fields:
+            self._apply_estimated_send(
+                item,
+                fields.get("estimated_send_remaining_seconds"),
+            )
+        item.update(fields)
+        return item
+
     def update_current(self, **fields):
         if not self.current:
             return None

@@ -202,9 +202,13 @@ async def send_ack_required_alert(alert_key, title, detail="", module="", contex
         detail=detail,
         module=module,
         context=context,
+        level="warning",
     )
     if should_send_now:
-        await notify_ack_alert(alert)
+        logger.warning(
+            "系统告警已创建 | "
+            f"alert_id={alert.get('id')} | module={alert.get('module')} | title={alert.get('title')}"
+        )
     return alert
 
 
@@ -214,18 +218,17 @@ async def resolve_support_bot_alerts(support_bot_id, bot_name=""):
         return 0
 
     name = bot_name or f"ID {support_bot_id}"
-    await notify_text(
-        "\n".join(
-            [
-                "【客服机器人恢复】",
-                f"客服机器人：{name}",
-                f"SupportBot ID：{support_bot_id}",
-                f"时间：{format_app_time()}",
-                f"已自动取消待确认告警：{resolved_count} 条",
-                "",
-                "机器人已重连成功，停止重复提醒。",
-            ]
-        )
+    upsert_ack_alert(
+        alert_key=f"support_bot_recovered:{support_bot_id}",
+        title=f"{name}：机器人已重连成功",
+        detail=f"已自动处理关联告警 {resolved_count} 条。",
+        module="客服机器人",
+        context={
+            "support_bot_id": support_bot_id,
+            "bot_name": name,
+            "recovered_count": resolved_count,
+        },
+        level="info",
     )
     return resolved_count
 
@@ -259,38 +262,24 @@ def start_ack_alert_repeat_worker():
 
 
 async def send_control_alert(title: str, message: str, level: str = "error", context=None):
-    config = control_config()
     level = (level or "error").lower()
-
-    if not should_notify_level(level, config.get("notify_level", "error")):
-        return False
 
     context = context or {}
     key = context.get("alert_key") or f"{title}:{level}:{context.get('task_id')}:{context.get('target')}"
-    if not should_send_alert(key):
-        return False
-
-    lines = [
-        f"【{title}】",
-        f"级别：{level.upper()}",
-        f"时间：{format_app_time()}",
-    ]
-
-    for label, key_name in [
-        ("模块", "module"),
-        ("任务ID", "task_id"),
-        ("频道", "channel"),
-        ("目标", "target"),
-        ("Bot", "bot_name"),
-    ]:
-        value = context.get(key_name)
-        if value not in (None, ""):
-            lines.append(f"{label}：{value}")
-
-    if message:
-        lines.extend(["", "详情：", str(message)[:3000]])
-
-    return await notify_text("\n".join(lines))
+    alert, is_new = upsert_ack_alert(
+        alert_key=key,
+        title=title,
+        detail=str(message or "")[:10000],
+        module=context.get("module") or "系统",
+        context=context,
+        level=level,
+    )
+    if is_new:
+        logger.warning(
+            "系统告警已创建 | "
+            f"alert_id={alert.get('id')} | level={level} | title={title}"
+        )
+    return alert
 
 
 async def notify_error(title: str, detail: str = "", task_id=None, target=None):

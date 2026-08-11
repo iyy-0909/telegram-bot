@@ -32,15 +32,19 @@ ADMIN_RIGHT_FIELDS = (
     "manage_ranks",
 )
 
-_BROADCAST_UNSUPPORTED = {"ban_users", "pin_messages", "manage_topics"}
-_GROUP_UNSUPPORTED = {
+_BROADCAST_UNSUPPORTED = {
+    "pin_messages",
+    "anonymous",
+    "manage_topics",
+    "manage_ranks",
+}
+_MEGAGROUP_UNSUPPORTED = {
     "post_messages",
     "edit_messages",
-    "post_stories",
-    "edit_stories",
-    "delete_stories",
     "manage_direct_messages",
+    "manage_topics",
 }
+_FORUM_UNSUPPORTED = {"post_messages", "edit_messages", "manage_direct_messages"}
 
 
 class PermissionApplicationError(Exception):
@@ -93,13 +97,11 @@ def _channel_kind(channel):
 
 def _applicable_admin_rights(channel, requested):
     kind = _channel_kind(channel)
-    unsupported = (
-        _BROADCAST_UNSUPPORTED
-        if kind == "broadcast"
-        else _GROUP_UNSUPPORTED
-        if kind in {"megagroup", "forum"}
-        else set()
-    )
+    unsupported = {
+        "broadcast": _BROADCAST_UNSUPPORTED,
+        "megagroup": _MEGAGROUP_UNSUPPORTED,
+        "forum": _FORUM_UNSUPPORTED,
+    }.get(kind, set())
     applied = {
         key: enabled and key not in unsupported
         for key, enabled in normalize_admin_rights(requested).items()
@@ -112,7 +114,11 @@ def _applicable_admin_rights(channel, requested):
 
 
 def _build_admin_rights(value):
-    return ChatAdminRights(other=True, **normalize_admin_rights(value))
+    rights = normalize_admin_rights(value)
+    return ChatAdminRights(
+        other=not any(rights.values()),
+        **rights,
+    )
 
 
 def _read_actual_admin_rights(permissions):

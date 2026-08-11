@@ -13,7 +13,7 @@
       </template>
 
       <el-alert
-        title="推荐流程：账号管理 → Bot 管理 → 频道管理 → 搜索机器人 → 系统设置/内容规则 → 克隆任务 → 监听任务 → 云台告警"
+        title="推荐流程：账号管理 → Bot 管理 → 频道管理 → 搜索机器人 → 系统设置/内容规则 → 克隆任务 → 监听任务 → 系统告警"
         type="info"
         show-icon
         :closable="false"
@@ -32,7 +32,8 @@
             <li>搜索机器人：维护搜索机器人，并记录每个频道在不同机器人中的审核、收录和拉黑状态。</li>
             <li>内容模板规则：按 head、body、footer 给内容追加固定或随机文案。</li>
             <li>客服机器人：客户私聊 Bot 后，消息进入客服群话题，客服在 Telegram 群内直接回复。</li>
-            <li>云台 Bot：通过 Telegram 群接收告警，也可以查询和启停任务。</li>
+            <li>系统告警：在后台集中查看错误、警告、恢复记录并确认已读。</li>
+            <li>云台 Bot：保留 Telegram 命令查询和任务控制，不再推送告警。</li>
           </ul>
         </el-collapse-item>
 
@@ -42,7 +43,7 @@
             <li>准备一个或多个官方 Bot，用于向目标频道发送内容。</li>
             <li>把分发 Bot 加入目标频道，并授予发送消息、发送媒体、编辑消息等必要权限。</li>
             <li>如果使用客服机器人，请单独准备客服 Bot，并拉入客服群。</li>
-            <li>如果使用云台告警，请单独准备云台 Bot，不建议和客服 Bot 共用。</li>
+            <li>如需在 Telegram 中执行云台命令，可单独准备云台 Bot；不配置也不影响后台系统告警。</li>
           </ul>
           <p class="guide-tip">
             源频道和目标频道支持 <code>@username</code>、<code>https://t.me/xxx</code>、<code>t.me/xxx</code>
@@ -364,16 +365,18 @@
           </ul>
         </el-collapse-item>
 
-        <el-collapse-item title="13. 云台 Bot 和错误告警" name="control-bot">
+        <el-collapse-item title="13. 系统告警和云台命令" name="control-bot">
           <p>
-            云台 Bot 是运维控制 Bot，用于接收系统告警，也可以在 Telegram 群里执行简单命令。
-            它通过 Docker 根目录的 <code>.env</code> 配置，不在后台页面配置。
+            错误和警告统一进入后台“系统告警”页面，Telegram 不再发送告警或每 10 分钟重复提醒。
+            运营人员可以按状态、级别、模块和关键词筛选，查看详情后标记已读。
           </p>
-          <h4>必须配置</h4>
+          <h4>云台命令（可选）</h4>
+          <p>云台 Bot 仅用于在 Telegram 群里执行简单命令，通过 Docker 根目录的 <code>.env</code> 配置。</p>
           <ul>
             <li><code>CONTROL_BOT_TOKEN</code>：云台 Bot Token。</li>
             <li><code>CONTROL_CHAT_ID</code>：云台群 ID。</li>
             <li><code>CONTROL_ADMIN_IDS</code>：允许执行命令的 Telegram 数字用户 ID，多个用英文逗号分隔。</li>
+            <li><code>CONTROL_ALERTS_ENABLED=false</code>：线上建议明确关闭旧 Telegram 告警出口。</li>
           </ul>
           <h4>常用命令</h4>
           <ul>

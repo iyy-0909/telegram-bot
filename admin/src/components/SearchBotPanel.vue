@@ -516,19 +516,20 @@ function applyPermissionPreset(preset) {
   const enabled = preset === "all"
     ? new Set(availableOptions.map((item) => item.key))
     : preset === "common"
-      ? new Set(["post_messages", "edit_messages", "delete_messages"])
+      ? new Set(commonPermissionKeys(availableOptions))
       : new Set()
   Object.assign(submitForm.admin_rights, emptyAdminRights())
   for (const key of enabled) submitForm.admin_rights[key] = true
 }
 function permissionSectionsFor(channelType) {
   const type = String(channelType || "").toLowerCase()
+  const isForum = type.includes("forum")
   const isGroup = ["group", "supergroup", "megagroup", "forum"].some((value) => type.includes(value))
   const isBroadcast = !isGroup && ["channel", "broadcast"].some((value) => type.includes(value))
   const unsupported = isGroup
-    ? new Set(["post_messages", "edit_messages", "post_stories", "edit_stories", "delete_stories", "manage_direct_messages"])
+    ? new Set(["post_messages", "edit_messages", "manage_direct_messages", ...(isForum ? [] : ["manage_topics"])])
     : isBroadcast
-      ? new Set(["ban_users", "pin_messages", "manage_topics"])
+      ? new Set(["pin_messages", "anonymous", "manage_topics", "manage_ranks"])
       : new Set()
   return permissionSections
     .map((section) => ({ ...section, items: section.items.filter((item) => !unsupported.has(item.key)) }))
@@ -539,10 +540,17 @@ function applyAdjustmentPreset(preset) {
   const enabled = preset === "all"
     ? new Set(availableOptions.map((item) => item.key))
     : preset === "common"
-      ? new Set(["post_messages", "edit_messages", "delete_messages"].filter((key) => availableOptions.some((item) => item.key === key)))
+      ? new Set(commonPermissionKeys(availableOptions))
       : new Set()
   Object.assign(permissionForm.admin_rights, emptyAdminRights())
   for (const key of enabled) permissionForm.admin_rights[key] = true
+}
+function commonPermissionKeys(options) {
+  const available = new Set(options.map((item) => item.key))
+  const preferred = available.has("post_messages")
+    ? ["post_messages", "edit_messages", "delete_messages"]
+    : ["delete_messages", "ban_users", "invite_users"]
+  return preferred.filter((key) => available.has(key))
 }
 function adminRightLabels(rights) {
   const value = rights && typeof rights === "object" ? rights : {}

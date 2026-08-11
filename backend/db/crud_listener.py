@@ -242,6 +242,31 @@ def sync_clone_task_to_listener_tasks(clone_task):
     db = SessionLocal()
 
     try:
+        listener_requested = bool(getattr(clone_task, "enable_listener", False))
+        clone_status = str(getattr(clone_task, "status", "") or "").strip().lower()
+
+        if listener_requested and clone_status != "done":
+            now = datetime.utcnow()
+            suspended = (
+                db.query(ListenerTask)
+                .filter(ListenerTask.clone_task_id == clone_task.id)
+                .update(
+                    {
+                        ListenerTask.enabled: False,
+                        ListenerTask.status: "waiting_clone",
+                        ListenerTask.updated_at: now,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            return {
+                "ok": True,
+                "message": "listener waits for clone completion",
+                "created": 0,
+                "suspended": suspended,
+            }
+
         old_task_ids = [
             row.id
             for row in db.query(ListenerTask.id)
@@ -258,7 +283,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
             ListenerTask.clone_task_id == clone_task.id
         ).delete(synchronize_session=False)
 
-        if not getattr(clone_task, "enable_listener", False):
+        if not listener_requested:
             db.commit()
             return {
                 "ok": True,

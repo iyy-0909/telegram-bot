@@ -12,6 +12,18 @@ export function getRuntimeDashboard() {
   return http.get("/api/runtime/dashboard")
 }
 
+export function getControlAlerts(params = {}) {
+  return http.get("/api/control-alerts", { params })
+}
+
+export function acknowledgeControlAlert(id) {
+  return http.post(`/api/control-alerts/${id}/acknowledge`)
+}
+
+export function acknowledgeAllControlAlerts() {
+  return http.post("/api/control-alerts/acknowledge-all")
+}
+
 export function getSendSettings() {
   return http.get("/api/settings/send")
 }

@@ -13,11 +13,11 @@ from db.models import MyChannel, SearchBot, SearchBotChannelSubmission
 
 
 class FakeEntity:
-    def __init__(self, *, bot=False, broadcast=False, megagroup=False):
+    def __init__(self, *, bot=False, broadcast=False, megagroup=False, forum=False):
         self.bot = bot
         self.broadcast = broadcast
         self.megagroup = megagroup
-        self.forum = False
+        self.forum = forum
 
 
 class FakeParticipant:
@@ -50,6 +50,30 @@ class FakeClient:
     async def __call__(self, request):
         self.requests.append(request)
         if isinstance(request, EditAdminRequest):
+            specific_rights = [
+                field
+                for field in (
+                    "change_info",
+                    "post_messages",
+                    "edit_messages",
+                    "delete_messages",
+                    "ban_users",
+                    "invite_users",
+                    "pin_messages",
+                    "add_admins",
+                    "anonymous",
+                    "manage_call",
+                    "manage_topics",
+                    "post_stories",
+                    "edit_stories",
+                    "delete_stories",
+                    "manage_direct_messages",
+                    "manage_ranks",
+                )
+                if getattr(request.admin_rights, field, False)
+            ]
+            if request.admin_rights.other and specific_rights:
+                raise ValueError("wrong rights combination")
             self.applied_rights = request.admin_rights
         return True
 
@@ -62,13 +86,27 @@ class SearchBotSubmissionTests(unittest.IsolatedAsyncioTestCase):
             client,
             "@target_channel",
             "@bot_search",
-            {"post_messages": True},
+            {
+                "post_messages": True,
+                "ban_users": True,
+                "pin_messages": True,
+                "anonymous": True,
+                "manage_topics": True,
+                "manage_ranks": True,
+            },
         )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["channel_kind"], "broadcast")
         self.assertFalse(any(isinstance(item, InviteToChannelRequest) for item in client.requests))
         self.assertTrue(any(isinstance(item, EditAdminRequest) for item in client.requests))
+        self.assertTrue(result["applicable_rights"]["ban_users"])
+        self.assertEqual(
+            set(result["ignored_rights"]),
+            {"pin_messages", "anonymous", "manage_topics", "manage_ranks"},
+        )
+        edit_request = next(item for item in client.requests if isinstance(item, EditAdminRequest))
+        self.assertFalse(edit_request.admin_rights.other)
 
     async def test_megagroup_keeps_invite_then_promote_flow(self):
         client = FakeClient(FakeEntity(megagroup=True))
@@ -83,6 +121,25 @@ class SearchBotSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertIsInstance(client.requests[0], InviteToChannelRequest)
         self.assertIsInstance(client.requests[1], EditAdminRequest)
+
+    async def test_forum_allows_topic_and_story_permissions(self):
+        client = FakeClient(FakeEntity(megagroup=True, forum=True))
+
+        result = await add_search_bot_as_channel_admin(
+            client,
+            "@target_forum",
+            "@bot_search",
+            {
+                "manage_topics": True,
+                "post_stories": True,
+                "post_messages": True,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["applicable_rights"]["manage_topics"])
+        self.assertTrue(result["applicable_rights"]["post_stories"])
+        self.assertFalse(result["applicable_rights"]["post_messages"])
 
 
 class ManualSubmissionAccountTests(unittest.TestCase):

@@ -8,7 +8,6 @@ from bot.handlers import register_handlers
 from bot.logger import logger
 from bot.support_bot import start_support_polling
 from bot.control_bot import start_control_polling
-from bot.notifier import start_ack_alert_repeat_worker
 from bot.listener_health import start_listener_health_worker
 from notification import start_notification_service
 from init_db import init_db
@@ -49,7 +48,6 @@ async def main():
     asyncio.create_task(send_worker())
     start_support_polling()
     start_control_polling()
-    start_ack_alert_repeat_worker()
     start_listener_health_worker()
 
     await start_api()

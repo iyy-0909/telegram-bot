@@ -5,7 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from notification.config import NotificationConfig
-from notification.formatter import message_summary, notification_priority
+from notification.formatter import (
+    format_notification_body,
+    message_summary,
+    notification_priority,
+)
 from notification.mute import is_muted_until
 from notification.ntfy_client import (
     NtfyClient,
@@ -58,6 +62,22 @@ def make_config(*, enabled=True, only_unmuted=True):
 
 
 class NotificationFormatterTests(unittest.TestCase):
+    def test_notification_body_uses_message_first_layout(self):
+        body = format_notification_body(
+            chat_title="Clindy Huang",
+            username="@clindy",
+            text="介绍一下？",
+            sent_at=datetime(2026, 7, 27, 6, 59, 10, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            body,
+            "消息:\n介绍一下？\n\n"
+            "聊天名称:\nClindy Huang\n\n"
+            "用户名:\n@clindy\n\n"
+            "时间:\n2026-07-27 14:59:10",
+        )
+
     def test_photo_with_caption(self):
         message = SimpleNamespace(
             photo=object(),
