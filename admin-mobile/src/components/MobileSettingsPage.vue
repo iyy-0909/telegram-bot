@@ -21,6 +21,23 @@
       </el-form>
     </section>
 
+    <section class="settings-section">
+      <div class="section-head">
+        <div><h2>AI 内容改写</h2><p>密钥不会重新显示；留空保存不会覆盖已配置密钥。</p></div>
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="默认改写提示词"><el-input v-model="aiForm.default_rewrite_prompt" type="textarea" :rows="8" placeholder="任务没有自定义提示词时使用；支持 {{content}} 和 {{max_chars}}。" /></el-form-item>
+        <div class="prompt-help">任务中的自定义提示词会覆盖此默认值。</div>
+        <template v-for="provider in providerList" :key="provider.key">
+          <div class="provider-title"><strong>{{ provider.title }}</strong><el-tag :type="configured(provider.key) ? 'success' : 'info'">{{ configured(provider.key) ? '已配置' : '未配置' }}</el-tag></div>
+          <el-form-item label="API Key"><el-input v-model="aiForm[`${provider.key}_api_key`]" type="password" show-password :placeholder="configured(provider.key) ? '留空保持当前密钥' : `输入 ${provider.title} API Key`" autocomplete="new-password" /></el-form-item>
+          <el-form-item label="默认模型"><el-input v-model="aiForm[`${provider.key}_model`]" :placeholder="provider.defaultModel" /></el-form-item>
+          <el-popconfirm title="确定清除已保存的密钥吗？" @confirm="clearKey(provider.key)"><template #reference><el-button plain type="danger" :disabled="!configured(provider.key)">清除密钥</el-button></template></el-popconfirm>
+        </template>
+        <el-button type="primary" class="full-button ai-save" :loading="saving" @click="saveAi">保存 AI 配置</el-button>
+      </el-form>
+    </section>
+
     <el-collapse v-model="openSections" class="settings-collapse">
       <el-collapse-item
         v-for="section in visibleSections"
@@ -82,11 +99,12 @@ import { Delete, Edit, Plus } from "@element-plus/icons-vue"
 
 const props = defineProps({
   settings: { type: Object, required: true },
+  aiSettings: { type: Object, default: () => ({ providers: {} }) },
   templates: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(["save-settings", "create-template", "edit-template", "delete-template", "toggle-template"])
+const emit = defineEmits(["save-settings", "save-ai-settings", "create-template", "edit-template", "delete-template", "toggle-template"])
 
 const sectionRegistry = [
   { key: "contact", title: "联系方式配置", subtitle: "手机号、链接、用户名和关键词删除", types: ["contact"] },
@@ -100,6 +118,8 @@ const sendForm = reactive({
   send_retry_count: 2,
   send_retry_delay: 5,
 })
+const providerList = [{ key: "grok", title: "Grok（xAI）", defaultModel: "grok-4.6" }, { key: "deepseek", title: "DeepSeek", defaultModel: "deepseek-v4-flash" }]
+const aiForm = reactive({ grok_api_key: "", grok_model: "grok-4.6", deepseek_api_key: "", deepseek_model: "deepseek-v4-flash", default_rewrite_prompt: "" })
 const openSections = ref(["contact"])
 const activeTypes = reactive(Object.fromEntries(sectionRegistry.map((section) => [section.key, section.types[0]])))
 
@@ -112,6 +132,26 @@ watch(
   },
   { immediate: true, deep: true },
 )
+
+watch(() => props.aiSettings, (settings) => {
+  for (const provider of providerList) {
+    aiForm[`${provider.key}_api_key`] = ""
+    aiForm[`${provider.key}_model`] = settings?.providers?.[provider.key]?.model || provider.defaultModel
+  }
+  aiForm.default_rewrite_prompt = settings?.default_rewrite_prompt || ""
+}, { immediate: true, deep: true })
+
+function configured(key) { return Boolean(props.aiSettings?.providers?.[key]?.configured) }
+function saveAi() {
+  emit("save-ai-settings", {
+    grok_api_key: aiForm.grok_api_key || undefined,
+    grok_model: aiForm.grok_model.trim() || "grok-4.6",
+    deepseek_api_key: aiForm.deepseek_api_key || undefined,
+    deepseek_model: aiForm.deepseek_model.trim() || "deepseek-v4-flash",
+    default_rewrite_prompt: aiForm.default_rewrite_prompt.trim(),
+  })
+}
+function clearKey(key) { emit("save-ai-settings", { [`clear_${key}_api_key`]: true }) }
 
 const visibleSections = computed(() => {
   const known = new Set(sectionRegistry.flatMap((section) => section.types))
@@ -175,6 +215,9 @@ function nonNegative(value, fallback) {
 .section-head h2 { margin: 0; font-size: 16px; }
 .section-head p { margin: 4px 0 14px; color: var(--el-text-color-secondary); font-size: 12px; }
 .full-button, :deep(.el-input-number) { width: 100%; }
+.provider-title { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 8px; }
+.ai-save { margin-top: 14px; }
+.prompt-help { margin: -6px 0 12px; color: var(--el-text-color-secondary); font-size: 12px; }
 .settings-collapse { border: 1px solid var(--el-border-color-light); border-radius: 8px; background: var(--el-bg-color); overflow: hidden; }
 :deep(.el-collapse-item__header) { min-height: 58px; height: auto; padding: 8px 14px; line-height: 1.35; }
 :deep(.el-collapse-item__content) { padding: 0 12px 14px; }

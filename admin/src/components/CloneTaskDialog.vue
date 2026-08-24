@@ -177,6 +177,29 @@
       </section>
 
       <section class="form-section">
+        <div class="section-title">AI 改写</div>
+        <div class="switch-row">
+          <span>启用 AI 改写</span>
+          <el-switch v-model="localForm.ai_rewrite_enabled" />
+        </div>
+        <template v-if="localForm.ai_rewrite_enabled">
+          <div class="field-help">先执行现有过滤和联系方式清理，再调用所选模型；未配置密钥或调用失败时按下方策略处理。</div>
+          <div class="form-grid two ai-grid">
+            <el-form-item label="模型供应商"><el-select v-model="localForm.ai_rewrite_provider"><el-option label="Grok（xAI）" value="grok" /><el-option label="DeepSeek" value="deepseek" /></el-select></el-form-item>
+            <el-form-item label="模型名称（可选）"><el-input v-model="localForm.ai_rewrite_model" :placeholder="localForm.ai_rewrite_provider === 'deepseek' ? '默认 deepseek-v4-flash' : '默认 grok-4.6'" /></el-form-item>
+            <el-form-item label="最大输出字数"><el-input-number v-model="localForm.ai_rewrite_max_chars" :min="100" :max="4000" /></el-form-item>
+            <el-form-item label="调用失败时"><el-select v-model="localForm.ai_rewrite_failure_mode"><el-option label="发送清洗后的原文" value="fallback" /><el-option label="跳过本条内容" value="skip" /></el-select></el-form-item>
+          </div>
+          <el-form-item label="改写比例">
+            <AiRewriteRatioField v-model="localForm.ai_rewrite_ratio" />
+          </el-form-item>
+          <el-form-item label="改写提示词">
+            <AiPromptSelect v-model="localForm.ai_prompt_template_id" :prompts="aiPrompts" />
+          </el-form-item>
+        </template>
+      </section>
+
+      <section class="form-section">
         <TemplateRulePanel
           :values="localForm"
           :templates="templates"
@@ -209,6 +232,8 @@
 <script setup>
 import { computed, reactive, watch } from "vue"
 import AccountSelect from "./AccountSelect.vue"
+import AiPromptSelect from "./AiPromptSelect.vue"
+import AiRewriteRatioField from "./AiRewriteRatioField.vue"
 import BotSelect from "./BotSelect.vue"
 import ChannelSelect from "./ChannelSelect.vue"
 import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
@@ -227,6 +252,10 @@ const props = defineProps({
     default: () => [],
   },
   templates: {
+    type: Array,
+    default: () => [],
+  },
+  aiPrompts: {
     type: Array,
     default: () => [],
   },
@@ -254,6 +283,7 @@ const localForm = reactive({
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
+  footer_leading_blank_line: true,
   selected_head_template_group_id: null,
   selected_body_template_group_id: null,
   selected_footer_template_group_id: null,
@@ -266,6 +296,14 @@ const localForm = reactive({
   status: "idle",
   last_message_id: 0,
   remove_contact_lines: true,
+  ai_rewrite_enabled: false,
+  ai_rewrite_provider: "grok",
+  ai_rewrite_model: "",
+  ai_rewrite_prompt: "",
+  ai_prompt_template_id: null,
+  ai_rewrite_max_chars: 800,
+  ai_rewrite_ratio: 70,
+  ai_rewrite_failure_mode: "fallback",
 })
 
 const targetChannelValues = computed({
@@ -317,6 +355,7 @@ watch(
       use_random_head: val.use_random_head ?? false,
       use_random_body: val.use_random_body ?? false,
       use_random_footer: val.use_random_footer ?? false,
+      footer_leading_blank_line: val.footer_leading_blank_line ?? true,
       selected_head_template_group_id: normalizeTemplateId(val.selected_head_template_group_id),
       selected_body_template_group_id: normalizeTemplateId(val.selected_body_template_group_id),
       selected_footer_template_group_id: normalizeTemplateId(val.selected_footer_template_group_id),
@@ -327,6 +366,14 @@ watch(
       selected_footer_template_id: normalizeTemplateId(val.selected_footer_template_id),
       selected_filter_template_group_id: normalizeTemplateId(val.selected_filter_template_group_id),
       filter_qr_code: val.filter_qr_code ?? true,
+      ai_rewrite_enabled: val.ai_rewrite_enabled ?? false,
+      ai_rewrite_provider: val.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+      ai_rewrite_model: val.ai_rewrite_model || "",
+      ai_rewrite_prompt: val.ai_rewrite_prompt || "",
+      ai_prompt_template_id: normalizeTemplateId(val.ai_prompt_template_id),
+      ai_rewrite_max_chars: toBoundedNumber(val.ai_rewrite_max_chars, 800, 100, 4000),
+      ai_rewrite_ratio: toBoundedNumber(val.ai_rewrite_ratio, 70, 0, 100),
+      ai_rewrite_failure_mode: val.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
     })
   },
   { immediate: true, deep: true },
@@ -346,6 +393,14 @@ function submit() {
     blocked_keywords: normalizeJsonArrayString(localForm.blocked_keywords),
     footer: "",
     filter_qr_code: localForm.filter_qr_code,
+    ai_rewrite_enabled: Boolean(localForm.ai_rewrite_enabled),
+    ai_rewrite_provider: localForm.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+    ai_rewrite_model: (localForm.ai_rewrite_model || "").trim(),
+    ai_rewrite_prompt: "",
+    ai_prompt_template_id: normalizeTemplateId(localForm.ai_prompt_template_id),
+    ai_rewrite_max_chars: toBoundedNumber(localForm.ai_rewrite_max_chars, 800, 100, 4000),
+    ai_rewrite_ratio: toBoundedNumber(localForm.ai_rewrite_ratio, 70, 0, 100),
+    ai_rewrite_failure_mode: localForm.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
     selected_filter_template_group_id: normalizeTemplateId(localForm.selected_filter_template_group_id),
     selected_link_template_group_id: normalizeTemplateId(localForm.selected_link_template_group_id),
     selected_contact_template_group_id: normalizeTemplateId(localForm.selected_contact_template_group_id),
@@ -493,6 +548,12 @@ function toPositiveNumber(value, fallback) {
   return Math.floor(numberValue)
 }
 
+function toBoundedNumber(value, fallback, min, max) {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(numberValue)))
+}
+
 function updateTemplateField({ key, value }) {
   if (Object.prototype.hasOwnProperty.call(localForm, key)) {
     localForm[key] = value
@@ -586,7 +647,30 @@ function updateTemplateField({ key, value }) {
   color: #303133;
 }
 
+.ai-grid { margin-top: 10px; }
+
+:global(.task-dialog) {
+  max-width: calc(100vw - 32px);
+}
+
+:global(.task-dialog .el-dialog__body) {
+  max-height: min(70vh, 720px);
+  overflow: auto;
+}
+
 @media (max-width: 900px) {
+  :global(.task-dialog) {
+    width: calc(100vw - 24px) !important;
+    margin: 12px auto !important;
+  }
+
+  :global(.task-dialog .el-dialog__header),
+  :global(.task-dialog .el-dialog__body),
+  :global(.task-dialog .el-dialog__footer) {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
   .section-row,
   .form-grid.two,
   .form-grid.four {

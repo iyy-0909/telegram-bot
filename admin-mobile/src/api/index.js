@@ -32,6 +32,14 @@ export function updateSendSettings(data) {
   return http.put("/api/settings/send", data)
 }
 
+export function getAiSettings() {
+  return http.get("/api/settings/ai")
+}
+
+export function updateAiSettings(data) {
+  return http.put("/api/settings/ai", data)
+}
+
 export function getListenerTasks() {
   return http.get("/api/listener-tasks")
 }

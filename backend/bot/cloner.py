@@ -10,8 +10,16 @@ from db.crud_sent import (
     is_album_sent,
     mark_message_sent,
 )
-from bot.content_processor import get_message_text, process_content
-from bot.entity_formatter import format_prepared_text
+from bot.content_processor import (
+    compose_content_templates_html,
+    get_message_text,
+    process_content_async,
+)
+from bot.entity_formatter import (
+    format_prepared_text,
+    html_to_plain_text,
+    restore_source_links_as_html,
+)
 from bot.message_links import build_message_url, parse_message_url
 from bot.clone_send_events import add_clone_send_event
 from bot.handlers import reload_handlers
@@ -352,11 +360,36 @@ async def send_to_targets(
                 )
 
                 target_prepared = dict(prepared)
-                target_formatted_text = (
-                    formatted_text
-                    if isinstance(text, dict)
-                    else format_prepared_text(source_payload, text, task=task, target=target)
-                )
+                if isinstance(text, dict):
+                    target_formatted_text = dict(formatted_text)
+                    if target_formatted_text.get("parse_mode"):
+                        content_html = target_formatted_text.get("content_html")
+                        restored_html = restore_source_links_as_html(
+                            source_payload,
+                            content_html
+                            if content_html is not None
+                            else target_formatted_text.get("html_text")
+                            or target_formatted_text.get("text")
+                            or "",
+                            task=task,
+                            target=target,
+                        )
+                        restored_html = compose_content_templates_html(
+                            target_formatted_text,
+                            restored_html,
+                        )
+                        target_formatted_text["text"] = restored_html
+                        target_formatted_text["html_text"] = restored_html
+                        target_formatted_text["plain_text"] = html_to_plain_text(
+                            restored_html
+                        )
+                else:
+                    target_formatted_text = format_prepared_text(
+                        source_payload,
+                        text,
+                        task=task,
+                        target=target,
+                    )
                 target_send_text = target_formatted_text.get("text") or ""
                 target_prepared["text"] = target_send_text
                 target_prepared["plain_text"] = (
@@ -572,6 +605,13 @@ async def clone_task(task, stop_event=None):
     client = account_manager.get_client(task.account_id)
 
     if not client:
+        logger.info(
+            f"克隆任务按需加载采集账号 | task_id={task.id} | account_id={task.account_id}"
+        )
+        loaded = await account_manager.load_account(task.account_id)
+        client = account_manager.get_client(task.account_id) if loaded else None
+
+    if not client:
         message = (
             "克隆失败：账号不存在\n"
             f"任务ID：{task.id}\n"
@@ -758,7 +798,7 @@ async def clone_task(task, stop_event=None):
                         continue
 
                     raw_text = get_message_text(message)
-                    result = process_content(raw_text, latest_task)
+                    result = await process_content_async(raw_text, latest_task)
 
                     if result.get("blocked"):
                         update_clone_progress(task.id, message_id)
@@ -835,7 +875,7 @@ async def clone_task(task, stop_event=None):
                         continue
 
                     raw_text = get_album_text(album_messages)
-                    result = process_content(raw_text, latest_task)
+                    result = await process_content_async(raw_text, latest_task)
 
                     if result.get("blocked"):
                         update_clone_progress(task.id, max_id)

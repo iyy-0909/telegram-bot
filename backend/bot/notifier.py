@@ -283,6 +283,7 @@ async def send_control_alert(title: str, message: str, level: str = "error", con
 
 
 async def notify_error(title: str, detail: str = "", task_id=None, target=None):
+    task_type = "clone" if task_id and "克隆" in str(title or "") else ""
     return await send_control_alert(
         title=title,
         message=detail,
@@ -290,6 +291,8 @@ async def notify_error(title: str, detail: str = "", task_id=None, target=None):
         context={
             "task_id": task_id,
             "target": target,
+            "task_type": task_type,
+            "module": task_type or "系统",
         },
     )
 
@@ -302,5 +305,7 @@ async def notify_task_event(title: str, task_id=None, task_name="", detail=""):
         context={
             "task_id": task_id,
             "task_name": task_name,
+            "task_type": "clone",
+            "module": "clone",
         },
     )

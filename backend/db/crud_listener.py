@@ -20,9 +20,18 @@ DEFAULT_TASK_VALUES = {
     "footer": "",
     "remove_contact_lines": True,
     "filter_qr_code": True,
+    "ai_rewrite_enabled": False,
+    "ai_rewrite_provider": "grok",
+    "ai_rewrite_model": "",
+    "ai_rewrite_prompt": "",
+    "ai_prompt_template_id": None,
+    "ai_rewrite_max_chars": 800,
+    "ai_rewrite_ratio": 70,
+    "ai_rewrite_failure_mode": "fallback",
     "use_random_head": False,
     "use_random_body": False,
     "use_random_footer": False,
+    "footer_leading_blank_line": True,
     "selected_head_template_group_id": None,
     "selected_body_template_group_id": None,
     "selected_footer_template_group_id": None,
@@ -62,7 +71,7 @@ def normalize_task_data(data):
     for key, default in DEFAULT_TASK_VALUES.items():
         value = data.get(key, default)
 
-        if key in ("name", "source_channel", "footer", "last_error"):
+        if key in ("name", "source_channel", "footer", "last_error", "ai_rewrite_prompt", "ai_rewrite_failure_mode", "ai_rewrite_provider", "ai_rewrite_model"):
             value = str(value or "").strip()
 
         if key in ("target_channels", "blocked_keywords", "listen_required_keywords", "replace_words"):
@@ -70,14 +79,40 @@ def normalize_task_data(data):
                 value = json.dumps(value, ensure_ascii=False)
             value = value or default
 
-        if key in ("account_id", "album_wait_seconds"):
+        if key in ("account_id", "album_wait_seconds", "ai_rewrite_max_chars"):
             try:
                 value = int(value or default)
             except (TypeError, ValueError):
                 value = default
             value = max(value, 1)
 
+        if key == "ai_rewrite_max_chars":
+            value = min(value, 4000)
+
+        if key == "ai_rewrite_ratio":
+            try:
+                value = int(default if value is None else value)
+            except (TypeError, ValueError):
+                value = default
+            value = max(0, min(value, 100))
+
+        if key == "ai_rewrite_failure_mode" and value not in ("fallback", "skip"):
+            value = "fallback"
+
+        if key == "ai_rewrite_provider" and value not in ("grok", "deepseek"):
+            value = "grok"
+
         if key == "bot_id":
+            if value in ("", 0):
+                value = None
+            elif value is not None:
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    value = None
+                value = value if value and value > 0 else None
+
+        if key == "ai_prompt_template_id":
             if value in ("", 0):
                 value = None
             elif value is not None:
@@ -315,9 +350,20 @@ def sync_clone_task_to_listener_tasks(clone_task):
             footer=clone_task.footer or "",
             remove_contact_lines=getattr(clone_task, "remove_contact_lines", True),
             filter_qr_code=getattr(clone_task, "filter_qr_code", True),
+            ai_rewrite_enabled=getattr(clone_task, "ai_rewrite_enabled", False),
+            ai_rewrite_provider=getattr(clone_task, "ai_rewrite_provider", "grok") or "grok",
+            ai_rewrite_model=getattr(clone_task, "ai_rewrite_model", "") or "",
+            ai_rewrite_prompt=getattr(clone_task, "ai_rewrite_prompt", "") or "",
+            ai_prompt_template_id=getattr(clone_task, "ai_prompt_template_id", None),
+            ai_rewrite_max_chars=getattr(clone_task, "ai_rewrite_max_chars", 800) or 800,
+            ai_rewrite_ratio=getattr(clone_task, "ai_rewrite_ratio", 70),
+            ai_rewrite_failure_mode=getattr(clone_task, "ai_rewrite_failure_mode", "fallback") or "fallback",
             use_random_head=getattr(clone_task, "use_random_head", False),
             use_random_body=getattr(clone_task, "use_random_body", False),
             use_random_footer=getattr(clone_task, "use_random_footer", False),
+            footer_leading_blank_line=(
+                getattr(clone_task, "footer_leading_blank_line", True) is not False
+            ),
             selected_head_template_group_id=getattr(clone_task, "selected_head_template_group_id", None),
             selected_body_template_group_id=getattr(clone_task, "selected_body_template_group_id", None),
             selected_footer_template_group_id=getattr(clone_task, "selected_footer_template_group_id", None),

@@ -83,9 +83,19 @@ from db.crud_clone import (
     delete_clone_task,
 )
 
+from db.crud_ai_prompts import (
+    create_ai_prompt,
+    delete_ai_prompt,
+    list_ai_prompts,
+    set_default_ai_prompt,
+    update_ai_prompt,
+)
+
 from db.crud_settings import (
     ensure_default_settings,
+    get_ai_settings,
     get_send_settings,
+    update_ai_settings,
     update_send_settings,
 )
 from db.crud_notification import (
@@ -266,9 +276,18 @@ class ListenerTaskCreate(BaseModel):
     footer: str = ""
     remove_contact_lines: bool = True
     filter_qr_code: bool = True
+    ai_rewrite_enabled: bool = False
+    ai_rewrite_provider: str = "grok"
+    ai_rewrite_model: str = ""
+    ai_rewrite_prompt: str = ""
+    ai_prompt_template_id: Optional[int] = None
+    ai_rewrite_max_chars: int = 800
+    ai_rewrite_ratio: int = 70
+    ai_rewrite_failure_mode: str = "fallback"
     use_random_head: bool = False
     use_random_body: bool = False
     use_random_footer: bool = False
+    footer_leading_blank_line: bool = True
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
@@ -295,9 +314,18 @@ class ListenerTaskUpdate(BaseModel):
     footer: Optional[str] = None
     remove_contact_lines: Optional[bool] = None
     filter_qr_code: Optional[bool] = None
+    ai_rewrite_enabled: Optional[bool] = None
+    ai_rewrite_provider: Optional[str] = None
+    ai_rewrite_model: Optional[str] = None
+    ai_rewrite_prompt: Optional[str] = None
+    ai_prompt_template_id: Optional[int] = None
+    ai_rewrite_max_chars: Optional[int] = None
+    ai_rewrite_ratio: Optional[int] = None
+    ai_rewrite_failure_mode: Optional[str] = None
     use_random_head: Optional[bool] = None
     use_random_body: Optional[bool] = None
     use_random_footer: Optional[bool] = None
+    footer_leading_blank_line: Optional[bool] = None
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
@@ -410,11 +438,20 @@ class CloneTaskCreate(BaseModel):
 
     remove_contact_lines: bool = True
     filter_qr_code: bool = True
+    ai_rewrite_enabled: bool = False
+    ai_rewrite_provider: str = "grok"
+    ai_rewrite_model: str = ""
+    ai_rewrite_prompt: str = ""
+    ai_prompt_template_id: Optional[int] = None
+    ai_rewrite_max_chars: int = 800
+    ai_rewrite_ratio: int = 70
+    ai_rewrite_failure_mode: str = "fallback"
     enable_listener: bool = False
 
     use_random_head: bool = False
     use_random_body: bool = False
     use_random_footer: bool = False
+    footer_leading_blank_line: bool = True
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
@@ -446,11 +483,20 @@ class CloneTaskUpdate(BaseModel):
 
     remove_contact_lines: Optional[bool] = None
     filter_qr_code: Optional[bool] = None
+    ai_rewrite_enabled: Optional[bool] = None
+    ai_rewrite_provider: Optional[str] = None
+    ai_rewrite_model: Optional[str] = None
+    ai_rewrite_prompt: Optional[str] = None
+    ai_prompt_template_id: Optional[int] = None
+    ai_rewrite_max_chars: Optional[int] = None
+    ai_rewrite_ratio: Optional[int] = None
+    ai_rewrite_failure_mode: Optional[str] = None
     enable_listener: Optional[bool] = None
 
     use_random_head: Optional[bool] = None
     use_random_body: Optional[bool] = None
     use_random_footer: Optional[bool] = None
+    footer_leading_blank_line: Optional[bool] = None
     selected_head_template_group_id: Optional[int] = None
     selected_body_template_group_id: Optional[int] = None
     selected_footer_template_group_id: Optional[int] = None
@@ -573,6 +619,30 @@ class SendSettingsUpdate(BaseModel):
     global_send_delay: Optional[int] = None
     send_retry_count: Optional[int] = None
     send_retry_delay: Optional[int] = None
+
+
+class AiSettingsUpdate(BaseModel):
+    grok_api_key: Optional[str] = None
+    deepseek_api_key: Optional[str] = None
+    clear_grok_api_key: bool = False
+    clear_deepseek_api_key: bool = False
+    grok_model: Optional[str] = None
+    deepseek_model: Optional[str] = None
+    default_rewrite_prompt: Optional[str] = None
+
+
+class AiPromptCreate(BaseModel):
+    name: str
+    content: str
+    is_default: bool = False
+    enabled: bool = True
+
+
+class AiPromptUpdate(BaseModel):
+    name: Optional[str] = None
+    content: Optional[str] = None
+    is_default: Optional[bool] = None
+    enabled: Optional[bool] = None
 
 
 class BotSendTestRequest(BaseModel):
@@ -730,10 +800,21 @@ def clone_task_to_dict(task):
         "footer": task.footer,
         "remove_contact_lines": getattr(task, "remove_contact_lines", True),
         "filter_qr_code": getattr(task, "filter_qr_code", True),
+        "ai_rewrite_enabled": getattr(task, "ai_rewrite_enabled", False),
+        "ai_rewrite_provider": getattr(task, "ai_rewrite_provider", "grok") or "grok",
+        "ai_rewrite_model": getattr(task, "ai_rewrite_model", "") or "",
+        "ai_rewrite_prompt": getattr(task, "ai_rewrite_prompt", "") or "",
+        "ai_prompt_template_id": getattr(task, "ai_prompt_template_id", None),
+        "ai_rewrite_max_chars": getattr(task, "ai_rewrite_max_chars", 800) or 800,
+        "ai_rewrite_ratio": getattr(task, "ai_rewrite_ratio", 70),
+        "ai_rewrite_failure_mode": getattr(task, "ai_rewrite_failure_mode", "fallback") or "fallback",
         "enable_listener": getattr(task, "enable_listener", False),
         "use_random_head": getattr(task, "use_random_head", False),
         "use_random_body": getattr(task, "use_random_body", False),
         "use_random_footer": getattr(task, "use_random_footer", False),
+        "footer_leading_blank_line": (
+            getattr(task, "footer_leading_blank_line", True) is not False
+        ),
         "selected_head_template_group_id": getattr(task, "selected_head_template_group_id", None),
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
@@ -949,9 +1030,20 @@ def listener_task_to_dict(task):
         "footer": task.footer,
         "remove_contact_lines": task.remove_contact_lines,
         "filter_qr_code": getattr(task, "filter_qr_code", True),
+        "ai_rewrite_enabled": getattr(task, "ai_rewrite_enabled", False),
+        "ai_rewrite_provider": getattr(task, "ai_rewrite_provider", "grok") or "grok",
+        "ai_rewrite_model": getattr(task, "ai_rewrite_model", "") or "",
+        "ai_rewrite_prompt": getattr(task, "ai_rewrite_prompt", "") or "",
+        "ai_prompt_template_id": getattr(task, "ai_prompt_template_id", None),
+        "ai_rewrite_max_chars": getattr(task, "ai_rewrite_max_chars", 800) or 800,
+        "ai_rewrite_ratio": getattr(task, "ai_rewrite_ratio", 70),
+        "ai_rewrite_failure_mode": getattr(task, "ai_rewrite_failure_mode", "fallback") or "fallback",
         "use_random_head": getattr(task, "use_random_head", False),
         "use_random_body": getattr(task, "use_random_body", False),
         "use_random_footer": getattr(task, "use_random_footer", False),
+        "footer_leading_blank_line": (
+            getattr(task, "footer_leading_blank_line", True) is not False
+        ),
         "selected_head_template_group_id": getattr(task, "selected_head_template_group_id", None),
         "selected_body_template_group_id": getattr(task, "selected_body_template_group_id", None),
         "selected_footer_template_group_id": getattr(task, "selected_footer_template_group_id", None),
@@ -2813,6 +2905,59 @@ def api_get_send_settings():
 @app.put("/api/settings/send")
 def api_update_send_settings(data: SendSettingsUpdate):
     return update_send_settings(data.dict(exclude_unset=True))
+
+
+@app.get("/api/settings/ai")
+def api_get_ai_settings():
+    return get_ai_settings()
+
+
+@app.put("/api/settings/ai")
+def api_update_ai_settings(data: AiSettingsUpdate):
+    return update_ai_settings(data.dict(exclude_unset=True))
+
+
+@app.get("/api/ai/prompts")
+def api_list_ai_prompts():
+    return list_ai_prompts()
+
+
+@app.post("/api/ai/prompts")
+def api_create_ai_prompt(data: AiPromptCreate):
+    try:
+        return create_ai_prompt(data.dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/ai/prompts/{prompt_id}")
+def api_update_ai_prompt(prompt_id: int, data: AiPromptUpdate):
+    try:
+        return update_ai_prompt(prompt_id, data.dict(exclude_unset=True))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/ai/prompts/{prompt_id}/default")
+def api_set_default_ai_prompt(prompt_id: int):
+    try:
+        return set_default_ai_prompt(prompt_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/ai/prompts/{prompt_id}")
+def api_delete_ai_prompt(prompt_id: int):
+    try:
+        return delete_ai_prompt(prompt_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # =========================

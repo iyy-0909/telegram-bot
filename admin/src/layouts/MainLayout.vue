@@ -38,6 +38,7 @@ import {
   Grid,
   Guide,
   House,
+  MagicStick,
   Operation,
   Warning,
   Setting,
@@ -69,6 +70,7 @@ const menuItems = [
   ["accounts", "账号管理", User],
   ["notifications", "消息通知", Bell],
   ["alerts", "系统告警", Warning],
+  ["ai-settings", "AI 配置", MagicStick],
   ["settings", "系统设置", Setting],
   ["guide", "使用教程", Guide],
 ]

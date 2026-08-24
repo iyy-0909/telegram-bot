@@ -85,6 +85,8 @@
         height="492"
         empty-text="当前筛选条件下没有告警。"
         row-key="id"
+        :row-class-name="alertRowClass"
+        @row-click="handleRowClick"
       >
         <el-table-column label="时间" width="168">
           <template #default="{ row }">{{ formatTime(row.updated_at || row.created_at) }}</template>
@@ -115,16 +117,23 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="178" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button link :icon="View" @click="openDetail(row)">详情</el-button>
+            <el-button
+              v-if="taskType(row)"
+              type="primary"
+              link
+              :icon="Document"
+              @click.stop="openTask(row)"
+            >任务</el-button>
+            <el-button link :icon="View" @click.stop="openDetail(row)">详情</el-button>
             <el-button
               v-if="row.status === 'pending'"
               type="primary"
               link
               :icon="CircleCheck"
               :loading="acknowledgingId === row.id"
-              @click="acknowledge(row)"
+              @click.stop="acknowledge(row)"
             >
               已读
             </el-button>
@@ -177,7 +186,7 @@
 
 <script setup>
 import { onMounted, onUnmounted, reactive, ref } from "vue"
-import { CircleCheck, Refresh, Search, View } from "@element-plus/icons-vue"
+import { CircleCheck, Document, Refresh, Search, View } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
   acknowledgeAllControlAlerts,
@@ -199,6 +208,7 @@ const selectedAlert = ref(null)
 let refreshTimer = null
 
 const filters = reactive({ q: "", status: "pending", level: "all", module: "" })
+const emit = defineEmits(["open-task"])
 
 function errorText(error, fallback) {
   return error?.response?.data?.detail || error?.response?.data?.message || error?.message || fallback
@@ -272,6 +282,33 @@ function openDetail(row) {
   detailVisible.value = true
 }
 
+function taskType(row) {
+  if (!Number(row?.task_id)) return ""
+  const explicitType = String(row.context?.task_type || "").trim().toLowerCase()
+  if (["listener", "clone"].includes(explicitType)) return explicitType
+
+  const module = String(row.module || "").toLowerCase()
+  const title = String(row.title || "")
+  if (module.includes("listener") || module.includes("监听") || title.includes("监听")) return "listener"
+  if (module.includes("clone") || module.includes("克隆") || title.includes("克隆")) return "clone"
+  return ""
+}
+
+function openTask(row) {
+  const type = taskType(row)
+  if (!type) return
+  emit("open-task", { alert: row, taskType: type })
+}
+
+function handleRowClick(row) {
+  if (taskType(row)) openTask(row)
+  else openDetail(row)
+}
+
+function alertRowClass({ row }) {
+  return taskType(row) ? "alert-row--task" : ""
+}
+
 function levelLabel(level) {
   return level === "error" ? "错误" : level === "warning" ? "警告" : "信息"
 }
@@ -322,6 +359,8 @@ onUnmounted(() => {
 .alert-badge--warning, .alert-badge--pending { background: var(--el-color-warning, #e6a23c); }
 .alert-badge--info { background: var(--el-text-color-secondary, #6b7280); }
 .alert-badge--acknowledged { background: var(--el-color-success, #67c23a); }
+:deep(.alert-row--task) { cursor: pointer; }
+:deep(.alert-row--task:hover > td.el-table__cell) { background: var(--el-color-primary-light-9, #ecf5ff) !important; }
 .el-pagination { justify-content: flex-end; margin-top: 14px; }
 .detail-block { margin-top: 16px; }
 .detail-label { margin-bottom: 8px; font-weight: 600; }

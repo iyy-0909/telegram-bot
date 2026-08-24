@@ -372,6 +372,29 @@ def join_content_parts(parts) -> str:
     return compact_blank_lines("\n\n".join(clean_parts))
 
 
+def join_content_template_parts(
+    head: str,
+    content: str,
+    body: str,
+    footer: str,
+    footer_leading_blank_line: bool = True,
+) -> str:
+    """拼接内容模板；Footer 可选择保留空行或紧接上一段。"""
+    content_before_footer = join_content_parts([head, content, body])
+    clean_footer = str(footer or "").strip()
+
+    if not clean_footer:
+        return content_before_footer
+
+    if not content_before_footer:
+        return clean_footer
+
+    separator = "\n\n" if footer_leading_blank_line else "\n"
+    return compact_blank_lines(
+        f"{content_before_footer.rstrip()}{separator}{clean_footer}"
+    )
+
+
 def has_template_html(text: str) -> bool:
     return bool(text and ALLOWED_TEMPLATE_TAG_RE.search(text))
 
@@ -434,26 +457,40 @@ def apply_content_templates(text: str, task) -> str:
         head = get_template_part(task, "head")
         body = get_template_part(task, "body")
         footer = get_template_part(task, "footer")
-        return join_content_parts([head, text, body, footer])
+        return join_content_template_parts(
+            head,
+            text,
+            body,
+            footer,
+            getattr(task, "footer_leading_blank_line", True) is not False,
+        )
     except Exception as e:
         logger.warning(f"内容模板拼接失败，保留原文 | {e}")
         return text or ""
 
 
-def apply_content_templates_with_format(text: str, task):
+def apply_content_templates_with_format(text: str, task, text_is_html: bool = False):
     try:
         head = get_template_part(task, "head")
         body = get_template_part(task, "body")
         footer = get_template_part(task, "footer")
         template_parts = [head, body, footer]
 
-        if any(has_template_html(part) for part in template_parts):
-            html_text = join_content_parts([
-                sanitize_template_html(head),
-                escape(text or ""),
-                sanitize_template_html(body),
-                sanitize_template_html(footer),
-            ])
+        if text_is_html or any(has_template_html(part) for part in template_parts):
+            head_html = sanitize_template_html(head)
+            content_html = sanitize_template_html(text) if text_is_html else escape(text or "")
+            body_html = sanitize_template_html(body)
+            footer_html = sanitize_template_html(footer)
+            footer_leading_blank_line = (
+                getattr(task, "footer_leading_blank_line", True) is not False
+            )
+            html_text = join_content_template_parts(
+                head_html,
+                content_html,
+                body_html,
+                footer_html,
+                footer_leading_blank_line,
+            )
             html_text = trim_to_telegram_limit(html_text)
 
             return {
@@ -461,11 +498,23 @@ def apply_content_templates_with_format(text: str, task):
                 "plain_text": strip_html_tags(html_text),
                 "parse_mode": "HTML",
                 "html_text": html_text,
-                "format_level": "template_html",
+                "format_level": "ai_html" if text_is_html else "template_html",
+                # 发送前只对正文应用原文链接规则，模板会在链接处理后再拼回。
+                "content_html": content_html,
+                "template_head_html": head_html,
+                "template_body_html": body_html,
+                "template_footer_html": footer_html,
+                "footer_leading_blank_line": footer_leading_blank_line,
             }
 
         return {
-            "text": join_content_parts([head, text, body, footer]),
+            "text": join_content_template_parts(
+                head,
+                text,
+                body,
+                footer,
+                getattr(task, "footer_leading_blank_line", True) is not False,
+            ),
         }
 
     except Exception as e:
@@ -473,6 +522,20 @@ def apply_content_templates_with_format(text: str, task):
         return {
             "text": text or "",
         }
+
+
+def compose_content_templates_html(result, content_html: str) -> str:
+    """在正文链接处理完成后拼接模板，避免模板链接被原文链接规则降级。"""
+    if "content_html" not in result:
+        return content_html or ""
+
+    return trim_to_telegram_limit(join_content_template_parts(
+        result.get("template_head_html") or "",
+        content_html or "",
+        result.get("template_body_html") or "",
+        result.get("template_footer_html") or "",
+        result.get("footer_leading_blank_line", True),
+    ))
 
 
 def normalize_collected_text(text: str) -> str:
@@ -488,7 +551,12 @@ def normalize_collected_text(text: str) -> str:
     return text
 
 
-def process_content(raw_text: str, task):
+def has_meaningful_rewrite_input(text: str) -> bool:
+    """Require at least one Chinese character or Latin letter before AI rewrite."""
+    return bool(re.search(r"[A-Za-z\u4e00-\u9fff]", text or ""))
+
+
+def process_content(raw_text: str, task, apply_templates: bool = True):
     text = normalize_collected_text(raw_text or "")
 
     required_keywords = normalize_keyword_items(
@@ -527,7 +595,8 @@ def process_content(raw_text: str, task):
     if matched_keyword:
         return blocked_keyword_result(text, matched_keyword, "before_cleanup")
 
-    if getattr(task, "remove_contact_lines", True):
+    remove_contact_content = bool(getattr(task, "remove_contact_lines", True))
+    if remove_contact_content:
         before_contact_cleanup = text
         contact_rule_config = get_contact_rule_config(
             getattr(task, "selected_contact_template_group_id", None)
@@ -537,9 +606,12 @@ def process_content(raw_text: str, task):
     else:
         contact_cleanup_changed = False
 
-    before_url_cleanup = text
-    text = remove_standalone_url_lines(text)
-    url_cleanup_changed = text != before_url_cleanup
+    if remove_contact_content:
+        before_url_cleanup = text
+        text = remove_standalone_url_lines(text)
+        url_cleanup_changed = text != before_url_cleanup
+    else:
+        url_cleanup_changed = False
 
     matched_keyword = find_blocked_keyword(text, blocked_keywords)
     if matched_keyword:
@@ -576,6 +648,9 @@ def process_content(raw_text: str, task):
             ),
         }
 
+    if not apply_templates:
+        return {"blocked": False, "text": text}
+
     template_result = apply_content_templates_with_format(text, task)
     text = template_result.get("text") or ""
     # Old footer function is intentionally disabled.
@@ -588,8 +663,101 @@ def process_content(raw_text: str, task):
         "text": text,
     }
 
-    for key in ("plain_text", "parse_mode", "html_text", "format_level"):
-        if template_result.get(key):
+    for key in (
+        "plain_text",
+        "parse_mode",
+        "html_text",
+        "format_level",
+        "content_html",
+        "template_head_html",
+        "template_body_html",
+        "template_footer_html",
+        "footer_leading_blank_line",
+    ):
+        if key in template_result and (
+            key == "footer_leading_blank_line" or template_result.get(key)
+        ):
             result[key] = template_result.get(key)
 
     return result
+
+
+async def process_content_async(raw_text: str, task):
+    """固定执行顺序：基础内容处理 -> Head/Body/Footer 模板规则 -> AI 改写。"""
+    # 第一阶段只做过滤、联系方式、链接和替换词等基础处理。
+    result = process_content(raw_text, task, apply_templates=False)
+    if result.get("blocked"):
+        return result
+
+    from bot.grok_rewriter import is_rewrite_enabled, rewrite_text
+
+    # 第二阶段先追加模板，让 AI 能对完整的最终文案结构进行改写。
+    template_result = apply_content_templates_with_format(
+        result.get("text") or "",
+        task,
+    )
+    templated_text = template_result.get("text") or ""
+    result["text"] = templated_text
+    for key in (
+        "plain_text",
+        "parse_mode",
+        "html_text",
+        "format_level",
+        "content_html",
+        "template_head_html",
+        "template_body_html",
+        "template_footer_html",
+        "footer_leading_blank_line",
+    ):
+        if key in template_result and (
+            key == "footer_leading_blank_line" or template_result.get(key)
+        ):
+            result[key] = template_result.get(key)
+
+    # 第三阶段让 AI 接收已经追加模板的完整内容。AI 成功后，模板不再重复追加。
+    if not is_rewrite_enabled(task):
+        if not template_result.get("parse_mode"):
+            result["text"] = trim_to_telegram_limit(templated_text)
+        return result
+
+    if not has_meaningful_rewrite_input(strip_html_tags(templated_text)):
+        return {
+            "blocked": True,
+            "text": "",
+            "reason": "empty_after_process",
+            "filter_detail": "内容仅包含数字、符号或表情，已跳过 AI 改写",
+        }
+
+    rewritten, error = await rewrite_text(task, templated_text)
+    if error:
+        if getattr(task, "ai_rewrite_failure_mode", "fallback") == "skip":
+            return {
+                "blocked": True,
+                "text": templated_text,
+                "reason": "ai_rewrite_failed",
+                "filter_detail": error,
+            }
+        result["ai_rewrite_error"] = error
+        if not template_result.get("parse_mode"):
+            result["text"] = trim_to_telegram_limit(templated_text)
+        return result
+
+    if not rewritten.strip():
+        return {
+            "blocked": True,
+            "text": "",
+            "reason": "empty_after_process",
+            "filter_detail": "AI 判定没有可发布内容，已跳过",
+            "ai_rewritten": True,
+        }
+
+    final_html = trim_to_telegram_limit(sanitize_template_html(rewritten))
+    return {
+        "blocked": False,
+        "text": final_html,
+        "plain_text": strip_html_tags(final_html),
+        "parse_mode": "HTML",
+        "html_text": final_html,
+        "format_level": "ai_html",
+        "ai_rewritten": True,
+    }

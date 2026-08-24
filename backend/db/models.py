@@ -89,11 +89,20 @@ class CloneTask(Base):
     footer = Column(Text, default="")
     remove_contact_lines = Column(Boolean, default=True)
     filter_qr_code = Column(Boolean, default=True)
+    ai_rewrite_enabled = Column(Boolean, default=False)
+    ai_rewrite_provider = Column(String, default="grok")
+    ai_rewrite_model = Column(String, default="")
+    ai_rewrite_prompt = Column(Text, default="")
+    ai_prompt_template_id = Column(Integer, nullable=True, index=True)
+    ai_rewrite_max_chars = Column(Integer, default=800)
+    ai_rewrite_ratio = Column(Integer, default=70)
+    ai_rewrite_failure_mode = Column(String, default="fallback")
     enabled = Column(Boolean, default=True)
 
     use_random_head = Column(Boolean, default=False)
     use_random_body = Column(Boolean, default=False)
     use_random_footer = Column(Boolean, default=False)
+    footer_leading_blank_line = Column(Boolean, default=True)
     selected_head_template_group_id = Column(Integer, nullable=True)
     selected_body_template_group_id = Column(Integer, nullable=True)
     selected_footer_template_group_id = Column(Integer, nullable=True)
@@ -160,9 +169,18 @@ class ListenerTask(Base):
     footer = Column(Text, default="")
     remove_contact_lines = Column(Boolean, default=True)
     filter_qr_code = Column(Boolean, default=True)
+    ai_rewrite_enabled = Column(Boolean, default=False)
+    ai_rewrite_provider = Column(String, default="grok")
+    ai_rewrite_model = Column(String, default="")
+    ai_rewrite_prompt = Column(Text, default="")
+    ai_prompt_template_id = Column(Integer, nullable=True, index=True)
+    ai_rewrite_max_chars = Column(Integer, default=800)
+    ai_rewrite_ratio = Column(Integer, default=70)
+    ai_rewrite_failure_mode = Column(String, default="fallback")
     use_random_head = Column(Boolean, default=False)
     use_random_body = Column(Boolean, default=False)
     use_random_footer = Column(Boolean, default=False)
+    footer_leading_blank_line = Column(Boolean, default=True)
     selected_head_template_group_id = Column(Integer, nullable=True)
     selected_body_template_group_id = Column(Integer, nullable=True)
     selected_footer_template_group_id = Column(Integer, nullable=True)
@@ -447,6 +465,20 @@ class CloneChannel(Base):
     remark = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AiPromptTemplate(Base):
+    """Reusable AI rewrite prompt selectable by clone and listener tasks."""
+
+    __tablename__ = "ai_prompt_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    content = Column(Text, nullable=False)
+    is_default = Column(Boolean, default=False, index=True)
+    enabled = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SystemSetting(Base):

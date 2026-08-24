@@ -51,6 +51,23 @@
       />
     </div>
 
+    <div v-if="activeMenu === 'ai-settings'">
+      <AiConfigWorkspace
+        :settings="aiSettings"
+        :settings-saving="aiSettingsSaving"
+        :prompts="aiPrompts"
+        :loading="pageLoading.aiPrompts"
+        :deleting-id="aiPromptDeletingId"
+        :defaulting-id="aiPromptDefaultingId"
+        @refresh="refreshAiConfig"
+        @save-settings="saveAiSettings"
+        @add-prompt="openAddAiPromptDialog"
+        @edit-prompt="openEditAiPromptDialog"
+        @delete-prompt="deleteAiPromptHandler"
+        @set-default-prompt="setDefaultAiPromptHandler"
+      />
+    </div>
+
     <div v-if="activeMenu === 'guide'">
       <UserGuide />
     </div>
@@ -75,7 +92,7 @@
     </div>
 
     <div v-if="activeMenu === 'alerts'">
-      <ControlAlertCenter />
+      <ControlAlertCenter @open-task="openTaskFromAlert" />
     </div>
 
     <div v-if="activeMenu === 'bots'" class="bot-page">
@@ -145,6 +162,7 @@
       :accounts="accounts"
       :bots="bots"
       :templates="contentTemplates"
+      :ai-prompts="aiPrompts"
       @update:visible="listenerTaskDialogVisible = $event"
       @submit="submitListenerTask"
     />
@@ -197,8 +215,18 @@
       :bots="bots"
       :accounts="accounts"
       :templates="contentTemplates"
+      :ai-prompts="aiPrompts"
       @update:visible="cloneTaskDialogVisible = $event"
       @submit="submitCloneTask"
+    />
+
+    <AiPromptDialog
+      :visible="aiPromptDialogVisible"
+      :prompt="currentAiPrompt"
+      :is-edit="isAiPromptEdit"
+      :saving="aiPromptSaving"
+      @update:visible="aiPromptDialogVisible = $event"
+      @submit="submitAiPrompt"
     />
   </div>
 </template>
@@ -211,6 +239,8 @@ import MainLayout from "./layouts/MainLayout.vue"
 import StatusCards from "./components/StatusCards.vue"
 import ListenerTaskTable from "./components/ListenerTaskTable.vue"
 import ListenerTaskDialog from "./components/ListenerTaskDialog.vue"
+import AiConfigWorkspace from "./components/AiConfigWorkspace.vue"
+import AiPromptDialog from "./components/AiPromptDialog.vue"
 import SystemSettingsWorkspace from "./components/SystemSettingsWorkspace.vue"
 import UserGuide from "./components/UserGuide.vue"
 import LoginPanel from "./components/LoginPanel.vue"
@@ -277,7 +307,9 @@ import {
 } from "./api/bots"
 
 import {
+  getAiSettings,
   getSendSettings,
+  updateAiSettings,
   updateSendSettings,
 } from "./api/settings"
 
@@ -305,6 +337,14 @@ import {
   getRuntimeDashboard,
 } from "./api/runtime"
 
+import {
+  getAiPrompts,
+  createAiPrompt,
+  updateAiPrompt,
+  setDefaultAiPrompt,
+  deleteAiPrompt,
+} from "./api/aiPrompts"
+
 
 
 const status = ref({})
@@ -318,12 +358,14 @@ const botBindings = ref([])
 const cloneTasks = ref([])
 const cloneTaskLogs = ref([])
 const contentTemplates = ref([])
+const aiPrompts = ref([])
 const runtimeDashboard = ref({})
 const sendSettings = ref({
   global_send_delay: 3,
   send_retry_count: 2,
   send_retry_delay: 5,
 })
+const aiSettings = ref({ providers: {} })
 const pageLoading = reactive({
   listenerTasks: false,
   listenerLogs: false,
@@ -332,6 +374,7 @@ const pageLoading = reactive({
   cloneTasks: false,
   cloneLogs: false,
   templates: false,
+  aiPrompts: false,
   runtime: false,
 })
 const defaultAccountSettingId = ref(null)
@@ -345,7 +388,7 @@ const LISTENER_TASK_LOG_LIMIT = 50
 const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = 10 * 1000
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "alerts", "settings", "guide"]
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "alerts", "ai-settings", "settings", "guide"]
 const VALID_CHANNEL_TABS = ["targets", "sources", "collections", "search-bots"]
 
 function getSavedActiveMenu() {
@@ -395,6 +438,12 @@ const isCloneTaskEdit = ref(false)
 const contentTemplateDialogVisible = ref(false)
 const isContentTemplateEdit = ref(false)
 const settingsSaving = ref(false)
+const aiSettingsSaving = ref(false)
+const aiPromptDialogVisible = ref(false)
+const isAiPromptEdit = ref(false)
+const aiPromptSaving = ref(false)
+const aiPromptDeletingId = ref(null)
+const aiPromptDefaultingId = ref(null)
 const templateTogglingId = ref(null)
 
 let cloneRefreshTimer = null
@@ -432,6 +481,7 @@ const currentListenerTask = reactive({
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
+  footer_leading_blank_line: true,
   selected_head_template_group_id: null,
   selected_body_template_group_id: null,
   selected_footer_template_group_id: null,
@@ -442,6 +492,14 @@ const currentListenerTask = reactive({
   selected_link_template_group_id: null,
   selected_contact_template_group_id: null,
   album_wait_seconds: 3,
+  ai_rewrite_enabled: false,
+  ai_rewrite_provider: "grok",
+  ai_rewrite_model: "",
+  ai_rewrite_prompt: "",
+  ai_prompt_template_id: null,
+  ai_rewrite_max_chars: 800,
+  ai_rewrite_ratio: 70,
+  ai_rewrite_failure_mode: "fallback",
 })
 
 
@@ -496,6 +554,7 @@ const currentCloneTask = reactive({
   use_random_head: false,
   use_random_body: false,
   use_random_footer: false,
+  footer_leading_blank_line: true,
   selected_head_template_group_id: null,
   selected_body_template_group_id: null,
   selected_footer_template_group_id: null,
@@ -508,6 +567,14 @@ const currentCloneTask = reactive({
   enabled: true,
   status: "idle",
   last_message_id: 0,
+  ai_rewrite_enabled: false,
+  ai_rewrite_provider: "grok",
+  ai_rewrite_model: "",
+  ai_rewrite_prompt: "",
+  ai_prompt_template_id: null,
+  ai_rewrite_max_chars: 800,
+  ai_rewrite_ratio: 70,
+  ai_rewrite_failure_mode: "fallback",
 })
 
 
@@ -520,6 +587,14 @@ const currentContentTemplate = reactive({
   enabled: true,
   weight: 1,
   items: [],
+})
+
+const currentAiPrompt = reactive({
+  id: null,
+  name: "",
+  content: "",
+  enabled: true,
+  is_default: false,
 })
 
 
@@ -714,6 +789,25 @@ async function loadSendSettings() {
   sendSettings.value = res.data
 }
 
+async function loadAiSettings() {
+  const res = await getAiSettings()
+  aiSettings.value = res.data || { providers: {} }
+}
+
+async function loadAiPrompts() {
+  pageLoading.aiPrompts = true
+  try {
+    const res = await getAiPrompts()
+    aiPrompts.value = res.data || []
+  } finally {
+    pageLoading.aiPrompts = false
+  }
+}
+
+async function refreshAiConfig() {
+  await Promise.all([loadAiSettings(), loadAiPrompts()])
+}
+
 
 async function loadContentTemplates() {
   pageLoading.templates = true
@@ -754,6 +848,7 @@ async function handleMenuChange(menu) {
     await loadAccounts()
     await loadBots()
     await loadContentTemplates()
+    await loadAiPrompts()
     await loadListenerTasks()
     await loadListenerTaskLogs()
   }
@@ -779,11 +874,16 @@ async function handleMenuChange(menu) {
     await loadCloneTasks()
     await loadCloneTaskLogs()
     await loadContentTemplates()
+    await loadAiPrompts()
   }
 
   if (menu === "settings") {
     await loadSendSettings()
     await loadContentTemplates()
+  }
+
+  if (menu === "ai-settings") {
+    await refreshAiConfig()
   }
 }
 
@@ -815,6 +915,33 @@ function openAddContentTemplateDialog(type = "footer") {
   currentContentTemplate.type = type || "footer"
   isContentTemplateEdit.value = false
   contentTemplateDialogVisible.value = true
+}
+
+async function openTaskFromAlert({ alert, taskType }) {
+  const taskId = Number(alert?.task_id)
+  if (!taskId || !["listener", "clone"].includes(taskType)) {
+    ElMessage.warning("该告警没有可打开的任务")
+    return
+  }
+
+  if (taskType === "listener") {
+    await handleMenuChange("rules")
+    const task = listenerTasks.value.find((item) => Number(item.id) === taskId)
+    if (!task) {
+      ElMessage.warning(`监听任务 #${taskId} 已不存在或无权查看`)
+      return
+    }
+    await openEditListenerTaskDialog(task)
+    return
+  }
+
+  await handleMenuChange("clone")
+  const task = cloneTasks.value.find((item) => Number(item.id) === taskId)
+  if (!task) {
+    ElMessage.warning(`克隆任务 #${taskId} 已不存在或无权查看`)
+    return
+  }
+  await openEditCloneTaskDialog(task)
 }
 
 
@@ -929,6 +1056,7 @@ function resetCurrentListenerTask() {
     use_random_head: false,
     use_random_body: false,
     use_random_footer: false,
+    footer_leading_blank_line: true,
     selected_head_template_group_id: null,
     selected_body_template_group_id: null,
     selected_footer_template_group_id: null,
@@ -939,6 +1067,14 @@ function resetCurrentListenerTask() {
     selected_link_template_group_id: null,
     selected_contact_template_group_id: null,
     album_wait_seconds: 3,
+    ai_rewrite_enabled: false,
+    ai_rewrite_provider: "grok",
+    ai_rewrite_model: "",
+    ai_rewrite_prompt: "",
+    ai_prompt_template_id: null,
+    ai_rewrite_max_chars: 800,
+    ai_rewrite_ratio: 70,
+    ai_rewrite_failure_mode: "fallback",
   })
 }
 
@@ -948,6 +1084,7 @@ async function openAddListenerTaskDialog() {
   await loadAccounts()
   await loadListenerTasks()
   await loadContentTemplates()
+  await loadAiPrompts()
   resetCurrentListenerTask()
   isListenerTaskEdit.value = false
   listenerTaskDialogVisible.value = true
@@ -957,6 +1094,7 @@ async function openAddListenerTaskDialog() {
 async function openEditListenerTaskDialog(row) {
   await loadBots()
   await loadContentTemplates()
+  await loadAiPrompts()
   Object.assign(currentListenerTask, {
     id: row.id,
     name: row.name || "",
@@ -976,6 +1114,7 @@ async function openEditListenerTaskDialog(row) {
     use_random_head: row.use_random_head ?? false,
     use_random_body: row.use_random_body ?? false,
     use_random_footer: row.use_random_footer ?? false,
+    footer_leading_blank_line: row.footer_leading_blank_line ?? true,
     selected_head_template_group_id: normalizeTemplateId(row.selected_head_template_group_id),
     selected_body_template_group_id: normalizeTemplateId(row.selected_body_template_group_id),
     selected_footer_template_group_id: normalizeTemplateId(row.selected_footer_template_group_id),
@@ -986,6 +1125,14 @@ async function openEditListenerTaskDialog(row) {
     selected_link_template_group_id: normalizeTemplateId(row.selected_link_template_group_id),
     selected_contact_template_group_id: normalizeTemplateId(row.selected_contact_template_group_id),
     album_wait_seconds: toPositiveNumber(row.album_wait_seconds, 3),
+    ai_rewrite_enabled: row.ai_rewrite_enabled ?? false,
+    ai_rewrite_provider: row.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+    ai_rewrite_model: row.ai_rewrite_model || "",
+    ai_rewrite_prompt: row.ai_rewrite_prompt || "",
+    ai_prompt_template_id: normalizeTemplateId(row.ai_prompt_template_id),
+    ai_rewrite_max_chars: toBoundedNumber(row.ai_rewrite_max_chars, 800, 100, 4000),
+    ai_rewrite_ratio: toBoundedNumber(row.ai_rewrite_ratio, 70, 0, 100),
+    ai_rewrite_failure_mode: row.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
   })
 
   isListenerTaskEdit.value = true
@@ -1216,6 +1363,7 @@ async function submitListenerTask(formData) {
     use_random_head: currentListenerTask.use_random_head,
     use_random_body: currentListenerTask.use_random_body,
     use_random_footer: currentListenerTask.use_random_footer,
+    footer_leading_blank_line: currentListenerTask.footer_leading_blank_line !== false,
     selected_head_template_group_id: currentListenerTask.use_random_head
       ? normalizeTemplateId(currentListenerTask.selected_head_template_group_id)
       : null,
@@ -1244,6 +1392,14 @@ async function submitListenerTask(formData) {
       currentListenerTask.selected_contact_template_group_id,
     ),
     album_wait_seconds: toPositiveNumber(currentListenerTask.album_wait_seconds, 3),
+    ai_rewrite_enabled: Boolean(currentListenerTask.ai_rewrite_enabled),
+    ai_rewrite_provider: currentListenerTask.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+    ai_rewrite_model: (currentListenerTask.ai_rewrite_model || "").trim(),
+    ai_rewrite_prompt: "",
+    ai_prompt_template_id: normalizeTemplateId(currentListenerTask.ai_prompt_template_id),
+    ai_rewrite_max_chars: toBoundedNumber(currentListenerTask.ai_rewrite_max_chars, 800, 100, 4000),
+    ai_rewrite_ratio: toBoundedNumber(currentListenerTask.ai_rewrite_ratio, 70, 0, 100),
+    ai_rewrite_failure_mode: currentListenerTask.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
   }
 
   if (isListenerTaskEdit.value) {
@@ -1982,6 +2138,7 @@ function resetCurrentCloneTask() {
     use_random_head: false,
     use_random_body: false,
     use_random_footer: false,
+    footer_leading_blank_line: true,
     selected_head_template_group_id: null,
     selected_body_template_group_id: null,
     selected_footer_template_group_id: null,
@@ -1994,6 +2151,14 @@ function resetCurrentCloneTask() {
     enabled: true,
     status: "idle",
     last_message_id: 0,
+    ai_rewrite_enabled: false,
+    ai_rewrite_provider: "grok",
+    ai_rewrite_model: "",
+    ai_rewrite_prompt: "",
+    ai_prompt_template_id: null,
+    ai_rewrite_max_chars: 800,
+    ai_rewrite_ratio: 70,
+    ai_rewrite_failure_mode: "fallback",
   })
 }
 
@@ -2002,6 +2167,7 @@ async function openAddCloneTaskDialog() {
   await loadBots()
   await loadAccounts()
   await loadContentTemplates()
+  await loadAiPrompts()
   resetCurrentCloneTask()
   isCloneTaskEdit.value = false
   cloneTaskDialogVisible.value = true
@@ -2012,6 +2178,7 @@ async function openEditCloneTaskDialog(row) {
   await loadBots()
   await loadAccounts()
   await loadContentTemplates()
+  await loadAiPrompts()
   Object.assign(currentCloneTask, {
     id: row.id,
     name: row.name || "",
@@ -2032,6 +2199,7 @@ async function openEditCloneTaskDialog(row) {
     use_random_head: row.use_random_head ?? false,
     use_random_body: row.use_random_body ?? false,
     use_random_footer: row.use_random_footer ?? false,
+    footer_leading_blank_line: row.footer_leading_blank_line ?? true,
     selected_head_template_group_id: normalizeTemplateId(row.selected_head_template_group_id),
     selected_body_template_group_id: normalizeTemplateId(row.selected_body_template_group_id),
     selected_footer_template_group_id: normalizeTemplateId(row.selected_footer_template_group_id),
@@ -2044,6 +2212,14 @@ async function openEditCloneTaskDialog(row) {
     enabled: row.enabled ?? true,
     status: row.status || "idle",
     last_message_id: row.last_message_id || 0,
+    ai_rewrite_enabled: row.ai_rewrite_enabled ?? false,
+    ai_rewrite_provider: row.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+    ai_rewrite_model: row.ai_rewrite_model || "",
+    ai_rewrite_prompt: row.ai_rewrite_prompt || "",
+    ai_prompt_template_id: normalizeTemplateId(row.ai_prompt_template_id),
+    ai_rewrite_max_chars: toBoundedNumber(row.ai_rewrite_max_chars, 800, 100, 4000),
+    ai_rewrite_ratio: toBoundedNumber(row.ai_rewrite_ratio, 70, 0, 100),
+    ai_rewrite_failure_mode: row.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
   })
 
   isCloneTaskEdit.value = true
@@ -2145,6 +2321,7 @@ async function submitCloneTask(formData) {
     use_random_head: currentCloneTask.use_random_head,
     use_random_body: currentCloneTask.use_random_body,
     use_random_footer: currentCloneTask.use_random_footer,
+    footer_leading_blank_line: currentCloneTask.footer_leading_blank_line !== false,
     selected_head_template_group_id: currentCloneTask.use_random_head
       ? normalizeTemplateId(currentCloneTask.selected_head_template_group_id)
       : null,
@@ -2172,6 +2349,14 @@ async function submitCloneTask(formData) {
     selected_contact_template_group_id: normalizeTemplateId(
       currentCloneTask.selected_contact_template_group_id,
     ),
+    ai_rewrite_enabled: Boolean(currentCloneTask.ai_rewrite_enabled),
+    ai_rewrite_provider: currentCloneTask.ai_rewrite_provider === "deepseek" ? "deepseek" : "grok",
+    ai_rewrite_model: (currentCloneTask.ai_rewrite_model || "").trim(),
+    ai_rewrite_prompt: "",
+    ai_prompt_template_id: normalizeTemplateId(currentCloneTask.ai_prompt_template_id),
+    ai_rewrite_max_chars: toBoundedNumber(currentCloneTask.ai_rewrite_max_chars, 800, 100, 4000),
+    ai_rewrite_ratio: toBoundedNumber(currentCloneTask.ai_rewrite_ratio, 70, 0, 100),
+    ai_rewrite_failure_mode: currentCloneTask.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
     enabled: currentCloneTask.enabled,
   }
 
@@ -2275,6 +2460,94 @@ async function saveSendSettings(formData) {
   }
 }
 
+async function saveAiSettings(formData) {
+  aiSettingsSaving.value = true
+  try {
+    const res = await updateAiSettings(formData)
+    aiSettings.value = res.data || aiSettings.value
+    ElMessage.success("AI 配置已保存")
+  } finally {
+    aiSettingsSaving.value = false
+  }
+}
+
+function resetCurrentAiPrompt() {
+  Object.assign(currentAiPrompt, {
+    id: null,
+    name: "",
+    content: "",
+    enabled: true,
+    is_default: false,
+  })
+}
+
+function openAddAiPromptDialog() {
+  resetCurrentAiPrompt()
+  isAiPromptEdit.value = false
+  aiPromptDialogVisible.value = true
+}
+
+function openEditAiPromptDialog(prompt) {
+  Object.assign(currentAiPrompt, {
+    id: prompt.id,
+    name: prompt.name || "",
+    content: prompt.content || "",
+    enabled: prompt.enabled ?? true,
+    is_default: prompt.is_default ?? false,
+  })
+  isAiPromptEdit.value = true
+  aiPromptDialogVisible.value = true
+}
+
+async function submitAiPrompt(formData) {
+  aiPromptSaving.value = true
+  try {
+    if (isAiPromptEdit.value) {
+      await updateAiPrompt(currentAiPrompt.id, formData)
+      ElMessage.success("提示词已保存")
+    } else {
+      await createAiPrompt(formData)
+      ElMessage.success("提示词已创建")
+    }
+    aiPromptDialogVisible.value = false
+    await loadAiPrompts()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, "提示词保存失败"))
+  } finally {
+    aiPromptSaving.value = false
+  }
+}
+
+async function setDefaultAiPromptHandler(prompt) {
+  aiPromptDefaultingId.value = prompt.id
+  try {
+    await setDefaultAiPrompt(prompt.id)
+    ElMessage.success(`“${prompt.name}”已设为系统默认提示词`)
+    await loadAiPrompts()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, "设置默认提示词失败"))
+  } finally {
+    aiPromptDefaultingId.value = null
+  }
+}
+
+async function deleteAiPromptHandler(prompt) {
+  aiPromptDeletingId.value = prompt.id
+  try {
+    await deleteAiPrompt(prompt.id)
+    ElMessage.success("提示词已删除")
+    await loadAiPrompts()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, "删除提示词失败"))
+  } finally {
+    aiPromptDeletingId.value = null
+  }
+}
+
+function getApiErrorMessage(error, fallback) {
+  return error?.response?.data?.detail || error?.message || fallback
+}
+
 
 const handleToggleCloneListener = async (row, value) => {
   try {
@@ -2302,6 +2575,13 @@ function toPositiveNumber(value, fallback) {
   }
 
   return Math.floor(numberValue)
+}
+
+
+function toBoundedNumber(value, fallback, minimum, maximum) {
+  const numberValue = Number(value)
+  const resolved = Number.isFinite(numberValue) ? Math.floor(numberValue) : fallback
+  return Math.max(minimum, Math.min(maximum, resolved))
 }
 
 

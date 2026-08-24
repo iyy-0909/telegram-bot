@@ -1,7 +1,7 @@
 from sqlalchemy import func
 
 from accounts.manager import account_manager
-from bot.content_processor import get_message_text, process_content
+from bot.content_processor import get_message_text, process_content_async
 from bot.logger import logger
 from bot.sender import cleanup_prepared, prepare_album, prepare_single_message
 from db.crud_bot import normalize_target_channel
@@ -390,7 +390,7 @@ async def check_latest_content_consistency(task):
         }
 
     raw_source_text = get_message_text(source_message)
-    processed = process_content(raw_source_text, task)
+    processed = await process_content_async(raw_source_text, task)
     source_text = normalize_compare_text(processed.get("text") or "")
     source_has_media = message_has_media(source_message)
 

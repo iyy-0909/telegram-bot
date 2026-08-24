@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from html import escape
+from html import escape, unescape
+import re
 
 from bot.logger import logger
 from bot.link_rules import (
@@ -13,6 +14,7 @@ from bot.link_rules import (
     get_link_rules,
     get_rule_key_for_url,
 )
+from db.crud_templates import get_contact_rule_config
 
 
 FORMAT_LEVEL_ENTITIES = "entities"
@@ -228,6 +230,44 @@ def link_entity_url(original_text: str, entity):
         return (original_text or "")[start:end]
 
     return ""
+
+
+def extract_source_link_items(source):
+    """Extract visible labels and hidden URLs from the source Telegram message."""
+    message = pick_source_message(source)
+    if not message:
+        return []
+
+    original_text = get_message_text(message)
+    items = []
+    seen = set()
+    for entity in get_message_entities(message):
+        if not is_link_entity(entity):
+            continue
+
+        start, end = entity_to_py_range(original_text, entity)
+        label = (original_text or "")[start:end]
+        url = link_entity_url(original_text, entity)
+        if not label or not url:
+            continue
+
+        line_start = (original_text or "").rfind("\n", 0, start) + 1
+        next_line_break = (original_text or "").find("\n", end)
+        line_end = next_line_break if next_line_break >= 0 else len(original_text or "")
+        line_prefix = (original_text or "")[line_start:start]
+        line_text = (original_text or "")[line_start:line_end]
+
+        key = (label, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({
+            "label": label,
+            "url": url,
+            "line_prefix": line_prefix,
+            "line_text": line_text,
+        })
+    return items
 
 
 def short_text(value, limit=80):
@@ -448,6 +488,540 @@ def resolve_link_action(task, target, rules, url):
         return ACTION_DOWNGRADE, "", rule_key
 
     return action, "", rule_key
+
+
+def html_to_plain_text(value: str) -> str:
+    return unescape(re.sub(r"<[^>]+>", "", value or ""))
+
+
+def _rewrite_matching_anchors(
+    html_text,
+    label,
+    action,
+    url="",
+    *,
+    source_url="",
+    match_by_url=False,
+):
+    matched = False
+    anchor_pattern = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+
+    def replace_anchor(match):
+        nonlocal matched
+        body = match.group(1)
+        visible = html_to_plain_text(body)
+        existing_url = _anchor_href(match.group(0)) if match_by_url else ""
+        expected_urls = {
+            str(candidate or "").strip().casefold()
+            for candidate in (url, source_url)
+            if str(candidate or "").strip()
+        }
+        url_matches = (
+            bool(existing_url)
+            and existing_url.casefold() in expected_urls
+        )
+        if match_by_url:
+            is_match = url_matches
+        else:
+            is_match = visible == label
+        if not is_match:
+            return match.group(0)
+
+        matched = True
+        if action == ACTION_DELETE:
+            return ""
+        if action == ACTION_DOWNGRADE:
+            return body
+        safe_url = escape(url, quote=True)
+        return f'<a href="{safe_url}">{body}</a>'
+
+    return anchor_pattern.sub(replace_anchor, html_text or ""), matched
+
+
+def _replace_first_visible_text(html_text, label, replacement):
+    if not label:
+        return html_text or "", False
+
+    parts = re.split(r"(<[^>]+>)", html_text or "")
+    anchor_depth = 0
+    escaped_label = escape(label)
+
+    for index, part in enumerate(parts):
+        if not part:
+            continue
+        if part.startswith("<"):
+            if re.match(r"<a\b", part, re.IGNORECASE):
+                anchor_depth += 1
+            elif re.match(r"</a\b", part, re.IGNORECASE):
+                anchor_depth = max(anchor_depth - 1, 0)
+            continue
+        if anchor_depth:
+            continue
+
+        for needle in (escaped_label, label):
+            position = part.find(needle)
+            if position < 0:
+                continue
+            parts[index] = (
+                part[:position]
+                + replacement
+                + part[position + len(needle):]
+            )
+            return "".join(parts), True
+
+    return html_text or "", False
+
+
+def _downgrade_prefix_candidates(line_prefix):
+    prefix = str(line_prefix or "")
+    clean_prefix = prefix.rstrip()
+    if not clean_prefix:
+        return [], ""
+
+    without_bullet = re.sub(r"^[\s•·▪◦*\-]+", "", clean_prefix)
+    candidates = []
+    for value in (clean_prefix, without_bullet):
+        for candidate in (
+            value,
+            value.replace(":", "："),
+            value.replace("：", ":"),
+        ):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+    if clean_prefix.endswith((":", "：")):
+        separator = ""
+    elif prefix[-1:].isspace():
+        separator = " "
+    else:
+        separator = " "
+    return candidates, separator
+
+
+def _restore_missing_downgraded_label(html_text, item):
+    """Keep a downgraded link's visible label even when AI omitted it."""
+    label = str(item.get("label") or "")
+    if not label:
+        return html_text or "", False
+
+    if label in html_to_plain_text(html_text):
+        return html_text or "", True
+
+    candidates, separator = _downgrade_prefix_candidates(
+        item.get("line_prefix")
+    )
+    for prefix in candidates:
+        restored, matched = _replace_first_visible_text(
+            html_text,
+            prefix,
+            f"{escape(prefix)}{separator}{escape(label)}",
+        )
+        if matched:
+            return restored, True
+
+    return html_text or "", False
+
+
+CONTACT_LINK_KEYWORDS = (
+    "联系",
+    "点击",
+    "咨询",
+    "客服",
+    "预约",
+    "预订",
+    "订台",
+    "报名",
+    "私聊",
+    "添加",
+)
+
+
+def is_protected_contact_link(item):
+    context = str(item.get("line_text") or item.get("line_prefix") or "")
+    normalized = re.sub(r"\s+", "", context).casefold()
+    return any(keyword in normalized for keyword in CONTACT_LINK_KEYWORDS)
+
+
+def should_suppress_source_link_restore(item, task, contact_rule_config=None):
+    """Do not re-add a source link removed by the task's contact cleanup."""
+    if not task or not bool(getattr(task, "remove_contact_lines", True)):
+        return False
+
+    from bot.content_processor import should_remove_line
+
+    contact_rule_config = contact_rule_config or get_contact_rule_config(
+        getattr(task, "selected_contact_template_group_id", None)
+    )
+    line_text = str(item.get("line_text") or "")
+
+    if should_remove_line(line_text, contact_rule_config):
+        return True
+
+    # Telegram hidden links do not expose their URL in message.message. Treat
+    # their entity URL the same as a visible URL when the selected contact rule
+    # is configured to remove links.
+    return bool(contact_rule_config.get("remove_links", True) and item.get("url"))
+
+
+def _anchor_href(anchor_html):
+    match = re.search(
+        r"\bhref\s*=\s*(['\"])(?P<url>.*?)\1",
+        anchor_html or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    return unescape(match.group("url")).strip() if match else ""
+
+
+def _has_equivalent_contact_anchor(html_text, item):
+    source_url = str(item.get("url") or "").strip().casefold()
+    source_label = str(item.get("label") or "")
+    anchor_pattern = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+    for match in anchor_pattern.finditer(html_text or ""):
+        existing_url = _anchor_href(match.group(0)).casefold()
+        visible_label = html_to_plain_text(match.group(1))
+        if (source_url and existing_url == source_url) or visible_label == source_label:
+            return True
+    return False
+
+
+def _wrap_value_after_contact_prefix(html_text, prefixes, url):
+    parts = re.split(r"(<[^>]+>)", html_text or "")
+    anchor_depth = 0
+    safe_url = escape(url, quote=True)
+    for index, part in enumerate(parts):
+        if not part:
+            continue
+        if part.startswith("<"):
+            if re.match(r"<a\b", part, re.IGNORECASE):
+                anchor_depth += 1
+            elif re.match(r"</a\b", part, re.IGNORECASE):
+                anchor_depth = max(anchor_depth - 1, 0)
+            continue
+        if anchor_depth:
+            continue
+
+        for prefix in prefixes:
+            for needle in (escape(prefix), prefix):
+                prefix_at = part.find(needle)
+                if prefix_at < 0:
+                    continue
+                value_start = prefix_at + len(needle)
+                line_end = part.find("\n", value_start)
+                if line_end < 0:
+                    line_end = len(part)
+                raw_value = part[value_start:line_end]
+                leading_length = len(raw_value) - len(raw_value.lstrip())
+                trailing_length = len(raw_value) - len(raw_value.rstrip())
+                value_end = len(raw_value) - trailing_length if trailing_length else len(raw_value)
+                visible_value = raw_value[leading_length:value_end]
+                if not visible_value:
+                    continue
+
+                leading = raw_value[:leading_length]
+                trailing = raw_value[value_end:]
+                wrapped_value = (
+                    f'{leading}<a href="{safe_url}">{visible_value}</a>{trailing}'
+                )
+                parts[index] = (
+                    part[:value_start]
+                    + wrapped_value
+                    + part[line_end:]
+                )
+                return "".join(parts), True
+
+    return html_text or "", False
+
+
+def _restore_missing_contact_anchor(html_text, item, anchor_html):
+    label = str(item.get("label") or "")
+    restored, wrapped = _replace_first_visible_text(
+        html_text,
+        label,
+        anchor_html,
+    )
+    if wrapped:
+        return restored, True
+
+    candidates, separator = _downgrade_prefix_candidates(
+        item.get("line_prefix")
+    )
+    restored, wrapped = _wrap_value_after_contact_prefix(
+        html_text,
+        candidates,
+        _anchor_href(anchor_html),
+    )
+    if wrapped:
+        return restored, True
+
+    for prefix in candidates:
+        restored, matched = _replace_first_visible_text(
+            html_text,
+            prefix,
+            f"{escape(prefix)}{separator}{anchor_html}",
+        )
+        if matched:
+            return restored, True
+
+    return html_text or "", False
+
+
+def _contact_anchor_fallback(item, anchor_html):
+    candidates, separator = _downgrade_prefix_candidates(
+        item.get("line_prefix")
+    )
+    if not candidates:
+        return anchor_html
+    return f"{escape(candidates[0])}{separator}{anchor_html}"
+
+
+def _is_short_contact_prefix(value):
+    plain = html_to_plain_text(value).strip()
+    if not plain or len(plain) > 24:
+        return False
+    if not any(keyword in plain for keyword in CONTACT_LINK_KEYWORDS):
+        return False
+    sentence_body = plain.rstrip("：:➡️→-— ")
+    return not bool(re.search(r"[，。！？；,.!?;]", sentence_body))
+
+
+def _finish_text_before_contact(value):
+    text = str(value or "").rstrip()
+    text = re.sub(r"[，,、；;：:]$", "", text).rstrip()
+    plain = html_to_plain_text(text).rstrip()
+    if plain and not re.search(r"[。.!！?？]$", plain):
+        text = f"{text}。"
+    return text
+
+
+def _clean_text_after_contact(value):
+    text = str(value or "").strip()
+    return re.sub(r"^[，,、；;：:\s]+", "", text)
+
+
+def _normalize_one_contact_anchor_line(html_text, item):
+    source_url = str(item.get("url") or "").strip().casefold()
+    source_label = str(item.get("label") or "")
+    anchor_pattern = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+    selected = None
+    for match in anchor_pattern.finditer(html_text or ""):
+        existing_url = _anchor_href(match.group(0)).casefold()
+        visible_label = html_to_plain_text(match.group(1))
+        if (source_url and existing_url == source_url) or visible_label == source_label:
+            selected = match
+            break
+    if not selected:
+        return html_text or ""
+
+    line_start = (html_text or "").rfind("\n", 0, selected.start()) + 1
+    next_line_break = (html_text or "").find("\n", selected.end())
+    line_end = next_line_break if next_line_break >= 0 else len(html_text or "")
+    before_anchor = (html_text or "")[line_start:selected.start()]
+    after_anchor = (html_text or "")[selected.end():line_end]
+    if not before_anchor.strip() and not after_anchor.strip():
+        return html_text or ""
+
+    anchor_html = selected.group(0)
+    lines = []
+    if before_anchor.strip() and _is_short_contact_prefix(before_anchor):
+        lines.append(f"{before_anchor.rstrip()}{anchor_html}")
+    else:
+        finished_before = _finish_text_before_contact(before_anchor)
+        if finished_before:
+            lines.append(finished_before)
+        lines.append(anchor_html)
+
+    cleaned_after = _clean_text_after_contact(after_anchor)
+    if cleaned_after:
+        if re.fullmatch(r"[。.!！?？]+", cleaned_after):
+            lines[-1] = f"{lines[-1]}{cleaned_after}"
+        else:
+            lines.append(cleaned_after)
+
+    replacement = "\n".join(lines)
+    return (
+        (html_text or "")[:line_start]
+        + replacement
+        + (html_text or "")[line_end:]
+    )
+
+
+def restore_source_links_as_html(source, processed_html: str, task=None, target=None):
+    """Restore source hidden links after AI changed text positions.
+
+    Link-template actions are still honored. Kept links are reattached by their
+    exact visible label; links omitted by AI are appended in a compact list.
+    """
+    link_items = extract_source_link_items(source)
+    if not link_items:
+        return processed_html or ""
+
+    selected_group_id = getattr(task, "selected_link_template_group_id", None) if task else None
+    rules = get_link_rules(selected_group_id)
+    remove_source_contacts = bool(
+        task and getattr(task, "remove_contact_lines", True)
+    )
+    contact_rule_config = (
+        get_contact_rule_config(
+            getattr(task, "selected_contact_template_group_id", None)
+        )
+        if remove_source_contacts
+        else None
+    )
+    restored_html = processed_html or ""
+    missing_kept_links = []
+    missing_downgraded_labels = []
+    restored_count = 0
+    downgraded_count = 0
+    restored_downgraded_count = 0
+    deleted_count = 0
+    suppressed_contact_count = 0
+
+    for item in link_items:
+        label = item["label"]
+        source_url = item["url"]
+        if should_suppress_source_link_restore(
+            item,
+            task,
+            contact_rule_config,
+        ):
+            suppressed_contact_count += 1
+            logger.info(
+                "旧联系方式链接已由内容处理删除，跳过源链接恢复 | task_id=%s target=%s url=%s",
+                getattr(task, "id", None) if task else None,
+                target,
+                short_text(source_url, 140),
+            )
+            continue
+
+        protected_contact = is_protected_contact_link(item)
+        if rules:
+            action, resolved_url, _rule_key = resolve_link_action(
+                task,
+                target,
+                rules,
+                source_url,
+            )
+        else:
+            action, resolved_url = ACTION_KEEP, ""
+
+        if protected_contact and action in {ACTION_DOWNGRADE, ACTION_DELETE}:
+            logger.info(
+                "联系类点击链接跳过删除/降级 | task_id=%s target=%s rule=%s original_action=%s url=%s",
+                getattr(task, "id", None) if task else None,
+                target,
+                _rule_key if rules else "default_keep",
+                action,
+                short_text(source_url, 140),
+            )
+            action = ACTION_KEEP
+
+        if (
+            protected_contact
+            and action == ACTION_KEEP
+            and _has_equivalent_contact_anchor(restored_html, item)
+        ):
+            restored_count += 1
+            continue
+
+        final_url = resolved_url or source_url
+        restored_html, anchor_matched = _rewrite_matching_anchors(
+            restored_html,
+            label,
+            action,
+            final_url,
+            source_url=source_url,
+            match_by_url=protected_contact,
+        )
+
+        if action == ACTION_DELETE:
+            if not anchor_matched:
+                restored_html, _removed = _replace_first_visible_text(
+                    restored_html,
+                    label,
+                    "",
+                )
+            deleted_count += 1
+            continue
+
+        if action == ACTION_DOWNGRADE or action not in {
+            ACTION_KEEP,
+            ACTION_TARGET_LINK,
+            ACTION_REPLACE,
+        }:
+            restored_html, label_preserved = _restore_missing_downgraded_label(
+                restored_html,
+                item,
+            )
+            if label_preserved:
+                restored_downgraded_count += 1
+            else:
+                missing_downgraded_labels.append(escape(label))
+            downgraded_count += 1
+            continue
+
+        if anchor_matched:
+            restored_count += 1
+            continue
+
+        anchor_html = f'<a href="{escape(final_url, quote=True)}">{escape(label)}</a>'
+        if protected_contact:
+            restored_html, wrapped = _restore_missing_contact_anchor(
+                restored_html,
+                item,
+                anchor_html,
+            )
+        else:
+            restored_html, wrapped = _replace_first_visible_text(
+                restored_html,
+                label,
+                anchor_html,
+            )
+        if wrapped:
+            restored_count += 1
+        else:
+            missing_kept_links.append(
+                _contact_anchor_fallback(item, anchor_html)
+                if protected_contact
+                else anchor_html
+            )
+
+    if missing_downgraded_labels:
+        label_block = "\n".join(missing_downgraded_labels)
+        restored_html = f"{restored_html.rstrip()}\n\n{label_block}"
+        restored_downgraded_count += len(missing_downgraded_labels)
+
+    if missing_kept_links:
+        if len(missing_kept_links) == 1:
+            link_block = missing_kept_links[0]
+        else:
+            link_block = "<b>🔗 相关链接</b>\n" + "\n".join(
+                f"• {anchor}" for anchor in missing_kept_links
+            )
+        restored_html = f"{restored_html.rstrip()}\n\n{link_block}"
+        restored_count += len(missing_kept_links)
+
+    for item in link_items:
+        if is_protected_contact_link(item):
+            restored_html = _normalize_one_contact_anchor_line(
+                restored_html,
+                item,
+            )
+
+    restored_html = re.sub(r"[ \t]+\n", "\n", restored_html)
+    restored_html = re.sub(r"\n{3,}", "\n\n", restored_html).strip()
+    logger.info(
+        "AI/HTML 原链接恢复 | task_id=%s target=%s total=%s restored=%s downgraded=%s downgraded_preserved=%s deleted=%s suppressed_contact=%s appended=%s",
+        getattr(task, "id", None) if task else None,
+        target,
+        len(link_items),
+        restored_count,
+        downgraded_count,
+        restored_downgraded_count,
+        deleted_count,
+        suppressed_contact_count,
+        len(missing_kept_links),
+    )
+    return restored_html
 
 
 def apply_link_rules_to_text(original_text: str, processed_text: str, entities, task=None, target=None):

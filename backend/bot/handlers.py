@@ -5,8 +5,16 @@ from telethon import events
 
 from accounts.manager import account_manager
 from bot.bot_distributor import send_prepared_by_bot
-from bot.content_processor import get_message_text, process_content
-from bot.entity_formatter import format_prepared_text
+from bot.content_processor import (
+    compose_content_templates_html,
+    get_message_text,
+    process_content_async,
+)
+from bot.entity_formatter import (
+    format_prepared_text,
+    html_to_plain_text,
+    restore_source_links_as_html,
+)
 from bot.listener_events import add_listener_send_event
 from bot.logger import logger
 from bot.message_links import build_message_url
@@ -197,7 +205,7 @@ async def send_prepared_to_tasks(
                 continue
 
         raw_text = prepared.get("_raw_text") or ""
-        result = process_content(raw_text, task)
+        result = await process_content_async(raw_text, task)
 
         if result.get("blocked"):
             reason = result.get("reason") or "filtered"
@@ -257,14 +265,20 @@ async def send_prepared_to_tasks(
             send_payload = dict(prepared)
 
             if result.get("parse_mode"):
-                send_payload["text"] = result.get("text") or ""
-                send_payload["plain_text"] = (
-                    result.get("plain_text")
-                    or result.get("text")
-                    or ""
+                content_html = result.get("content_html")
+                formatted_html = restore_source_links_as_html(
+                    send_payload.get("_source_payload"),
+                    content_html
+                    if content_html is not None
+                    else result.get("html_text") or result.get("text") or "",
+                    task=task,
+                    target=target,
                 )
+                formatted_html = compose_content_templates_html(result, formatted_html)
+                send_payload["text"] = formatted_html
+                send_payload["plain_text"] = html_to_plain_text(formatted_html)
                 send_payload["parse_mode"] = result.get("parse_mode")
-                send_payload["html_text"] = result.get("html_text") or result.get("text") or ""
+                send_payload["html_text"] = formatted_html
                 send_payload["format_level"] = result.get("format_level") or "template_html"
                 send_payload["kept_entities_count"] = 0
                 send_payload["dropped_entities_count"] = 0

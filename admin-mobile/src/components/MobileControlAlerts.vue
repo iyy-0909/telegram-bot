@@ -61,13 +61,21 @@
             <div><dt>次数</dt><dd>{{ Math.max(Number(item.repeat_count || 0), 1) }}</dd></div>
           </dl>
           <pre>{{ item.detail || "无详细信息" }}</pre>
-          <el-button
-            v-if="item.status === 'pending'"
-            type="primary"
-            :icon="CircleCheck"
-            :loading="acknowledgingId === item.id"
-            @click="acknowledge(item)"
-          >已读</el-button>
+          <div class="detail-actions">
+            <el-button
+              v-if="taskType(item)"
+              plain
+              :icon="Document"
+              @click="openTask(item)"
+            >查看任务</el-button>
+            <el-button
+              v-if="item.status === 'pending'"
+              type="primary"
+              :icon="CircleCheck"
+              :loading="acknowledgingId === item.id"
+              @click="acknowledge(item)"
+            >已读</el-button>
+          </div>
         </div>
       </article>
     </div>
@@ -83,7 +91,7 @@
 
 <script setup>
 import { onMounted, ref } from "vue"
-import { ArrowDownBold, ArrowUpBold, CircleCheck, Refresh, Search } from "@element-plus/icons-vue"
+import { ArrowDownBold, ArrowUpBold, CircleCheck, Document, Refresh, Search } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
   acknowledgeAllControlAlerts,
@@ -92,7 +100,7 @@ import {
 } from "../api"
 import { getErrorMessage } from "../api/client"
 
-defineEmits(["back"])
+const emit = defineEmits(["back", "open-task"])
 
 const items = ref([])
 const stats = ref({})
@@ -125,6 +133,23 @@ async function loadAlerts() {
 
 function toggle(id) {
   expandedId.value = expandedId.value === id ? null : id
+}
+
+function taskType(item) {
+  if (!Number(item?.task_id)) return ""
+  const explicitType = String(item.context?.task_type || "").trim().toLowerCase()
+  if (["listener", "clone"].includes(explicitType)) return explicitType
+
+  const module = String(item.module || "").toLowerCase()
+  const title = String(item.title || "")
+  if (module.includes("listener") || module.includes("监听") || title.includes("监听")) return "listener"
+  if (module.includes("clone") || module.includes("克隆") || title.includes("克隆")) return "clone"
+  return ""
+}
+
+function openTask(item) {
+  const type = taskType(item)
+  if (type) emit("open-task", { alert: item, taskType: type })
 }
 
 async function acknowledge(item) {
@@ -202,6 +227,8 @@ onMounted(loadAlerts)
 .alert-detail dt { color: var(--text-muted); font-size: 12px; }
 .alert-detail dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .alert-detail pre { max-height: 220px; overflow: auto; padding: 10px; background: var(--el-fill-color-light); font: inherit; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.alert-detail .el-button, .ack-all { width: 100%; }
+.detail-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.detail-actions > :only-child { grid-column: 1 / -1; }
+.alert-detail .el-button, .ack-all { width: 100%; margin-left: 0; }
 .ack-all { margin-top: 4px; }
 </style>

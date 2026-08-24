@@ -218,6 +218,7 @@
     <MobileControlAlerts
       v-else-if="morePage === 'alerts'"
       @back="morePage = 'menu'"
+      @open-task="openTaskFromAlert"
     />
 
     <MorePage
@@ -229,6 +230,7 @@
       :accounts="filteredAccounts"
       :default-account-setting-id="defaultAccountSettingId"
       :settings="sendSettings"
+      :ai-settings="aiSettings"
       :loading="loading"
       :keyword="keyword"
       @select="morePage = $event"
@@ -243,6 +245,7 @@
       @toggle-support="toggleSupportBot"
       @toggle-template="toggleTemplate"
       @save-settings="saveMobileSendSettings"
+      @save-ai-settings="saveMobileAiSettings"
       @create="openCreate"
       @login-account="openAccountLogin"
     />
@@ -344,6 +347,7 @@ import {
   getListenerSendEvents,
   getMyChannels,
   getRuntimeDashboard,
+  getAiSettings,
   getSendSettings,
   getStatus,
   getSupportBots,
@@ -364,6 +368,7 @@ import {
   updateContentTemplate,
   updateContentTemplateRule,
   updateSendSettings,
+  updateAiSettings,
   updateListenerTask,
   updateMyChannel,
   updateSupportBot,
@@ -454,6 +459,7 @@ const editTitle = computed(() => {
   const action = editForm.id ? "编辑" : "新增"
   return map[editType.value] ? `${action}${map[editType.value]}` : action
 })
+const aiSettings = ref({ providers: {} })
 
 const filteredListeners = computed(() => filterItems(listeners.value, keyword.listeners, ["name", "source_channel", "target_channels", "status"]))
 const filteredClones = computed(() => filterItems(clones.value, keyword.clones, ["name", "source_channel", "target_channels", "status"]))
@@ -580,6 +586,30 @@ async function loadInitial() {
   }
 }
 
+async function openTaskFromAlert({ alert, taskType }) {
+  const taskId = Number(alert?.task_id)
+  if (!taskId || !["listener", "clone"].includes(taskType)) {
+    ElMessage.warning("该告警没有可打开的任务")
+    return
+  }
+
+  const isListener = taskType === "listener"
+  activeTab.value = isListener ? "listeners" : "clones"
+  window.localStorage.setItem("mobile_active_tab", activeTab.value)
+  if (isListener) listenerView.value = "tasks"
+  else cloneView.value = "tasks"
+
+  const loaded = isListener ? await loadListeners() : await loadClones()
+  if (!loaded) return
+  const tasks = isListener ? listeners.value : clones.value
+  const task = tasks.find((item) => Number(item.id) === taskId)
+  if (!task) {
+    ElMessage.warning(`${isListener ? "监听" : "克隆"}任务 #${taskId} 已不存在或无权查看`)
+    return
+  }
+  openEdit(taskType, task)
+}
+
 async function loadActive() {
   if (activeTab.value === "home") return loadHome()
   if (activeTab.value === "listeners") return loadListeners()
@@ -587,7 +617,7 @@ async function loadActive() {
   if (activeTab.value === "channels") return loadChannels()
   if (morePage.value === "bots") return loadBots()
   if (morePage.value === "support") return loadSupportBots()
-  if (morePage.value === "settings") return Promise.allSettled([loadSendSettings(), loadTemplates()])
+  if (morePage.value === "settings") return Promise.allSettled([loadSendSettings(), loadAiSettings(), loadTemplates()])
   if (morePage.value === "accounts") return loadAccounts()
   return Promise.allSettled([loadBots(), loadSupportBots(), loadTemplates(), loadAccounts()])
 }
@@ -657,6 +687,12 @@ function loadSendSettings(options) {
   }, options)
 }
 
+function loadAiSettings(options) {
+  return withLoading("settings", async () => {
+    aiSettings.value = (await getAiSettings()).data || aiSettings.value
+  }, options)
+}
+
 function loadAccounts(options) {
   return withLoading("accounts", async () => {
     accounts.value = pickList((await getAccounts()).data)
@@ -709,6 +745,12 @@ function defaultForm(type) {
       selected_contact_template_group_id: null,
       filter_qr_code: true,
       album_wait_seconds: 3,
+      ai_rewrite_enabled: false,
+      ai_rewrite_provider: "grok",
+      ai_rewrite_model: "",
+      ai_rewrite_prompt: "",
+      ai_rewrite_max_chars: 800,
+      ai_rewrite_failure_mode: "fallback",
     },
     clone: {
       name: "",
@@ -730,6 +772,12 @@ function defaultForm(type) {
       selected_contact_template_group_id: null,
       filter_qr_code: true,
       status: "idle",
+      ai_rewrite_enabled: false,
+      ai_rewrite_provider: "grok",
+      ai_rewrite_model: "",
+      ai_rewrite_prompt: "",
+      ai_rewrite_max_chars: 800,
+      ai_rewrite_failure_mode: "fallback",
     },
     channel: {
       title: "",
@@ -1267,6 +1315,17 @@ async function saveMobileSendSettings(payload) {
   }
 }
 
+async function saveMobileAiSettings(payload) {
+  loading.settings = true
+  try {
+    await runAction(async () => {
+      aiSettings.value = (await updateAiSettings(payload)).data || aiSettings.value
+    }, "AI 配置已保存", loadAiSettings)
+  } finally {
+    loading.settings = false
+  }
+}
+
 function normalizeJsonList(value) {
   if (Array.isArray(value)) return JSON.stringify(value)
   const text = String(value || "").trim()
@@ -1550,6 +1609,7 @@ const MorePage = defineComponent({
     accounts: Array,
     defaultAccountSettingId: Number,
     settings: Object,
+    aiSettings: Object,
     loading: Object,
     keyword: Object,
   },
@@ -1566,6 +1626,7 @@ const MorePage = defineComponent({
     "toggle-support",
     "toggle-template",
     "save-settings",
+    "save-ai-settings",
     "create",
     "login-account",
   ],
@@ -1594,9 +1655,11 @@ const MorePage = defineComponent({
           h("div", { class: "page" }, [
             h(MobileSettingsPage, {
               settings: props.settings,
+              aiSettings: props.aiSettings,
               templates: props.templates,
               saving: props.loading?.settings,
               onSaveSettings: (payload) => emit("save-settings", payload),
+              onSaveAiSettings: (payload) => emit("save-ai-settings", payload),
               onCreateTemplate: (type) => emit("create", "template", type),
               onEditTemplate: (item) => emit("edit", "template", item),
               onDeleteTemplate: (item) => emit("delete", "template", item),
@@ -2179,6 +2242,14 @@ function formSections(type, isCreate, form) {
     { key: "remove_contact_lines", label: "删除联系方式", input: "switch" },
     { key: "filter_qr_code", label: "过滤二维码图片", input: "switch" },
   ]
+  const aiRewriteFields = [
+    { key: "ai_rewrite_enabled", label: "启用 AI 改写", input: "switch" },
+    { key: "ai_rewrite_provider", label: "模型供应商", input: "ai-provider" },
+    { key: "ai_rewrite_model", label: "模型名称（可选）", placeholder: "DeepSeek 默认 deepseek-v4-flash；Grok 默认 grok-4.6" },
+    { key: "ai_rewrite_max_chars", label: "最大输出字数", input: "number" },
+    { key: "ai_rewrite_failure_mode", label: "调用失败时", input: "ai-failure" },
+    { key: "ai_rewrite_prompt", label: "改写提示词（可选）", input: "textarea", placeholder: "留空使用默认事实保真提示词；支持 {{content}} 和 {{max_chars}}。" },
+  ]
 
   const listener = [
     {
@@ -2200,6 +2271,7 @@ function formSections(type, isCreate, form) {
       ],
     },
     { key: "content", title: "内容处理", fields: contentFields },
+    { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用 Grok。需要在服务端配置 XAI_API_KEY。", fields: aiRewriteFields },
     {
       key: "advanced",
       title: "高级设置",
@@ -2250,6 +2322,7 @@ function formSections(type, isCreate, form) {
       ],
     },
     { key: "content", title: "内容处理", fields: contentFields },
+    { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用 Grok。需要在服务端配置 XAI_API_KEY。", fields: aiRewriteFields },
     {
       key: "advanced",
       title: "高级设置",
@@ -2709,6 +2782,26 @@ function fieldPlaceholder(field) {
     bot_id: "选择用于发送内容的 Bot",
     session_path: "填写 session 文件路径，例如 data/sessions/account_1",
     proxy: "可留空，例如 socks5://127.0.0.1:7890",
+  }
+  if (field.input === "ai-failure") {
+    return h(resolve("el-select"), {
+      modelValue: form[field.key] || "fallback",
+      "onUpdate:modelValue": (value) => { form[field.key] = value },
+      style: "width: 100%",
+    }, () => [
+      h(resolve("el-option"), { value: "fallback", label: "发送清洗后的原文" }),
+      h(resolve("el-option"), { value: "skip", label: "跳过本条内容" }),
+    ])
+  }
+  if (field.input === "ai-provider") {
+    return h(resolve("el-select"), {
+      modelValue: form[field.key] || "grok",
+      "onUpdate:modelValue": (value) => { form[field.key] = value },
+      style: "width: 100%",
+    }, () => [
+      h(resolve("el-option"), { value: "grok", label: "Grok（xAI）" }),
+      h(resolve("el-option"), { value: "deepseek", label: "DeepSeek" }),
+    ])
   }
   if (map[field.key]) return map[field.key]
   if (field.input === "channels") return "一行一个频道，支持 @username、链接或 chat_id"

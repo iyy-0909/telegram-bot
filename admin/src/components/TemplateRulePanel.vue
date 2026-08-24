@@ -4,7 +4,7 @@
       <div>
         <div class="template-panel-title">内容模板规则</div>
         <div class="template-panel-desc">
-          按 head、body、footer 分别选择规则。只选择规则时会在规则内容中随机取一条；再选择指定内容时固定使用该内容。
+          AI 改写完成后，再按 head、body、footer 追加内容。只选择规则时随机取一条；选择指定内容时固定使用该内容。
         </div>
       </div>
     </div>
@@ -53,7 +53,7 @@
           placeholder="规则内随机"
           @update:model-value="value => update(section.itemKey, value)"
         >
-          <el-option label="规则内随机" :value="null" />
+          <el-option label="规则内随机" value="" />
           <el-option
             v-for="item in itemsByGroup(section.type, values[section.groupKey])"
             :key="item.id"
@@ -64,6 +64,22 @@
 
         <div class="template-hint">
           {{ hintText(section) }}
+        </div>
+
+        <div
+          v-if="section.type === 'footer'"
+          class="footer-spacing-option"
+          :class="{ disabled: !values[section.enabledKey] }"
+        >
+          <div>
+            <div class="footer-spacing-label">Footer 前保留空行</div>
+            <div class="footer-spacing-help">关闭后，Footer 将紧接上一段的下一行。</div>
+          </div>
+          <el-switch
+            :model-value="values.footer_leading_blank_line !== false"
+            :disabled="!values[section.enabledKey]"
+            @update:model-value="value => update('footer_leading_blank_line', value)"
+          />
         </div>
       </div>
     </div>
@@ -250,6 +266,32 @@ function normalizeTemplateValue(value) {
 
 .template-select {
   width: 100%;
+}
+
+.footer-spacing-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+}
+
+.footer-spacing-option.disabled {
+  opacity: 0.6;
+}
+
+.footer-spacing-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+}
+
+.footer-spacing-help {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #909399;
 }
 
 @media (max-width: 900px) {

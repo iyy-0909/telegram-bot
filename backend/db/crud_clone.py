@@ -20,6 +20,7 @@ OPTIONAL_NUMERIC_FIELDS = {
     "selected_head_template_id",
     "selected_body_template_id",
     "selected_footer_template_id",
+    "ai_prompt_template_id",
 }
 
 
@@ -81,6 +82,13 @@ def normalize_numeric_fields(data: dict):
                 value = None
 
         normalized[key] = value if value and value > 0 else None
+
+    if "ai_rewrite_ratio" in normalized:
+        try:
+            ratio = int(normalized.get("ai_rewrite_ratio"))
+        except (TypeError, ValueError):
+            ratio = 70
+        normalized["ai_rewrite_ratio"] = max(0, min(ratio, 100))
 
     return normalized
 
