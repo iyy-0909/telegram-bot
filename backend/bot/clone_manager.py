@@ -3,7 +3,11 @@ from typing import Dict
 
 from bot.cloner import clone_task
 from bot.logger import logger
-from db.crud_clone import get_clone_task, update_clone_task
+from db.crud_clone import (
+    get_all_clone_tasks,
+    get_clone_task,
+    update_clone_task,
+)
 
 
 class CloneWorkerManager:
@@ -71,6 +75,55 @@ class CloneWorkerManager:
             "task_id": task_id,
         }
 
+    async def restore_running_tasks(self):
+        """Restore clone workers that were running before the service stopped."""
+        tasks = get_all_clone_tasks()
+        running_tasks = [
+            task
+            for task in tasks
+            if task.status == "running" and task.enabled is not False
+        ]
+        disabled_running_ids = [
+            task.id
+            for task in tasks
+            if task.status == "running" and task.enabled is False
+        ]
+        restored_task_ids = []
+        failed = []
+
+        for task in running_tasks:
+            try:
+                result = await self.start(task.id)
+            except Exception as exc:
+                logger.exception(
+                    "clone worker restore failed | "
+                    f"task_id={task.id} | error={exc}"
+                )
+                failed.append({
+                    "task_id": task.id,
+                    "message": str(exc),
+                })
+                continue
+
+            if result.get("ok"):
+                restored_task_ids.append(task.id)
+                continue
+
+            failed.append({
+                "task_id": task.id,
+                "message": result.get("message") or "restore failed",
+            })
+
+        summary = {
+            "found": len(running_tasks),
+            "restored": len(restored_task_ids),
+            "restored_task_ids": restored_task_ids,
+            "disabled_running_task_ids": disabled_running_ids,
+            "failed": failed,
+        }
+        logger.info(f"clone worker startup restore completed | {summary}")
+        return summary
+
     async def _run(self, task_id: int, stop_event: asyncio.Event):
         try:
             task = get_clone_task(task_id)
@@ -82,9 +135,13 @@ class CloneWorkerManager:
             await clone_task(task, stop_event=stop_event)
 
         except asyncio.CancelledError:
-            # 理论上软停止后不应该经常进入这里，保留兜底
-            logger.warning(f"clone worker cancelled | task_id={task_id}")
-            update_clone_task(task_id, {"status": "stopped"})
+            # 服务正常退出时 asyncio 会取消未完成的 worker。此时保留
+            # running 状态，下一次启动才能从 last_message_id 自动续传。
+            # 用户主动停止会先设置 stop_event，并已将状态保存为 stopped。
+            logger.warning(
+                "clone worker interrupted by service shutdown | "
+                f"task_id={task_id} | preserve_running={not stop_event.is_set()}"
+            )
             raise
 
         except Exception as e:

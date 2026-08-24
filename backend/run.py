@@ -3,6 +3,7 @@ import os
 import uvicorn
 
 from bot.queue import send_worker
+from bot.clone_manager import clone_manager
 from accounts.manager import account_manager
 from bot.handlers import register_handlers
 from bot.logger import logger
@@ -46,6 +47,7 @@ async def main():
     await start_bot()
 
     asyncio.create_task(send_worker())
+    await clone_manager.restore_running_tasks()
     start_support_polling()
     start_control_polling()
     start_listener_health_worker()
