@@ -323,7 +323,7 @@
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="720px">
       <el-descriptions :column="2" border>
         <el-descriptions-item label="频道名称">
-          <el-input v-model="form.title" class="description-field" placeholder="例如：北京投放频道" />
+          <el-input v-model="form.title" class="description-field" placeholder="可留空，保存后自动读取频道名称" />
         </el-descriptions-item>
         <el-descriptions-item label="状态">
           <el-select v-model="form.status" class="description-field">
@@ -341,10 +341,10 @@
           />
         </el-descriptions-item>
         <el-descriptions-item label="chat_id">
-          <el-input v-model="form.chat_id" class="description-field" placeholder="-100xxxxxxxxxx，可选" />
+          <el-input v-model="form.chat_id" class="description-field" placeholder="-100xxxxxxxxxx；留空将自动读取" />
         </el-descriptions-item>
         <el-descriptions-item label="频道类型">
-          <el-input v-model="form.channel_type" class="description-field" placeholder="例如：channel / supergroup" />
+          <el-input v-model="form.channel_type" class="description-field" placeholder="可留空，保存后自动识别" />
         </el-descriptions-item>
         <el-descriptions-item label="分组">
           <el-input v-model="form.group_name" class="description-field" placeholder="例如：北京" />
@@ -387,7 +387,7 @@
       </el-descriptions>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存并检测</el-button>
       </template>
     </el-dialog>
 
@@ -816,16 +816,20 @@ async function save() {
 
   saving.value = true
   try {
+    let res
     if (editing.value?.id) {
-      await updateMyChannel(editing.value.id, form)
-      ElMessage.success("频道已保存")
+      res = await updateMyChannel(editing.value.id, form)
     } else {
-      await createMyChannel(form)
-      ElMessage.success("频道已添加")
+      res = await createMyChannel(form)
     }
 
     dialogVisible.value = false
     await load()
+    if (res?.data?.auto_check_ok) {
+      ElMessage.success("频道已保存并完成检测，空白信息已自动补全")
+    } else {
+      ElMessage.warning(`频道已保存，但自动检测失败：${res?.data?.auto_check_message || "请检查 Bot 和频道权限"}`)
+    }
   } catch (error) {
     ElMessage.error(readError(error, "保存频道失败"))
   } finally {

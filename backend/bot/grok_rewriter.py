@@ -88,6 +88,8 @@ AI_ANTI_TEMPLATE_PROTOCOL = """【反模板要求】
 
 AI_RECENT_LAYOUT_COUNT = 2
 AI_RECENT_OUTPUT_COUNT = 5
+AI_REQUEST_TIMEOUT_SECONDS = 300
+AI_MAX_COMPLETION_TOKENS = 100_000
 AI_STRUCTURE_SIMILARITY_THRESHOLD = 0.84
 
 _rewrite_state_lock = threading.Lock()
@@ -671,7 +673,7 @@ def build_prompt(task, text, layout=None):
 
 
 async def _request_completion(api_url, api_key, payload):
-    timeout = aiohttp.ClientTimeout(total=15)
+    timeout = aiohttp.ClientTimeout(total=AI_REQUEST_TIMEOUT_SECONDS)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(
             api_url,
@@ -694,8 +696,15 @@ def _build_request_payload(task, text, model_name, layout):
         "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.68,
-        "max_completion_tokens": min(max(256, max_chars * 2), 4000),
+        "max_completion_tokens": build_completion_token_limit(max_chars),
     }, max_chars
+
+
+def build_completion_token_limit(max_chars):
+    return min(
+        max(256, int(max_chars or 0) * 2),
+        AI_MAX_COMPLETION_TOKENS,
+    )
 
 
 async def rewrite_text(task, text):

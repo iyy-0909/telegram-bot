@@ -703,6 +703,9 @@ function openEdit(type, row) {
   editType.value = type
   Object.keys(editForm).forEach((key) => delete editForm[key])
   Object.assign(editForm, JSON.parse(JSON.stringify(row || {})))
+  if (type === "channel" && !editForm.username && editForm.chat_id) {
+    editForm.username = String(editForm.chat_id)
+  }
   if (type === "template") {
     editForm.contents = (row.items || [])
       .map((item) => item.content || "")
@@ -790,7 +793,6 @@ function defaultForm(type) {
       collection_status: "",
       remark: "",
       enabled: true,
-      prompt_check_after_save: true,
       status: "enabled",
     },
     bot: {
@@ -842,10 +844,16 @@ function defaultForm(type) {
 
 function payloadFor(type) {
   const data = { ...editForm }
-  delete data.prompt_check_after_save
   if (type === "channel") {
-    data.username = normalizeTelegramUsername(data.username)
-    editForm.username = data.username
+    const identifier = String(data.username || data.chat_id || "").trim()
+    if (/^-100\d+$/.test(identifier)) {
+      data.username = ""
+      data.chat_id = identifier
+      editForm.username = identifier
+    } else {
+      data.username = normalizeTelegramUsername(identifier)
+      editForm.username = data.username
+    }
   }
   if (["listener", "clone"].includes(type)) {
     data.target_channels = normalizeJsonList(data.target_channels)
@@ -1013,27 +1021,18 @@ async function saveEdit() {
     if (editType.value === "account") {
       result = isEdit ? await updateAccount(editForm.id, payload) : await createAccount(payload)
     }
-    ElMessage.success("保存成功")
+    if (editType.value === "channel") {
+      const checked = result?.data || {}
+      if (checked.auto_check_ok) {
+        ElMessage.success("频道已保存并完成检测，空白信息已自动补全")
+      } else {
+        ElMessage.warning(`频道已保存，但自动检测失败：${checked.auto_check_message || "请检查 Bot 和频道权限"}`)
+      }
+    } else {
+      ElMessage.success("保存成功")
+    }
     editVisible.value = false
     await reloadType(editType.value)
-    if (editType.value === "channel" && !isEdit && editForm.prompt_check_after_save) {
-      const created = result?.data || {}
-      const id = created.id || created.item?.id
-      if (id) {
-        try {
-          await ElMessageBox.confirm("频道已保存，是否立即检测频道信息？", "频道检测", {
-            confirmButtonText: "立即检测",
-            cancelButtonText: "稍后",
-            type: "info",
-          })
-          await checkChannel({ id })
-        } catch (error) {
-          if (error !== "cancel") {
-            ElMessage.error(getErrorMessage(error, "检测失败"))
-          }
-        }
-      }
-    }
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "保存失败"))
   } finally {
@@ -1859,7 +1858,7 @@ const EditForm = defineComponent({
             h("div", { class: "section-subtitle" }, current?.tip || ""),
             current?.confirm
               ? renderConfirmSummary(props)
-              : h(resolve("el-form"), { labelPosition: "top" }, (current?.fields || []).map((field) =>
+              : h(resolve("el-form"), { labelPosition: "top" }, () => (current?.fields || []).map((field) =>
                 h(resolve("el-form-item"), {
                   key: field.key,
                   label: field.label,
@@ -1904,7 +1903,7 @@ const EditForm = defineComponent({
             title: section.title,
           }, () => [
             section.tip ? h("div", { class: "section-subtitle form-tip" }, section.tip) : null,
-            h(resolve("el-form"), { labelPosition: "top" }, section.fields.map((field) =>
+            h(resolve("el-form"), { labelPosition: "top" }, () => section.fields.map((field) =>
               h(resolve("el-form-item"), {
                 key: field.key,
                 label: field.label,
@@ -1914,7 +1913,9 @@ const EditForm = defineComponent({
         )),
         h("div", { class: "form-actions" }, [
           h(resolve("el-button"), { onClick: () => emit("cancel") }, () => "取消"),
-          h(resolve("el-button"), { type: "primary", loading: props.saving, onClick: () => emit("save") }, () => "保存"),
+          h(resolve("el-button"), { type: "primary", loading: props.saving, onClick: () => emit("save") }, () => (
+            props.type === "channel" ? "保存并检测" : "保存"
+          )),
         ]),
       ])
     }
@@ -2077,12 +2078,7 @@ function validateWizardStep(type, section, form) {
         ["bot_id", "请选择分发 Bot"],
       ],
     },
-    channel: {
-      basic: [
-        ["title", "请填写频道名称"],
-        ["username", "请填写频道 username 或链接"],
-      ],
-    },
+    channel: { basic: [] },
     bot: {
       basic: [
         ["name", "请填写 Bot 名称"],
@@ -2103,6 +2099,10 @@ function validateWizardStep(type, section, form) {
     },
   }
   const rules = requiredBySection[type]?.[section?.key] || []
+  if (type === "channel" && section?.key === "basic" && !String(form.username || "").trim() && !String(form.chat_id || "").trim()) {
+    ElMessage.warning("请填写频道 username、链接或 chat_id")
+    return false
+  }
   for (const [key, message] of rules) {
     if (!String(form?.[key] || "").trim()) {
       ElMessage.warning(message)
@@ -2760,8 +2760,8 @@ function fieldPlaceholder(field) {
     listen_required_keywords: "一行一个必须命中的内容；留空表示全部监听",
     blocked_keywords: "一行一个过滤关键词，命中后不发送",
     replace_words: "高级替换配置，通常不用填写",
-    title: "填写频道名称，例如：长沙投放频道",
-    username: "填写 @username、频道链接或 chat_id",
+    title: "可留空，保存后自动读取频道名称",
+    username: "填写 @username、频道链接或 chat_id；其余信息将自动补全",
     group_name: "填写分组名称，例如：长沙、上海、北京",
     delivery_status: "填写投放状态，例如：投放中、暂停、待确认",
     collection_status: "填写收录状态，例如：已收录、未收录、待检测",

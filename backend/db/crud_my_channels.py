@@ -280,8 +280,14 @@ def delete_my_channel(channel_id):
         db.close()
 
 
-def set_my_channel_check_result(channel_id, data):
+def set_my_channel_check_result(
+    channel_id,
+    data,
+    fill_empty_only_fields=None,
+    preserve_disabled_status=False,
+):
     db = SessionLocal()
+    fill_empty_only_fields = set(fill_empty_only_fields or [])
 
     try:
         channel = db.query(MyChannel).filter(MyChannel.id == channel_id).first()
@@ -290,8 +296,16 @@ def set_my_channel_check_result(channel_id, data):
             return None
 
         for key, value in (data or {}).items():
-            if hasattr(channel, key):
-                setattr(channel, key, value)
+            if not hasattr(channel, key):
+                continue
+
+            current_value = getattr(channel, key)
+            if key in fill_empty_only_fields and current_value not in (None, ""):
+                continue
+            if key == "status" and preserve_disabled_status and current_value == "disabled":
+                continue
+
+            setattr(channel, key, value)
 
         channel.last_check_at = datetime.utcnow()
         channel.updated_at = datetime.utcnow()

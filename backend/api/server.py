@@ -1233,12 +1233,31 @@ async def fetch_channel_creator(bot_token, chat_id):
         }
 
 
-async def check_my_channel_permissions(channel):
+async def check_my_channel_permissions(
+    channel,
+    fill_empty_only=False,
+    preserve_disabled_status=False,
+):
+    fill_empty_only_fields = {
+        "title",
+        "username",
+        "chat_id",
+        "channel_type",
+        "bot_id",
+    } if fill_empty_only else set()
+
+    def save_check_result(data):
+        return set_my_channel_check_result(
+            channel.id,
+            data,
+            fill_empty_only_fields=fill_empty_only_fields,
+            preserve_disabled_status=preserve_disabled_status,
+        )
+
     bot = resolve_default_bot(getattr(channel, "bot_id", None))
 
     if not bot:
-        updated = set_my_channel_check_result(
-            channel.id,
+        updated = save_check_result(
             {
                 "status": "error",
                 "last_error": "没有可用 Bot，请先添加并启用 Bot",
@@ -1249,8 +1268,7 @@ async def check_my_channel_permissions(channel):
     target = channel.chat_id or channel.username
 
     if not target:
-        updated = set_my_channel_check_result(
-            channel.id,
+        updated = save_check_result(
             {
                 "status": "error",
                 "last_error": "频道 username 和 chat_id 为空",
@@ -1267,30 +1285,36 @@ async def check_my_channel_permissions(channel):
             None,
         )
         chat = chat_result.get("result") or {}
-        bot_info = await bot_get_me(bot.token)
-        bot_user_id = (bot_info.get("result") or {}).get("id")
-        member_result = await asyncio.to_thread(
-            request_post,
-            bot.token,
-            "getChatMember",
-            {
-                "chat_id": chat.get("id") or target,
-                "user_id": bot_user_id,
-            },
-            None,
-        )
-        member = member_result.get("result") or {}
-        permissions = member_permissions(member)
         resolved_chat_id = chat.get("id") or target
+        permission_error = ""
+        permissions = member_permissions({})
+        try:
+            bot_info = await bot_get_me(bot.token)
+            bot_user_id = (bot_info.get("result") or {}).get("id")
+            member_result = await asyncio.to_thread(
+                request_post,
+                bot.token,
+                "getChatMember",
+                {
+                    "chat_id": resolved_chat_id,
+                    "user_id": bot_user_id,
+                },
+                None,
+            )
+            permissions = member_permissions(member_result.get("result") or {})
+        except Exception as permission_exception:
+            permission_error = str(permission_exception)[:1000]
+
         member_count_info, creator_info = await asyncio.gather(
             fetch_channel_member_count(bot.token, resolved_chat_id),
             fetch_channel_creator(bot.token, resolved_chat_id),
         )
         status = "enabled" if permissions["bot_is_member"] else "error"
-        last_error = "" if permissions["bot_is_member"] else "Bot 不在频道或群内"
+        last_error = "" if permissions["bot_is_member"] else (
+            permission_error or "Bot 不在频道或群内"
+        )
 
-        updated = set_my_channel_check_result(
-            channel.id,
+        updated = save_check_result(
             {
                 "title": chat.get("title") or channel.title,
                 "username": f"@{chat.get('username')}".lower() if chat.get("username") else channel.username,
@@ -1307,8 +1331,7 @@ async def check_my_channel_permissions(channel):
         return my_channel_to_dict(updated)
 
     except Exception as e:
-        updated = set_my_channel_check_result(
-            channel.id,
+        updated = save_check_result(
             {
                 "status": "error",
                 "last_error": str(e)[:1000],
@@ -1738,18 +1761,30 @@ def api_get_my_channel(channel_id: int):
     }
 
 
+def with_auto_check_result(item):
+    result = dict(item or {})
+    result["auto_check_ok"] = not bool(result.get("last_error"))
+    result["auto_check_message"] = result.get("last_error") or "频道信息检测完成"
+    return result
+
+
 @app.post("/api/my-channels")
-def api_create_my_channel(data: MyChannelCreate):
+async def api_create_my_channel(data: MyChannelCreate):
     try:
         channel = create_my_channel(data.dict())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return my_channel_to_dict(channel)
+    checked = await check_my_channel_permissions(
+        channel,
+        fill_empty_only=True,
+        preserve_disabled_status=True,
+    )
+    return with_auto_check_result(checked)
 
 
 @app.put("/api/my-channels/{channel_id}")
-def api_update_my_channel(channel_id: int, data: MyChannelUpdate):
+async def api_update_my_channel(channel_id: int, data: MyChannelUpdate):
     try:
         channel = update_my_channel(
             channel_id,
@@ -1764,7 +1799,12 @@ def api_update_my_channel(channel_id: int, data: MyChannelUpdate):
             "message": "channel not found",
         }
 
-    return my_channel_to_dict(channel)
+    checked = await check_my_channel_permissions(
+        channel,
+        fill_empty_only=True,
+        preserve_disabled_status=True,
+    )
+    return with_auto_check_result(checked)
 
 
 @app.delete("/api/my-channels/{channel_id}")

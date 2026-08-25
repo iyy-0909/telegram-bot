@@ -97,6 +97,20 @@ class RewriteLayoutTests(unittest.TestCase):
         task.ai_rewrite_ratio = -10
         self.assertEqual(grok_rewriter.normalize_rewrite_ratio(task), 0)
 
+    def test_ai_request_timeout_is_five_minutes(self):
+        self.assertEqual(grok_rewriter.AI_REQUEST_TIMEOUT_SECONDS, 300)
+
+    def test_completion_token_limit_is_capped_at_one_hundred_thousand(self):
+        self.assertEqual(grok_rewriter.build_completion_token_limit(800), 1600)
+        self.assertEqual(
+            grok_rewriter.build_completion_token_limit(50_000),
+            100_000,
+        )
+        self.assertEqual(
+            grok_rewriter.build_completion_token_limit(100_000),
+            100_000,
+        )
+
     def test_normalize_ai_output_converts_br_tags_to_real_newlines(self):
         output = (
             "<b>长沙夜生活</b><br/>"
