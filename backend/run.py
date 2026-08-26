@@ -11,6 +11,7 @@ from bot.support_bot import start_support_polling
 from bot.control_bot import start_control_polling
 from bot.listener_health import start_listener_health_worker
 from notification import start_notification_service
+from auto_reply import start_account_auto_reply_service
 from init_db import init_db
 from utils.proxy_utils import cleanup_local_proxy_env_vars
 
@@ -18,6 +19,7 @@ from utils.proxy_utils import cleanup_local_proxy_env_vars
 async def start_bot():
     await account_manager.load_accounts()
     start_notification_service(account_manager)
+    start_account_auto_reply_service(account_manager)
 
     logger.info("账号池加载完成")
 

@@ -69,7 +69,7 @@
     </div>
 
     <div v-if="activeMenu === 'guide'">
-      <UserGuide />
+      <UserGuide @navigate="handleMenuChange" />
     </div>
 
     <div v-if="activeMenu === 'accounts'">
@@ -171,6 +171,7 @@
       :visible="accountDialogVisible"
       :form="currentAccount"
       :is-edit="isAccountEdit"
+      :saving="accountSaving"
       @update:visible="accountDialogVisible = $event"
       @submit="submitAccount"
     />
@@ -186,6 +187,7 @@
       :visible="botDialogVisible"
       :form="currentBot"
       :is-edit="isBotEdit"
+      :saving="botSaving"
       @update:visible="botDialogVisible = $event"
       @submit="submitBot"
     />
@@ -423,11 +425,13 @@ const isListenerTaskEdit = ref(false)
 
 const accountDialogVisible = ref(false)
 const isAccountEdit = ref(false)
+const accountSaving = ref(false)
 const accountLoginDialogVisible = ref(false)
 const loginAccountTarget = ref(null)
 
 const botDialogVisible = ref(false)
 const isBotEdit = ref(false)
+const botSaving = ref(false)
 
 const botBindingDialogVisible = ref(false)
 const isBotBindingEdit = ref(false)
@@ -512,6 +516,13 @@ const currentAccount = reactive({
   enabled: true,
   is_default: false,
   remark: "",
+  greeting_enabled: false,
+  greeting_message: "",
+  away_enabled: false,
+  away_message: "",
+  business_start_time: "09:00",
+  business_end_time: "18:00",
+  away_repeat_hours: 12,
 })
 
 
@@ -1765,6 +1776,13 @@ function resetCurrentAccount() {
   currentAccount.enabled = true
   currentAccount.is_default = false
   currentAccount.remark = ""
+  currentAccount.greeting_enabled = false
+  currentAccount.greeting_message = ""
+  currentAccount.away_enabled = false
+  currentAccount.away_message = ""
+  currentAccount.business_start_time = "09:00"
+  currentAccount.business_end_time = "18:00"
+  currentAccount.away_repeat_hours = 12
 }
 
 
@@ -1802,31 +1820,48 @@ async function submitAccount(formData) {
     return
   }
 
-  if (isAccountEdit.value) {
-    await updateAccount(currentAccount.id, {
-      name: currentAccount.name,
-      username: currentAccount.username,
-      session_path: currentAccount.session_path,
-      proxy: currentAccount.proxy,
-      enabled: currentAccount.enabled,
-      remark: currentAccount.remark,
-    })
-
-    ElMessage.success("账号保存成功")
-  } else {
-    await createAccount({
-      name: currentAccount.name,
-      username: currentAccount.username,
-      session_path: currentAccount.session_path,
-      proxy: currentAccount.proxy,
-      remark: currentAccount.remark,
-    })
-
-    ElMessage.success("账号添加成功")
+  const autoReplyPayload = {
+    greeting_enabled: currentAccount.greeting_enabled,
+    greeting_message: currentAccount.greeting_message,
+    away_enabled: currentAccount.away_enabled,
+    away_message: currentAccount.away_message,
+    business_start_time: currentAccount.business_start_time,
+    business_end_time: currentAccount.business_end_time,
+    away_repeat_hours: currentAccount.away_repeat_hours,
   }
 
-  accountDialogVisible.value = false
-  await loadAccounts()
+  accountSaving.value = true
+  try {
+    if (isAccountEdit.value) {
+      await updateAccount(currentAccount.id, {
+        name: currentAccount.name,
+        username: currentAccount.username,
+        session_path: currentAccount.session_path,
+        proxy: currentAccount.proxy,
+        enabled: currentAccount.enabled,
+        remark: currentAccount.remark,
+        ...autoReplyPayload,
+      })
+
+      ElMessage.success("账号保存成功")
+    } else {
+      await createAccount({
+        name: currentAccount.name,
+        username: currentAccount.username,
+        session_path: currentAccount.session_path,
+        proxy: currentAccount.proxy,
+        remark: currentAccount.remark,
+        ...autoReplyPayload,
+      })
+
+      ElMessage.success("账号添加成功")
+    }
+
+    accountDialogVisible.value = false
+    await loadAccounts()
+  } finally {
+    accountSaving.value = false
+  }
 }
 
 
@@ -1843,6 +1878,13 @@ async function saveAccount(row) {
     proxy: row.proxy,
     enabled: row.enabled,
     remark: row.remark,
+    greeting_enabled: row.greeting_enabled,
+    greeting_message: row.greeting_message,
+    away_enabled: row.away_enabled,
+    away_message: row.away_message,
+    business_start_time: row.business_start_time,
+    business_end_time: row.business_end_time,
+    away_repeat_hours: row.away_repeat_hours,
   })
 
   ElMessage.success("账号状态已更新")
@@ -1956,17 +1998,23 @@ async function submitBot(formData) {
     payload.token = currentBot.token
   }
 
-  if (isBotEdit.value) {
-    await updateBot(currentBot.id, payload)
-    ElMessage.success("Bot 保存成功")
-  } else {
-    await createBot(payload)
-    ElMessage.success("Bot 添加成功")
+  botSaving.value = true
+  try {
+    if (isBotEdit.value) {
+      await updateBot(currentBot.id, payload)
+      ElMessage.success("Bot 保存成功")
+    } else {
+      await createBot(payload)
+      ElMessage.success("Bot 添加成功")
+    }
+
+    botDialogVisible.value = false
+    await loadBots()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || error?.response?.data?.message || "Bot 保存失败")
+  } finally {
+    botSaving.value = false
   }
-
-  botDialogVisible.value = false
-
-  await loadBots()
 }
 
 
@@ -2621,10 +2669,10 @@ function toNonNegativeNumber(value, fallback) {
 // 生命周期
 // =========================
 
-async function handleLogin(token) {
+async function handleLogin(token, mode) {
   localStorage.setItem("admin_token", token)
   isAuthenticated.value = true
-  ElMessage.success("登录成功")
+  ElMessage.success(mode === "register" ? "注册成功" : "登录成功")
   window.location.reload()
 }
 

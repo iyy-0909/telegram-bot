@@ -62,6 +62,16 @@
         </template>
       </el-table-column>
 
+      <el-table-column label="自动回复" width="145">
+        <template #default="{ row }">
+          <div class="reply-tags">
+            <el-tag v-if="row.greeting_enabled" type="success" size="small">问候</el-tag>
+            <el-tag v-if="row.away_enabled" type="warning" size="small">离线</el-tag>
+            <span v-if="!row.greeting_enabled && !row.away_enabled">未开启</span>
+          </div>
+        </template>
+      </el-table-column>
+
       <el-table-column prop="remark" label="备注" min-width="100" show-overflow-tooltip />
 
       <el-table-column label="操作" width="285">
@@ -152,6 +162,16 @@ function toggleAccount(row) {
   emit("toggle", row)
 }
 </script>
+
+<style scoped>
+.reply-tags {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+  color: var(--el-text-color-secondary);
+}
+</style>
 
 <style scoped>
 .card-header {

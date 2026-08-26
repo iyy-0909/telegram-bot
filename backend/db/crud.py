@@ -363,6 +363,13 @@ def create_account(
     proxy: str = "",
     remark: str = "",
     is_default: bool = False,
+    greeting_enabled: bool = False,
+    greeting_message: str = "",
+    away_enabled: bool = False,
+    away_message: str = "",
+    business_start_time: str = "09:00",
+    business_end_time: str = "18:00",
+    away_repeat_hours: int = 12,
 ):
     db = SessionLocal()
 
@@ -375,6 +382,13 @@ def create_account(
             enabled=True,
             is_default=bool(is_default),
             remark=remark,
+            greeting_enabled=bool(greeting_enabled),
+            greeting_message=greeting_message or "",
+            away_enabled=bool(away_enabled),
+            away_message=away_message or "",
+            business_start_time=business_start_time or "09:00",
+            business_end_time=business_end_time or "18:00",
+            away_repeat_hours=max(1, int(away_repeat_hours or 12)),
         )
 
         if account.is_default:
@@ -425,6 +439,10 @@ def update_account(account_id: int, data: dict):
 
             if key == "username":
                 account.username = (value or "").strip().lstrip("@")
+                continue
+
+            if key == "away_repeat_hours":
+                account.away_repeat_hours = max(1, min(168, int(value or 12)))
                 continue
 
             if hasattr(account, key):

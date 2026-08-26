@@ -2,7 +2,12 @@
 .gitignore
 .github
 .codex-run
+.codex-backups
+.codex-screenshots
+.codex-temp
+.agents
 .venv
+.pytest_cache
 .idea
 .vscode
 
@@ -23,6 +28,9 @@ admin/node_modules
 admin/dist
 admin-mobile/node_modules
 admin-mobile/dist
+
+migration
+docs/screenshots
 
 **/.DS_Store
 **/Thumbs.db

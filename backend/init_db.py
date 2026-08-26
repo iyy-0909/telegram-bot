@@ -8,6 +8,7 @@ from sqlalchemy import inspect, text
 from db.database import Base
 from db.database import engine
 from db.models import Account
+from db.models import AccountAutoReplyState
 from db.models import BotAccount
 from db.models import ChannelRule
 from db.models import CloneChannel
@@ -32,11 +33,14 @@ from db.models import SupportTag
 from db.models import SupportBot
 from db.models import SystemSetting
 from db.models import TargetBotBinding
+from db.models import UserAccount
+from db.models import UserSession
 
 
 # Importing the model classes above registers every table on Base.metadata.
 _REGISTERED_MODELS = (
     Account,
+    AccountAutoReplyState,
     BotAccount,
     ChannelRule,
     CloneChannel,
@@ -61,6 +65,8 @@ _REGISTERED_MODELS = (
     SupportBot,
     SystemSetting,
     TargetBotBinding,
+    UserAccount,
+    UserSession,
 )
 
 

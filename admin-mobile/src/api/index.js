@@ -1,7 +1,15 @@
 import { http } from "./client"
 
-export function loginAdmin(password) {
-  return http.post("/api/auth/login", { password })
+export function loginAdmin(password, username = "") {
+  return http.post("/api/auth/login", { username, password })
+}
+
+export function getCaptcha() {
+  return http.get("/api/auth/captcha")
+}
+
+export function registerUser(data) {
+  return http.post("/api/auth/register", data)
 }
 
 export function getStatus() {
@@ -134,6 +142,54 @@ export function deleteBot(id) {
 
 export function testBot(id) {
   return http.get(`/api/bots/${id}/test`)
+}
+
+export function getBotProfile(id) {
+  return http.get(`/api/bots/${id}/profile`)
+}
+
+export function updateBotProfile(id, data) {
+  return http.put(`/api/bots/${id}/profile`, data)
+}
+
+export function uploadBotProfilePhoto(id, file) {
+  const formData = new FormData()
+  formData.append("photo", file)
+  return http.post(`/api/bots/${id}/profile/photo`, formData)
+}
+
+export function removeBotProfilePhoto(id) {
+  return http.delete(`/api/bots/${id}/profile/photo`)
+}
+
+export function getBotProfilePhoto(id) {
+  return http.get(`/api/bots/${id}/profile/photo`, { responseType: "blob" })
+}
+
+export function getBotDescriptionPhoto(id) {
+  return http.get(`/api/bots/${id}/profile/description-photo`, { responseType: "blob" })
+}
+
+export function uploadBotDescriptionPhoto(id, file) {
+  const formData = new FormData()
+  formData.append("photo", file)
+  return http.post(`/api/bots/${id}/profile/description-photo`, formData)
+}
+
+export function removeBotDescriptionPhoto(id) {
+  return http.delete(`/api/bots/${id}/profile/description-photo`)
+}
+
+export function updateBotCommands(id, commands) {
+  return http.put(`/api/bots/${id}/profile/commands`, { commands })
+}
+
+export function updateBotPrivacyPolicy(id, url) {
+  return http.put(`/api/bots/${id}/profile/privacy-policy`, { url })
+}
+
+export function removeBotPrivacyPolicy(id) {
+  return http.delete(`/api/bots/${id}/profile/privacy-policy`)
 }
 
 export function getMyChannels(params = {}) {

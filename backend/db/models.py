@@ -4,6 +4,7 @@ from sqlalchemy import String
 from sqlalchemy import Boolean
 from sqlalchemy import Text
 from sqlalchemy import DateTime
+from sqlalchemy import UniqueConstraint
 from datetime import datetime
 from db.database import Base
 from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime
@@ -41,6 +42,28 @@ class Account(Base):
     enabled = Column(Boolean, default=True)
     is_default = Column(Boolean, default=False)
     remark = Column(Text, default="")
+    greeting_enabled = Column(Boolean, default=False)
+    greeting_message = Column(Text, default="")
+    away_enabled = Column(Boolean, default=False)
+    away_message = Column(Text, default="")
+    business_start_time = Column(String, default="09:00")
+    business_end_time = Column(String, default="18:00")
+    away_repeat_hours = Column(Integer, default=12)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AccountAutoReplyState(Base):
+    __tablename__ = "account_auto_reply_states"
+    __table_args__ = (
+        UniqueConstraint("account_id", "telegram_user_id", name="uq_account_auto_reply_peer"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    telegram_user_id = Column(String, nullable=False, index=True)
+    greeting_sent_at = Column(DateTime, nullable=True)
+    away_sent_at = Column(DateTime, nullable=True)
+    last_incoming_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -671,3 +694,39 @@ class ControlAckAlert(Base):
     acknowledged_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserAccount(Base):
+    """Web console user account."""
+
+    __tablename__ = "user_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(32), nullable=False, unique=True, index=True)
+    password_hash = Column(Text, nullable=False)
+    role = Column(String(32), default="user", nullable=False, index=True)
+    status = Column(String(32), default="active", nullable=False, index=True)
+    failed_login_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class UserSession(Base):
+    """Revocable bearer session for a web console user."""
+
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)

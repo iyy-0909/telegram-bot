@@ -51,6 +51,19 @@ class BotApiNetworkError(BotApiError):
     pass
 
 
+class BotProfilePartialUpdateError(BotApiError):
+    def __init__(self, updated_fields, failed_fields, profile=None):
+        self.updated_fields = list(updated_fields or [])
+        self.failed_fields = dict(failed_fields or {})
+        self.profile = dict(profile or {})
+        super().__init__(self._message())
+
+    def _message(self):
+        updated = ", ".join(self.updated_fields) or "无"
+        failed = ", ".join(self.failed_fields.keys()) or "无"
+        return f"Bot 资料部分更新失败；已成功：{updated}；失败：{failed}"
+
+
 def redact_bot_token(text: str) -> str:
     return re.sub(r"/bot[^/\s]+", "/bot<hidden>", text or "")
 
@@ -163,8 +176,281 @@ def request_get(token: str, method: str):
     return result
 
 
+def request_file_download(token: str, file_path: str):
+    """Download a Telegram file without exposing the token-bearing URL."""
+    normalized_path = str(file_path or "").strip().lstrip("/")
+
+    if not normalized_path:
+        raise BotApiError("Telegram file path is empty")
+
+    url = f"{BOT_API_BASE}/file/bot{(token or '').strip()}/{normalized_path}"
+    session = requests.Session()
+    session.trust_env = False
+    proxies = get_bot_api_proxies()
+
+    try:
+        response = session.get(
+            url,
+            timeout=REQUEST_TIMEOUT,
+            proxies=proxies,
+        )
+        response.raise_for_status()
+    except request_exceptions.RequestException as e:
+        raise BotApiNetworkError(describe_request_error(e, "downloadFile")) from e
+
+    return {
+        "content": response.content,
+        "content_type": response.headers.get("content-type") or "application/octet-stream",
+    }
+
+
 async def bot_get_me(token: str):
     return await asyncio.to_thread(request_get, token, "getMe")
+
+
+def _largest_profile_photo(profile_photos):
+    photos = (profile_photos or {}).get("photos") or []
+
+    if not photos:
+        return None
+
+    sizes = photos[0] or []
+
+    if not sizes:
+        return None
+
+    return max(
+        sizes,
+        key=lambda item: (
+            int(item.get("file_size") or 0),
+            int(item.get("width") or 0) * int(item.get("height") or 0),
+        ),
+    )
+
+
+async def bot_get_public_profile(token: str):
+    """Read the bot's default-language public profile directly from Telegram."""
+    (
+        me_result,
+        name_result,
+        description_result,
+        short_description_result,
+        commands_result,
+    ) = (
+        await asyncio.gather(
+            bot_get_me(token),
+            asyncio.to_thread(request_get, token, "getMyName"),
+            asyncio.to_thread(request_get, token, "getMyDescription"),
+            asyncio.to_thread(request_get, token, "getMyShortDescription"),
+            asyncio.to_thread(
+                request_post,
+                token,
+                "getMyCommands",
+                {},
+                None,
+            ),
+        )
+    )
+    me = me_result.get("result") or {}
+    user_id = me.get("id")
+    photo = None
+
+    if user_id is not None:
+        photos_result = await asyncio.to_thread(
+            request_post,
+            token,
+            "getUserProfilePhotos",
+            {
+                "user_id": user_id,
+                "offset": 0,
+                "limit": 1,
+            },
+            None,
+        )
+        photo = _largest_profile_photo(photos_result.get("result") or {})
+
+    username = me.get("username") or ""
+
+    return {
+        "name": (name_result.get("result") or {}).get("name") or "",
+        "description": (
+            (description_result.get("result") or {}).get("description") or ""
+        ),
+        "short_description": (
+            (short_description_result.get("result") or {}).get(
+                "short_description"
+            )
+            or ""
+        ),
+        "about": (
+            (short_description_result.get("result") or {}).get(
+                "short_description"
+            )
+            or ""
+        ),
+        "commands": [
+            {
+                "command": str(item.get("command") or ""),
+                "description": str(item.get("description") or ""),
+            }
+            for item in (commands_result.get("result") or [])
+            if isinstance(item, dict)
+        ],
+        "username": username,
+        "bot_link": f"https://t.me/{username}" if username else "",
+        "has_photo": bool(photo),
+        "photo_file_id": (photo or {}).get("file_id") or "",
+    }
+
+
+async def bot_update_public_profile(
+    token: str,
+    *,
+    name=None,
+    description=None,
+    short_description=None,
+):
+    """Update only explicitly supplied default-language profile fields."""
+    updates = [
+        ("setMyName", "name", name),
+        ("setMyDescription", "description", description),
+        ("setMyShortDescription", "short_description", short_description),
+    ]
+
+    updated_fields = []
+    failed_fields = {}
+    for method, field_name, value in updates:
+        if value is None:
+            continue
+
+        try:
+            await asyncio.to_thread(
+                request_post,
+                token,
+                method,
+                {field_name: value},
+                None,
+            )
+            updated_fields.append(field_name)
+        except Exception as exc:
+            failed_fields[field_name] = exc
+
+    if failed_fields:
+        profile = {}
+        try:
+            profile = await bot_get_public_profile(token)
+        except Exception as exc:
+            failed_fields["refresh"] = exc
+        raise BotProfilePartialUpdateError(
+            updated_fields,
+            failed_fields,
+            profile,
+        )
+
+    return await bot_get_public_profile(token)
+
+
+async def bot_set_commands(token: str, commands):
+    """Set commands for Telegram's default scope and fallback language."""
+    normalized = [
+        {
+            "command": str(item.get("command") or ""),
+            "description": str(item.get("description") or ""),
+        }
+        for item in (commands or [])
+    ]
+    if normalized:
+        await asyncio.to_thread(
+            request_post,
+            token,
+            "setMyCommands",
+            {"commands": json.dumps(normalized, ensure_ascii=False)},
+            None,
+        )
+    else:
+        await asyncio.to_thread(
+            request_post,
+            token,
+            "deleteMyCommands",
+            {},
+            None,
+        )
+    return await bot_get_public_profile(token)
+
+
+async def bot_set_profile_photo(
+    token: str,
+    photo_content: bytes,
+    filename: str = "profile.jpg",
+):
+    photo_payload = json.dumps(
+        {
+            "type": "static",
+            "photo": "attach://profile_photo",
+        },
+        ensure_ascii=False,
+    )
+    return await asyncio.to_thread(
+        request_post,
+        token,
+        "setMyProfilePhoto",
+        {"photo": photo_payload},
+        {
+            "profile_photo": (
+                filename or "profile.jpg",
+                photo_content,
+                "image/jpeg",
+            ),
+        },
+    )
+
+
+async def bot_remove_profile_photo(token: str):
+    return await asyncio.to_thread(
+        request_post,
+        token,
+        "removeMyProfilePhoto",
+        {},
+        None,
+    )
+
+
+async def bot_download_profile_photo(token: str):
+    me_result = await bot_get_me(token)
+    user_id = (me_result.get("result") or {}).get("id")
+
+    if user_id is None:
+        return None
+
+    photos_result = await asyncio.to_thread(
+        request_post,
+        token,
+        "getUserProfilePhotos",
+        {
+            "user_id": user_id,
+            "offset": 0,
+            "limit": 1,
+        },
+        None,
+    )
+    photo = _largest_profile_photo(photos_result.get("result") or {})
+
+    if not photo or not photo.get("file_id"):
+        return None
+
+    file_result = await asyncio.to_thread(
+        request_post,
+        token,
+        "getFile",
+        {"file_id": photo["file_id"]},
+        None,
+    )
+    file_path = (file_result.get("result") or {}).get("file_path")
+
+    if not file_path:
+        raise BotApiError("Telegram did not return a profile photo file path")
+
+    return await asyncio.to_thread(request_file_download, token, file_path)
 
 
 async def bot_edit_message_text(

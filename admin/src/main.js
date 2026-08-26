@@ -18,7 +18,7 @@ axios.interceptors.request.use((config) => {
 axios.interceptors.response.use(
   response => response,
   error => {
-    if (error.response?.status === 401 && !error.config?.url?.includes('/api/auth/login')) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/api/auth/')) {
       localStorage.removeItem('admin_token')
       window.location.reload()
     }

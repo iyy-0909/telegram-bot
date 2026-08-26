@@ -1,25 +1,5 @@
 ﻿<template>
-  <div v-if="!authenticated" class="login-page">
-    <div class="login-card">
-      <div class="login-title">移动运营台</div>
-      <div class="login-subtitle">请输入后台密码，登录后可在手机上处理常用运营动作。</div>
-      <el-form @submit.prevent="handleLogin">
-        <el-form-item>
-          <el-input
-            v-model="password"
-            type="password"
-            size="large"
-            show-password
-            placeholder="后台密码"
-            @keyup.enter="handleLogin"
-          />
-        </el-form-item>
-        <el-button type="primary" size="large" :loading="loginLoading" style="width: 100%" @click="handleLogin">
-          登录
-        </el-button>
-      </el-form>
-    </div>
-  </div>
+  <AuthPanel v-if="!authenticated" @authenticated="handleAuthSuccess" />
 
   <MobileLayout v-else :active="activeTab" @change="changeTab" @refresh="loadActive">
     <HomePage
@@ -238,6 +218,7 @@
       @edit="openEdit"
       @delete="removeItem"
       @test-bot="testBotAction"
+      @manage-profile="openBotProfile"
       @test-support="testSupportAction"
       @toggle-account="toggleAccount"
       @set-default-account="setDefaultAccount"
@@ -291,6 +272,17 @@
     </el-drawer>
 
     <el-drawer
+      v-model="botProfileVisible"
+      class="form-sheet"
+      direction="btt"
+      size="90%"
+      :title="`Telegram 公开资料${botProfileTarget?.name ? ` · ${botProfileTarget.name}` : ''}`"
+      destroy-on-close
+    >
+      <MobileBotProfileEditor :bot="botProfileTarget" :visible="botProfileVisible" />
+    </el-drawer>
+
+    <el-drawer
       v-model="detailVisible"
       class="form-sheet"
       direction="btt"
@@ -314,6 +306,8 @@ import MobileSearchBots from "./components/MobileSearchBots.vue"
 import MobileSearchBotCollections from "./components/MobileSearchBotCollections.vue"
 import MobileSettingsPage from "./components/MobileSettingsPage.vue"
 import MobileControlAlerts from "./components/MobileControlAlerts.vue"
+import MobileBotProfileEditor from "./components/MobileBotProfileEditor.vue"
+import AuthPanel from "./components/AuthPanel.vue"
 import { getErrorMessage, getToken, setToken } from "./api/client"
 import {
   catchupListenerTask,
@@ -351,7 +345,6 @@ import {
   getSendSettings,
   getStatus,
   getSupportBots,
-  loginAdmin,
   pauseCloneTask,
   resumeCloneTask,
   startCloneTask,
@@ -384,8 +377,6 @@ import {
 import { matchesSearch } from "./utils/search"
 
 const authenticated = ref(Boolean(getToken()))
-const password = ref("")
-const loginLoading = ref(false)
 const activeTab = ref(window.localStorage.getItem("mobile_active_tab") || "home")
 const channelView = ref("channels")
 const listenerView = ref("tasks")
@@ -422,6 +413,8 @@ const channels = ref([])
 const supportBots = ref([])
 const templates = ref([])
 const accounts = ref([])
+const botProfileVisible = ref(false)
+const botProfileTarget = ref(null)
 
 const loading = reactive({
   home: false,
@@ -541,25 +534,11 @@ function updateKeyword(key, value) {
   keyword[key] = value
 }
 
-async function handleLogin() {
-  if (!password.value.trim()) {
-    ElMessage.warning("请输入后台密码")
-    return
-  }
-  loginLoading.value = true
-  try {
-    const res = await loginAdmin(password.value.trim())
-    const token = res.data?.token
-    if (!token) throw new Error("登录成功但后端没有返回 token")
-    setToken(token)
-    authenticated.value = true
-    password.value = ""
-    await loadInitial()
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, "登录失败"))
-  } finally {
-    loginLoading.value = false
-  }
+async function handleAuthSuccess(token, mode) {
+  setToken(token)
+  authenticated.value = true
+  ElMessage.success(mode === "register" ? "注册成功" : "登录成功")
+  await loadInitial()
 }
 
 function changeTab(tab) {
@@ -729,6 +708,11 @@ function openCreate(type, templateType = "") {
   editVisible.value = true
 }
 
+function openBotProfile(row) {
+  botProfileTarget.value = row ? { ...row } : null
+  botProfileVisible.value = Boolean(row?.id)
+}
+
 function defaultForm(type) {
   const firstAccount = accounts.value[0] || {}
   const firstBot = bots.value[0] || {}
@@ -793,6 +777,13 @@ function defaultForm(type) {
       collection_status: "",
       remark: "",
       enabled: true,
+      greeting_enabled: false,
+      greeting_message: "",
+      away_enabled: false,
+      away_message: "",
+      business_start_time: "09:00",
+      business_end_time: "18:00",
+      away_repeat_hours: 12,
       status: "enabled",
     },
     bot: {
@@ -994,6 +985,20 @@ async function saveEdit() {
   saving.value = true
   try {
     const payload = payloadFor(editType.value)
+    if (editType.value === "account") {
+      if (!String(payload.name || "").trim() || !String(payload.session_path || "").trim()) {
+        throw new Error("账号名称和 Session 路径不能为空")
+      }
+      if (payload.greeting_enabled && !String(payload.greeting_message || "").trim()) {
+        throw new Error("启用问候消息后必须填写问候内容")
+      }
+      if (payload.away_enabled && !String(payload.away_message || "").trim()) {
+        throw new Error("启用离线消息后必须填写离线内容")
+      }
+      if (![payload.business_start_time, payload.business_end_time].every((value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || "")))) {
+        throw new Error("营业时间请使用 HH:mm 格式，例如 09:00")
+      }
+    }
     const isEdit = Boolean(editForm.id)
     let result = null
     if (editType.value === "listener") {
@@ -1618,6 +1623,7 @@ const MorePage = defineComponent({
     "edit",
     "delete",
     "test-bot",
+    "manage-profile",
     "test-support",
     "toggle-account",
     "set-default-account",
@@ -1727,6 +1733,7 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
       ],
     }, () => [
       h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "bot", item) }, () => "编辑"),
+      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("manage-profile", item) }, () => "公开资料"),
       h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("test-bot", item) }, () => "测试"),
       h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-bot", item) }, () => item.enabled ? "停用" : "启用"),
       h(resolve("el-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "bot", item) }, () => "删除"),
@@ -1786,6 +1793,8 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
       ["手机号", item.phone],
       ["启用状态", enabledLabel(item.enabled)],
       ["默认账号", item.is_default ? "全局默认" : "否"],
+      ["问候消息", item.greeting_enabled ? "已开启" : "未开启"],
+      ["离线消息", item.away_enabled ? "已开启" : "未开启"],
       ["Session", item.session_path],
       ["代理", item.proxy],
       ["备注", item.remark],
@@ -2408,19 +2417,35 @@ function formSections(type, isCreate, form) {
     enabled,
   ]
 
-  const account = [{
-    key: "basic",
-    title: "账号信息",
-    tip: "新增账号请使用“登录账号”流程；这里主要用于编辑已有账号。",
-    fields: [
-      { key: "name", label: "账号名称" },
-      { key: "username", label: "username" },
-      { key: "session_path", label: "Session 路径" },
-      { key: "proxy", label: "代理" },
-      { key: "remark", label: "备注", input: "textarea" },
-      enabled,
-    ],
-  }]
+  const account = [
+    {
+      key: "basic",
+      title: "账号信息",
+      tip: "新增账号请使用“登录账号”流程；这里主要用于编辑已有账号。",
+      fields: [
+        { key: "name", label: "账号名称" },
+        { key: "username", label: "username" },
+        { key: "session_path", label: "Session 路径" },
+        { key: "proxy", label: "代理" },
+        { key: "remark", label: "备注", input: "textarea" },
+        enabled,
+      ],
+    },
+    {
+      key: "auto-reply",
+      title: "私聊自动回复",
+      tip: "仅处理其他用户发来的私聊；群组、频道和机器人消息不会触发。营业时间按服务器本地时间判断。",
+      fields: [
+        { key: "greeting_enabled", label: "问候消息", input: "switch" },
+        { key: "greeting_message", label: "问候内容", input: "textarea" },
+        { key: "away_enabled", label: "离线消息", input: "switch" },
+        { key: "away_message", label: "离线内容", input: "textarea" },
+        { key: "business_start_time", label: "营业开始（HH:mm）", placeholder: "例如 09:00" },
+        { key: "business_end_time", label: "营业结束（HH:mm）", placeholder: "例如 18:00" },
+        { key: "away_repeat_hours", label: "离线消息重复间隔（小时）", input: "number" },
+      ],
+    },
+  ]
 
   const map = {
     listener,

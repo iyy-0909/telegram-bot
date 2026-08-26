@@ -52,6 +52,7 @@ backend/data/downloads/
 *.jpg
 *.jpeg
 *.png
+!admin/src/assets/guide/system-flow.png
 *.webp
 *.gif
 *.svg

@@ -1,20 +1,66 @@
 import asyncio
+import ipaddress
+import os
+import re
 import secrets
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from telethon import errors, functions, types
+
+from auth import (
+    CaptchaError,
+    PasswordValidationError,
+    UsernameValidationError,
+    captcha_manager,
+    hash_password,
+    normalize_username,
+    validate_password,
+    validate_username,
+    verify_password,
+)
+from auth.rate_limit import RateLimitExceeded, auth_rate_limiter
 
 from bot.handlers import get_registered_listener_snapshot, reload_handlers
 from bot.clone_manager import clone_manager
 
+from db import crud_users as user_store
 from db.crud_bot import get_bot
-from bot.bot_sender import bot_get_me, bot_send_text, request_post
+from bot.bot_sender import (
+    bot_download_profile_photo,
+    bot_get_me,
+    bot_get_public_profile,
+    bot_remove_profile_photo,
+    BotProfilePartialUpdateError,
+    bot_set_commands,
+    bot_send_text,
+    bot_set_profile_photo,
+    bot_update_public_profile,
+    redact_bot_token,
+    request_post,
+)
+from bot.botfather_profile import (
+    BotFatherFlowError,
+    BotProfileCapabilityError,
+    BotProfileReadError,
+    download_description_photo,
+    get_botfather_profile_fields,
+    set_description_picture,
+    set_privacy_policy,
+)
+from bot.profile_photo import (
+    MAX_PROFILE_PHOTO_BYTES,
+    ProfilePhotoValidationError,
+    normalize_static_profile_photo,
+)
 
 from bot.notifier import send_control_alert
 from bot.message_links import parse_message_url
@@ -40,6 +86,17 @@ from db.crud_control_alerts import (
     get_control_alert_stats,
     list_control_alerts,
 )
+from db.crud_users import (
+    UsernameAlreadyExists,
+    create_user_session,
+    get_user_by_session_token,
+    get_user_by_username,
+    record_login_failure,
+    record_login_success,
+    revoke_user_session,
+    user_to_dict,
+)
+from db.models import UserAccount
 from accounts.manager import account_manager
 from bot.channel_utils import normalize_channel_identifier, normalize_channel_list_json
 from bot.support_bot import (
@@ -196,11 +253,19 @@ from db.crud_templates import (
 app = FastAPI(title="CloneBot API")
 
 
-ADMIN_PASSWORD = "0909"
-ADMIN_TOKEN = "clonebot-admin-0909"
+ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or "").strip()
+ADMIN_TOKEN = (os.getenv("ADMIN_TOKEN") or "").strip()
+USER_REGISTRATION_ENABLED = os.getenv(
+    "USER_REGISTRATION_ENABLED",
+    "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+AUTH_SESSION_DAYS = max(int(os.getenv("AUTH_SESSION_DAYS", "7")), 1)
 AUTH_EXEMPT_PATHS = {
+    "/api/auth/captcha",
     "/api/auth/login",
+    "/api/auth/register",
 }
+_REGISTRATION_CREATE_LOCK = threading.Lock()
 
 
 app.add_middleware(
@@ -217,6 +282,103 @@ app.add_middleware(
 )
 
 
+def user_role(user) -> str:
+    if isinstance(user, dict):
+        return str(user.get("role") or "")
+    return str(getattr(user, "role", "") or "")
+
+
+def legacy_admin_login_enabled() -> bool:
+    return bool(str(ADMIN_PASSWORD or "").strip() and str(ADMIN_TOKEN or "").strip())
+
+
+def is_legacy_admin_token(token: str) -> bool:
+    configured_token = str(ADMIN_TOKEN or "").strip()
+    candidate = str(token or "").strip()
+    return bool(
+        configured_token
+        and candidate
+        and secrets.compare_digest(candidate, configured_token)
+    )
+
+
+def is_loopback_registration_request(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "").strip()
+    if not host:
+        return False
+
+    normalized_host = host.split("%", 1)[0]
+    try:
+        is_loopback = ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        is_loopback = normalized_host.lower() == "localhost"
+    if not is_loopback:
+        return False
+
+    # A remote request relayed by a local reverse proxy must not become a
+    # bootstrap request merely because the immediate TCP peer is loopback.
+    headers = getattr(request, "headers", None)
+    if headers:
+        for header_name in ("forwarded", "x-forwarded-for", "x-real-ip"):
+            if str(headers.get(header_name) or "").strip():
+                return False
+    return True
+
+
+def create_registration_user(
+    username: str,
+    password_hash: str,
+    *,
+    registration_enabled: bool,
+    loopback_request: bool,
+):
+    """Atomically choose the first-user role and create one web account."""
+    with _REGISTRATION_CREATE_LOCK:
+        db = user_store.SessionLocal()
+        try:
+            has_user = db.query(UserAccount.id).first() is not None
+            if not has_user:
+                if not loopback_request:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="首次管理员账号只能在服务器本机创建",
+                    )
+                role = "admin"
+            else:
+                if not registration_enabled:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="当前暂未开放新用户注册",
+                    )
+                role = "user"
+
+            user = UserAccount(
+                username=username,
+                password_hash=password_hash,
+                role=role,
+                status="active",
+            )
+            db.add(user)
+            try:
+                db.commit()
+            except IntegrityError as exc:
+                db.rollback()
+                raise UsernameAlreadyExists("用户名已被使用") from exc
+            db.refresh(user)
+            return user
+        finally:
+            db.close()
+
+
+def require_bot_profile_admin(request: Request):
+    if user_role(getattr(request.state, "current_user", None)) != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="仅管理员可以修改 Telegram Bot 公开资料",
+        )
+
+
 @app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
     path = request.url.path
@@ -230,17 +392,51 @@ async def require_admin_auth(request: Request, call_next):
     auth_header = request.headers.get("authorization") or ""
     token = auth_header.removeprefix("Bearer ").strip()
 
-    if not secrets.compare_digest(token, ADMIN_TOKEN):
+    if is_legacy_admin_token(token):
+        current_user = {
+            "id": 0,
+            "username": "admin",
+            "role": "admin",
+            "status": "active",
+        }
+        request.state.auth_token = token
+    else:
+        session_result = get_user_by_session_token(token) if token else None
+        if not session_result:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "未登录或登录已失效"},
+            )
+
+        current_user, session_id = session_result
+        request.state.user_session_id = session_id
+        request.state.auth_token = token
+
+    request.state.current_user = current_user
+    method = request.method.upper()
+    self_service_request = (
+        (method == "GET" and path == "/api/auth/me")
+        or (method == "POST" and path == "/api/auth/logout")
+    )
+    if user_role(current_user) != "admin" and not self_service_request:
         return JSONResponse(
-            status_code=401,
-            content={"detail": "未登录或登录已失效"},
+            status_code=403,
+            content={"detail": "仅管理员可以访问管理后台接口"},
         )
 
     return await call_next(request)
 
 
 class LoginRequest(BaseModel):
+    username: str = ""
     password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    captcha_id: str
+    captcha_code: str
 
 
 class RuleCreate(BaseModel):
@@ -385,6 +581,13 @@ class AccountCreate(BaseModel):
     proxy: str = ""
     remark: str = ""
     is_default: bool = False
+    greeting_enabled: bool = False
+    greeting_message: str = ""
+    away_enabled: bool = False
+    away_message: str = ""
+    business_start_time: str = "09:00"
+    business_end_time: str = "18:00"
+    away_repeat_hours: int = 12
 
 
 class AccountUpdate(BaseModel):
@@ -395,6 +598,13 @@ class AccountUpdate(BaseModel):
     enabled: bool = True
     remark: str = ""
     is_default: Optional[bool] = None
+    greeting_enabled: bool = False
+    greeting_message: str = ""
+    away_enabled: bool = False
+    away_message: str = ""
+    business_start_time: str = "09:00"
+    business_end_time: str = "18:00"
+    away_repeat_hours: int = 12
 
 
 class NotificationSettingUpdate(BaseModel):
@@ -599,6 +809,25 @@ class BotUpdate(BaseModel):
     enabled: Optional[bool] = None
     remark: Optional[str] = None
     last_error: Optional[str] = None
+
+
+class BotProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    short_description: Optional[str] = None
+
+
+class BotCommandInput(BaseModel):
+    command: str
+    description: str
+
+
+class BotCommandsUpdate(BaseModel):
+    commands: List[BotCommandInput] = Field(default_factory=list)
+
+
+class BotPrivacyPolicyUpdate(BaseModel):
+    url: str = ""
 
 
 class BotBindingCreate(BaseModel):
@@ -1073,6 +1302,13 @@ def account_to_dict(account):
         "enabled": account.enabled,
         "is_default": bool(getattr(account, "is_default", False)),
         "remark": account.remark,
+        "greeting_enabled": bool(getattr(account, "greeting_enabled", False)),
+        "greeting_message": getattr(account, "greeting_message", "") or "",
+        "away_enabled": bool(getattr(account, "away_enabled", False)),
+        "away_message": getattr(account, "away_message", "") or "",
+        "business_start_time": getattr(account, "business_start_time", "09:00") or "09:00",
+        "business_end_time": getattr(account, "business_end_time", "18:00") or "18:00",
+        "away_repeat_hours": int(getattr(account, "away_repeat_hours", 12) or 12),
         "updated_at": str(account.updated_at) if getattr(account, "updated_at", None) else "",
     }
 
@@ -1118,6 +1354,252 @@ async def refresh_bot_profile(bot):
         return refreshed or bot
     except Exception:
         return bot
+
+
+def get_profile_bot_or_404(bot_id: int):
+    bot = get_bot(bot_id)
+
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot 不存在")
+
+    if not (getattr(bot, "token", "") or "").strip():
+        raise HTTPException(status_code=400, detail="Bot Token 为空")
+
+    return bot
+
+
+def safe_bot_profile_error(error: Exception, token: str) -> str:
+    message = redact_bot_token(str(error))
+    token = (token or "").strip()
+
+    if token:
+        message = message.replace(token, "<hidden>")
+
+    return message[:1000] or "Telegram Bot API 请求失败"
+
+
+def validate_bot_profile_update(data: BotProfileUpdate):
+    update_data = (
+        data.model_dump(exclude_unset=True)
+        if hasattr(data, "model_dump")
+        else data.dict(exclude_unset=True)
+    )
+    limits = {
+        "name": 64,
+        "description": 512,
+        "short_description": 120,
+    }
+
+    for field_name, value in update_data.items():
+        if value is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field_name} 必须是字符串",
+            )
+
+        if len(value) > limits[field_name]:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field_name} 不能超过 {limits[field_name]} 个字符",
+            )
+
+    return update_data
+
+
+def validate_bot_commands(data: BotCommandsUpdate):
+    raw_commands = data.commands or []
+
+    if len(raw_commands) > 100:
+        raise HTTPException(status_code=422, detail="Bot 命令最多允许 100 条")
+
+    commands = []
+    seen = set()
+    for index, item in enumerate(raw_commands, start=1):
+        raw = (
+            item.model_dump()
+            if hasattr(item, "model_dump")
+            else item.dict()
+            if hasattr(item, "dict")
+            else dict(item)
+        )
+        command = str(raw.get("command") or "").strip().lstrip("/")
+        description = str(raw.get("description") or "").strip()
+
+        if not re.fullmatch(r"[a-z0-9_]{1,32}", command):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"第 {index} 条命令格式无效：仅允许 1-32 位小写英文字母、数字和下划线"
+                ),
+            )
+        if not 1 <= len(description) <= 256:
+            raise HTTPException(
+                status_code=422,
+                detail=f"第 {index} 条命令说明必须为 1-256 个字符",
+            )
+        if command in seen:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bot 命令重复：/{command}",
+            )
+
+        seen.add(command)
+        commands.append({"command": command, "description": description})
+
+    return commands
+
+
+def validate_privacy_policy_url(url: str) -> str:
+    normalized = str(url or "").strip()
+
+    if not normalized:
+        return ""
+    if len(normalized) > 2048:
+        raise HTTPException(status_code=422, detail="隐私政策链接不能超过 2048 个字符")
+
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail="隐私政策必须是完整的 http:// 或 https:// 链接",
+        )
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=422,
+            detail="隐私政策链接不能包含用户名或密码",
+        )
+
+    return normalized
+
+
+def bot_profile_capabilities(
+    read_available: bool,
+    owner_available: bool,
+    *,
+    read_reason: str = "",
+    write_reason: str = "",
+):
+    direct_capability = {
+        "read": True,
+        "write": True,
+        "remove": True,
+        "reason": "",
+        "read_reason": "",
+    }
+    extended_capability = {
+        "read": bool(read_available),
+        "write": bool(owner_available),
+        "remove": bool(owner_available),
+        "reason": "" if owner_available else (write_reason or read_reason),
+        "read_reason": "" if read_available else read_reason,
+    }
+    return {
+        "profile": dict(direct_capability),
+        "profile_photo": dict(direct_capability),
+        "commands": dict(direct_capability),
+        "description_photo": dict(extended_capability),
+        "description_media": dict(extended_capability),
+        "privacy_policy": dict(extended_capability),
+    }
+
+
+def apply_profile_role_capabilities(profile: dict, request: Request | None):
+    if request is None:
+        return profile
+    current_user = getattr(request.state, "current_user", None)
+    if user_role(current_user) == "admin":
+        return profile
+
+    reason = "仅管理员可以修改 Telegram Bot 公开资料"
+    for capability in (profile.get("capabilities") or {}).values():
+        if not isinstance(capability, dict):
+            continue
+        capability["write"] = False
+        capability["remove"] = False
+        capability["reason"] = reason
+    return profile
+
+
+async def get_enriched_bot_profile(bot, base_profile=None, extended_fields=None):
+    """Combine HTTP Bot API fields with owner-only MTProto/BotFather fields."""
+    profile = (
+        dict(base_profile)
+        if base_profile is not None
+        else await bot_get_public_profile(bot.token)
+    )
+    username = profile.get("username") or ""
+
+    try:
+        fields = (
+            dict(extended_fields)
+            if extended_fields is not None
+            else await get_botfather_profile_fields(
+                account_manager.clients,
+                username,
+            )
+        )
+        owner_available = bool(
+            fields.get("owner_available")
+            or fields.get("owner_account_id") is not None
+        )
+        profile.update(fields)
+        profile["capabilities"] = bot_profile_capabilities(
+            True,
+            owner_available,
+            write_reason=(
+                "已成功读取 Bot，但已加载账号均不是该 Bot 的所有者"
+                if not owner_available
+                else ""
+            ),
+        )
+    except BotProfileCapabilityError as exc:
+        reason = safe_bot_profile_error(exc, bot.token)
+        profile.update(
+            {
+                "has_description_photo": False,
+                "has_description_document": False,
+                "has_description_media": False,
+                "description_media_type": "",
+                "privacy_policy_url": "",
+                "owner_available": False,
+                "owner_account_id": None,
+                "capabilities": bot_profile_capabilities(
+                    False,
+                    False,
+                    read_reason=reason,
+                    write_reason=reason,
+                ),
+            }
+        )
+
+    return profile
+
+
+async def get_bot_username_or_error(bot):
+    result = await bot_get_me(bot.token)
+    username = str((result.get("result") or {}).get("username") or "").strip()
+    if not username:
+        raise BotProfileCapabilityError("Telegram 未返回 Bot username")
+    return username
+
+
+def bot_profile_response(bot_id: int, profile: dict):
+    profile = dict(profile or {})
+    profile["photo_url"] = (
+        f"/api/bots/{bot_id}/profile/photo"
+        if profile.get("has_photo")
+        else ""
+    )
+    profile["about"] = profile.get("short_description") or profile.get("about") or ""
+    profile["description_photo_url"] = (
+        f"/api/bots/{bot_id}/profile/description-photo"
+        if profile.get("has_description_photo")
+        else ""
+    )
+    return {
+        "ok": True,
+        "profile": profile,
+    }
 
 
 def bot_binding_to_dict(binding):
@@ -1353,15 +1835,148 @@ async def check_my_channel_permissions(
         return my_channel_to_dict(updated)
 
 
-@app.post("/api/auth/login")
-async def api_auth_login(payload: LoginRequest):
-    if not secrets.compare_digest(payload.password, ADMIN_PASSWORD):
-        raise HTTPException(status_code=401, detail="密码错误")
+def _auth_client_key(request: Request):
+    return request.client.host if request.client else "unknown"
 
+
+def _apply_auth_rate_limit(key, limit, window_seconds):
+    try:
+        auth_rate_limiter.hit(key, limit, window_seconds)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"请求过于频繁，请在 {exc.retry_after} 秒后重试",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
+
+@app.get("/api/auth/captcha")
+async def api_auth_captcha(request: Request, response: Response):
+    _apply_auth_rate_limit(
+        f"captcha:{_auth_client_key(request)}",
+        limit=30,
+        window_seconds=10 * 60,
+    )
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     return {
         "ok": True,
-        "token": ADMIN_TOKEN,
+        **captcha_manager.create(),
     }
+
+
+@app.post("/api/auth/register")
+async def api_auth_register(payload: RegisterRequest, request: Request):
+    try:
+        username = validate_username(payload.username)
+        password = validate_password(payload.password)
+    except (UsernameValidationError, PasswordValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    client_key = _auth_client_key(request)
+    _apply_auth_rate_limit(
+        f"register-ip:{client_key}",
+        limit=5,
+        window_seconds=15 * 60,
+    )
+    _apply_auth_rate_limit(
+        f"register-username:{username}",
+        limit=5,
+        window_seconds=15 * 60,
+    )
+
+    try:
+        captcha_manager.verify(payload.captcha_id, payload.captcha_code)
+    except CaptchaError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        user = create_registration_user(
+            username,
+            hash_password(password),
+            registration_enabled=USER_REGISTRATION_ENABLED,
+            loopback_request=is_loopback_registration_request(request),
+        )
+    except UsernameAlreadyExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    token, expires_at = create_user_session(user.id, AUTH_SESSION_DAYS)
+    return {
+        "ok": True,
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "user": user_to_dict(user),
+    }
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(payload: LoginRequest, request: Request):
+    username = normalize_username(payload.username)
+    client_key = _auth_client_key(request)
+    _apply_auth_rate_limit(
+        f"login:{client_key}:{username or 'admin'}",
+        limit=10,
+        window_seconds=10 * 60,
+    )
+
+    if not username:
+        if not legacy_admin_login_enabled():
+            raise HTTPException(
+                status_code=403,
+                detail="静态管理员登录未启用，请使用数据库账号登录",
+            )
+        if not secrets.compare_digest(payload.password, ADMIN_PASSWORD):
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        return {
+            "ok": True,
+            "token": ADMIN_TOKEN,
+            "user": {
+                "id": 0,
+                "username": "admin",
+                "role": "admin",
+                "status": "active",
+            },
+        }
+
+    user = get_user_by_username(username)
+    if not user or user.status != "active":
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    now = datetime.utcnow()
+    if user.locked_until and user.locked_until > now:
+        remaining = max(int((user.locked_until - now).total_seconds()), 1)
+        raise HTTPException(
+            status_code=423,
+            detail=f"登录失败次数过多，请在 {remaining} 秒后重试",
+        )
+
+    if not verify_password(payload.password, user.password_hash):
+        record_login_failure(user.id)
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    user = record_login_success(user.id)
+    token, expires_at = create_user_session(user.id, AUTH_SESSION_DAYS)
+    return {
+        "ok": True,
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "user": user_to_dict(user),
+    }
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    return {
+        "ok": True,
+        "user": request.state.current_user,
+    }
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    token = getattr(request.state, "auth_token", "")
+    if token and not is_legacy_admin_token(token):
+        revoke_user_session(token)
+    return {"ok": True}
 
 
 @app.get("/api/status")
@@ -2639,6 +3254,13 @@ def add_account(data: AccountCreate):
         proxy=data.proxy,
         remark=data.remark,
         is_default=data.is_default,
+        greeting_enabled=data.greeting_enabled,
+        greeting_message=data.greeting_message,
+        away_enabled=data.away_enabled,
+        away_message=data.away_message,
+        business_start_time=data.business_start_time,
+        business_end_time=data.business_end_time,
+        away_repeat_hours=data.away_repeat_hours,
     )
 
     return account_to_dict(account)
@@ -3041,6 +3663,356 @@ async def api_update_bot(bot_id: int, data: BotUpdate):
         bot = await refresh_bot_profile(bot)
 
     return bot_to_dict(bot)
+
+
+@app.get("/api/bots/{bot_id}/profile")
+async def api_get_bot_profile(bot_id: int, request: Request = None):
+    """从 Telegram 实时读取 Bot 默认语言公开资料。"""
+    bot = get_profile_bot_or_404(bot_id)
+
+    try:
+        profile = await get_enriched_bot_profile(bot)
+        profile = apply_profile_role_capabilities(profile, request)
+        return bot_profile_response(bot_id, profile)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.put(
+    "/api/bots/{bot_id}/profile",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_update_bot_profile(bot_id: int, data: BotProfileUpdate):
+    """更新 Telegram Bot 默认语言名称、简介与短简介。"""
+    bot = get_profile_bot_or_404(bot_id)
+    update_data = validate_bot_profile_update(data)
+
+    try:
+        base_profile = await bot_update_public_profile(
+            bot.token,
+            name=update_data.get("name"),
+            description=update_data.get("description"),
+            short_description=update_data.get("short_description"),
+        )
+        profile = await get_enriched_bot_profile(bot, base_profile)
+        return bot_profile_response(bot_id, profile)
+    except BotProfilePartialUpdateError as exc:
+        partial_profile = dict(exc.profile or {})
+        if partial_profile:
+            try:
+                partial_profile = await get_enriched_bot_profile(
+                    bot,
+                    partial_profile,
+                )
+            except Exception:
+                pass
+        failed_fields = {
+            field_name: safe_bot_profile_error(error, bot.token)
+            for field_name, error in exc.failed_fields.items()
+        }
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": str(exc),
+                "updated_fields": exc.updated_fields,
+                "failed_fields": failed_fields,
+                "profile": (
+                    bot_profile_response(bot_id, partial_profile)["profile"]
+                    if partial_profile
+                    else {}
+                ),
+            },
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.post(
+    "/api/bots/{bot_id}/profile/photo",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_upload_bot_profile_photo(
+    bot_id: int,
+    photo: UploadFile = File(...),
+):
+    """上传 JPG、PNG 或 WebP，并转换为 Telegram 要求的静态 JPG。"""
+    bot = get_profile_bot_or_404(bot_id)
+    content = await photo.read(MAX_PROFILE_PHOTO_BYTES + 1)
+
+    try:
+        jpeg_content = await asyncio.to_thread(
+            normalize_static_profile_photo,
+            content,
+            content_type=photo.content_type or "",
+        )
+    except ProfilePhotoValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        await bot_set_profile_photo(
+            bot.token,
+            jpeg_content,
+            "profile.jpg",
+        )
+        profile = await get_enriched_bot_profile(bot)
+        return bot_profile_response(bot_id, profile)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.get("/api/bots/{bot_id}/profile/photo")
+async def api_get_bot_profile_photo(bot_id: int):
+    """代理下载当前头像，避免把带 Token 的 Telegram 文件地址交给前端。"""
+    bot = get_profile_bot_or_404(bot_id)
+
+    try:
+        photo = await bot_download_profile_photo(bot.token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+    if not photo:
+        raise HTTPException(status_code=404, detail="Bot 当前没有头像")
+
+    return Response(
+        content=photo.get("content") or b"",
+        media_type=(photo.get("content_type") or "image/jpeg").split(";", 1)[0],
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.delete(
+    "/api/bots/{bot_id}/profile/photo",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_delete_bot_profile_photo(bot_id: int):
+    """移除 Telegram Bot 当前头像。"""
+    bot = get_profile_bot_or_404(bot_id)
+
+    try:
+        await bot_remove_profile_photo(bot.token)
+        profile = await get_enriched_bot_profile(bot)
+        return bot_profile_response(bot_id, profile)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.put(
+    "/api/bots/{bot_id}/profile/commands",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_update_bot_commands(bot_id: int, data: BotCommandsUpdate):
+    """更新默认作用域、默认语言的 Bot 命令；空列表会删除该命令集。"""
+    bot = get_profile_bot_or_404(bot_id)
+    commands = validate_bot_commands(data)
+
+    try:
+        base_profile = await bot_set_commands(bot.token, commands)
+        profile = await get_enriched_bot_profile(bot, base_profile)
+        return bot_profile_response(bot_id, profile)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.post(
+    "/api/bots/{bot_id}/profile/description-photo",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_upload_bot_description_photo(
+    bot_id: int,
+    photo: UploadFile = File(...),
+):
+    """通过 Bot 所有者账号和 BotFather 更新聊天空白页描述图片。"""
+    bot = get_profile_bot_or_404(bot_id)
+    content = await photo.read(MAX_PROFILE_PHOTO_BYTES + 1)
+
+    try:
+        jpeg_content = await asyncio.to_thread(
+            normalize_static_profile_photo,
+            content,
+            content_type=photo.content_type or "",
+        )
+    except ProfilePhotoValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        username = await get_bot_username_or_error(bot)
+        verified = await set_description_picture(
+            account_manager.clients,
+            username,
+            jpeg_content,
+        )
+        base_profile = await bot_get_public_profile(bot.token)
+        profile = await get_enriched_bot_profile(
+            bot,
+            base_profile,
+            verified,
+        )
+        return bot_profile_response(bot_id, profile)
+    except BotProfileCapabilityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except BotFatherFlowError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.get("/api/bots/{bot_id}/profile/description-photo")
+async def api_get_bot_description_photo(bot_id: int):
+    """代理下载描述图片，不向前端暴露账号 session 或 Bot Token。"""
+    bot = get_profile_bot_or_404(bot_id)
+
+    try:
+        username = await get_bot_username_or_error(bot)
+        photo = await download_description_photo(
+            account_manager.clients,
+            username,
+        )
+    except BotProfileCapabilityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+    if not photo:
+        raise HTTPException(status_code=404, detail="Bot 当前没有描述图片")
+
+    return Response(
+        content=photo.get("content") or b"",
+        media_type=(photo.get("content_type") or "image/jpeg").split(";", 1)[0],
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.delete(
+    "/api/bots/{bot_id}/profile/description-photo",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_delete_bot_description_photo(bot_id: int):
+    """通过 BotFather 的 /empty 流程移除描述图片。"""
+    bot = get_profile_bot_or_404(bot_id)
+
+    try:
+        username = await get_bot_username_or_error(bot)
+        verified = await set_description_picture(
+            account_manager.clients,
+            username,
+            None,
+        )
+        base_profile = await bot_get_public_profile(bot.token)
+        profile = await get_enriched_bot_profile(
+            bot,
+            base_profile,
+            verified,
+        )
+        return bot_profile_response(bot_id, profile)
+    except BotProfileCapabilityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except BotFatherFlowError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.put(
+    "/api/bots/{bot_id}/profile/privacy-policy",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_update_bot_privacy_policy(
+    bot_id: int,
+    data: BotPrivacyPolicyUpdate,
+):
+    """更新 Bot 隐私政策 URL；空字符串通过 BotFather /empty 清除。"""
+    bot = get_profile_bot_or_404(bot_id)
+    url = validate_privacy_policy_url(data.url)
+
+    try:
+        username = await get_bot_username_or_error(bot)
+        verified = await set_privacy_policy(
+            account_manager.clients,
+            username,
+            url,
+        )
+        base_profile = await bot_get_public_profile(bot.token)
+        profile = await get_enriched_bot_profile(
+            bot,
+            base_profile,
+            verified,
+        )
+        return bot_profile_response(bot_id, profile)
+    except BotProfileCapabilityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except BotFatherFlowError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=safe_bot_profile_error(exc, bot.token),
+        ) from exc
+
+
+@app.delete(
+    "/api/bots/{bot_id}/profile/privacy-policy",
+    dependencies=[Depends(require_bot_profile_admin)],
+)
+async def api_delete_bot_privacy_policy(bot_id: int):
+    """清除 Bot 隐私政策 URL。"""
+    return await api_update_bot_privacy_policy(
+        bot_id,
+        BotPrivacyPolicyUpdate(url=""),
+    )
 
 
 @app.delete("/api/bots/{bot_id}")

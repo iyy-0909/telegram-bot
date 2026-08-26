@@ -21,7 +21,7 @@ http.interceptors.response.use(
   (error) => {
     if (
       error.response?.status === 401 &&
-      !error.config?.url?.includes("/api/auth/login")
+      !error.config?.url?.includes("/api/auth/")
     ) {
       window.localStorage.removeItem(TOKEN_STORAGE_KEY)
       window.location.reload()
