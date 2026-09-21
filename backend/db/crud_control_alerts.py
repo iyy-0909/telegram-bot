@@ -1,10 +1,12 @@
 import json
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, inspect
 
+from auth.tenant import current_tenant_user_id
 from db.database import SessionLocal
-from db.models import ControlAckAlert
+from db.models import Account, BotAccount, CloneTask, ControlAckAlert, ListenerTask, SupportBot
+from utils.redaction import redact_sensitive_data, redact_sensitive_text
 
 
 REPEAT_SECONDS = 600
@@ -12,6 +14,49 @@ REPEAT_SECONDS = 600
 
 def now():
     return datetime.utcnow()
+
+
+def resolve_alert_owner(db, context):
+    context = context or {}
+    current_owner = current_tenant_user_id()
+    if current_owner is not None:
+        return current_owner
+    lookups = (
+        (SupportBot, context.get("support_bot_id")),
+        (ListenerTask, context.get("listener_task_id")),
+        (CloneTask, context.get("clone_task_id")),
+        (BotAccount, context.get("bot_id")),
+        (Account, context.get("account_id")),
+    )
+    database_inspector = inspect(db.get_bind())
+    for model, resource_id in lookups:
+        if resource_id in (None, "", 0, "0"):
+            continue
+        if not database_inspector.has_table(model.__tablename__):
+            continue
+        owner_user_id = db.query(model.owner_user_id).filter(
+            model.id == int(resource_id)
+        ).scalar()
+        if owner_user_id is not None:
+            return owner_user_id
+    task_id = context.get("task_id")
+    task_type = str(context.get("task_type") or context.get("module") or "").lower()
+    task_model = None
+    if "listener" in task_type:
+        task_model = ListenerTask
+    elif "clone" in task_type:
+        task_model = CloneTask
+    if (
+        task_model is not None
+        and task_id not in (None, "", 0, "0")
+        and database_inspector.has_table(task_model.__tablename__)
+    ):
+        owner_user_id = db.query(task_model.owner_user_id).filter(
+            task_model.id == int(task_id)
+        ).scalar()
+        if owner_user_id is not None:
+            return owner_user_id
+    return None
 
 
 def _parse_context(value):
@@ -32,12 +77,12 @@ def alert_to_dict(alert):
         "level": alert.level or "warning",
         "module": alert.module or "",
         "title": alert.title or "",
-        "detail": alert.detail or "",
+        "detail": redact_sensitive_text(alert.detail),
         "task_id": alert.task_id,
         "channel": alert.channel or "",
         "target": alert.target or "",
         "bot_name": alert.bot_name or "",
-        "context": _parse_context(alert.context_json),
+        "context": redact_sensitive_data(_parse_context(alert.context_json)),
         "status": alert.status or "pending",
         "support_bot_id": alert.support_bot_id,
         "customer_id": alert.customer_id,
@@ -55,13 +100,19 @@ def alert_to_dict(alert):
 
 
 def upsert_ack_alert(alert_key, title, detail="", module="", context=None, level="warning"):
-    context = context or {}
+    context = redact_sensitive_data(context or {})
     current = now()
     db = SessionLocal()
     try:
+        owner_user_id = resolve_alert_owner(db, context)
+        if owner_user_id is None:
+            raise RuntimeError("系统告警缺少可验证的归属人")
         alert = (
             db.query(ControlAckAlert)
-            .filter(ControlAckAlert.alert_key == str(alert_key))
+            .filter(
+                ControlAckAlert.alert_key == str(alert_key),
+                ControlAckAlert.owner_user_id == owner_user_id,
+            )
             .first()
         )
         is_new = alert is None
@@ -69,6 +120,7 @@ def upsert_ack_alert(alert_key, title, detail="", module="", context=None, level
 
         if not alert:
             alert = ControlAckAlert(
+                owner_user_id=owner_user_id,
                 alert_key=str(alert_key),
                 created_at=current,
             )
@@ -77,7 +129,7 @@ def upsert_ack_alert(alert_key, title, detail="", module="", context=None, level
         alert.level = str(level or context.get("level") or "warning").lower()
         alert.module = module or context.get("module") or alert.module or ""
         alert.title = title or alert.title or ""
-        alert.detail = str(detail or "")
+        alert.detail = redact_sensitive_text(detail)
         alert.task_id = context.get("task_id")
         alert.channel = str(context.get("channel") or "")
         alert.target = str(context.get("target") or "")
@@ -198,28 +250,39 @@ def list_control_alerts(status="all", level="all", module="", q="", limit=100, o
         if module:
             query = query.filter(ControlAckAlert.module == module)
         keyword = str(q or "").strip()
-        if keyword:
-            pattern = f"%{keyword}%"
-            query = query.filter(or_(
-                ControlAckAlert.title.ilike(pattern),
-                ControlAckAlert.detail.ilike(pattern),
-                ControlAckAlert.module.ilike(pattern),
-                ControlAckAlert.channel.ilike(pattern),
-                ControlAckAlert.target.ilike(pattern),
-                ControlAckAlert.bot_name.ilike(pattern),
-            ))
-
-        total = query.count()
-        rows = (
-            query.order_by(
-                case((ControlAckAlert.status == "pending", 0), else_=1),
-                ControlAckAlert.updated_at.desc(),
-                ControlAckAlert.id.desc(),
-            )
-            .offset(max(int(offset or 0), 0))
-            .limit(min(max(int(limit or 100), 1), 500))
-            .all()
+        ordered_query = query.order_by(
+            case((ControlAckAlert.status == "pending", 0), else_=1),
+            ControlAckAlert.updated_at.desc(),
+            ControlAckAlert.id.desc(),
         )
+        if keyword:
+            normalized_keyword = keyword.casefold()
+            matched_rows = []
+            for row in ordered_query.all():
+                item = alert_to_dict(row)
+                searchable = " ".join([
+                    str(item.get("title") or ""),
+                    str(item.get("detail") or ""),
+                    str(item.get("module") or ""),
+                    str(item.get("channel") or ""),
+                    str(item.get("target") or ""),
+                    str(item.get("bot_name") or ""),
+                    json.dumps(item.get("context") or {}, ensure_ascii=False),
+                ]).casefold()
+                if normalized_keyword in searchable:
+                    matched_rows.append(row)
+            total = len(matched_rows)
+            start = max(int(offset or 0), 0)
+            page_size = min(max(int(limit or 100), 1), 500)
+            rows = matched_rows[start:start + page_size]
+        else:
+            total = query.count()
+            rows = (
+                ordered_query
+                .offset(max(int(offset or 0), 0))
+                .limit(min(max(int(limit or 100), 1), 500))
+                .all()
+            )
         return {"items": [alert_to_dict(row) for row in rows], "total": total}
     finally:
         db.close()

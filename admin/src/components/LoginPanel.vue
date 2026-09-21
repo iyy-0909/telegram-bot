@@ -5,7 +5,7 @@
         <div class="product-mark">TG</div>
         <div>
           <h1 id="auth-title">Telegram 运营后台</h1>
-          <p>{{ mode === "login" ? "正常登录请输入用户名和密码" : "首次使用请在服务器本机创建首个账号" }}</p>
+          <p>{{ mode === "login" ? "正常登录请输入用户名和密码" : "注册后由管理员分配功能和使用期限" }}</p>
         </div>
       </header>
 
@@ -15,8 +15,8 @@
       </el-radio-group>
 
       <el-alert
-        v-show="requestError"
-        :title="requestError"
+        v-show="requestError || initialError"
+        :title="requestError || initialError"
         type="error"
         show-icon
         :closable="false"
@@ -40,7 +40,7 @@
             placeholder="4-24 位，以字母开头"
             clearable
           />
-          <div class="field-help">支持字母、数字和下划线，注册后不可修改。首个账号成为管理员，后续注册由系统配置决定。</div>
+          <div class="field-help">支持字母、数字和下划线，注册后不可修改。注册后由管理员分配功能和使用期限。</div>
         </el-form-item>
 
         <el-form-item v-else label="用户名" prop="loginUsername">
@@ -52,7 +52,7 @@
             placeholder="请输入用户名"
             clearable
           />
-          <div class="field-help">正常登录需要填写已注册的用户名。首次使用可在服务器本机切换到注册。</div>
+          <div class="field-help">正常登录需要填写已注册的用户名。没有账号时可切换到注册。</div>
         </el-form-item>
 
         <el-form-item label="密码" prop="password">
@@ -124,6 +124,13 @@
 import { computed, nextTick, reactive, ref, watch } from "vue"
 import { Refresh } from "@element-plus/icons-vue"
 import { getCaptcha, loginAdmin, registerUser } from "../api/auth"
+
+defineProps({
+  initialError: {
+    type: String,
+    default: "",
+  },
+})
 
 const emit = defineEmits(["login"])
 

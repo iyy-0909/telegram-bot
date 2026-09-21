@@ -70,6 +70,7 @@
               include-disabled
               allow-create
               :bot-id="localForm.bot_id"
+              :load-options="channelOptionsEnabled"
               placeholder="选择或输入目标频道"
             />
           </el-form-item>
@@ -90,7 +91,16 @@
         </div>
       </section>
 
-      <section class="form-section">
+      <el-alert
+        v-if="!contentProcessingEnabled"
+        type="info"
+        show-icon
+        :closable="false"
+        title="免费版按原文直接克隆"
+        description="内容过滤、替换、联系方式处理、二维码过滤、AI 改写和内容模板均不可配置。"
+      />
+
+      <section v-if="contentProcessingEnabled" class="form-section">
         <div class="section-title">内容处理</div>
 
         <div class="form-grid two">
@@ -176,7 +186,7 @@
         </div>
       </section>
 
-      <section class="form-section">
+      <section v-if="contentProcessingEnabled" class="form-section">
         <div class="section-title">AI 改写</div>
         <div class="switch-row">
           <span>启用 AI 改写</span>
@@ -194,12 +204,12 @@
             <AiRewriteRatioField v-model="localForm.ai_rewrite_ratio" />
           </el-form-item>
           <el-form-item label="改写提示词">
-            <AiPromptSelect v-model="localForm.ai_prompt_template_id" :prompts="aiPrompts" />
+            <AiPromptSelect v-model="localForm.ai_prompt_template_id" v-model:mode="localForm.ai_prompt_mode" :prompts="aiPrompts" />
           </el-form-item>
         </template>
       </section>
 
-      <section class="form-section">
+      <section v-if="contentProcessingEnabled" class="form-section">
         <TemplateRulePanel
           :values="localForm"
           :templates="templates"
@@ -259,6 +269,14 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  contentProcessingEnabled: {
+    type: Boolean,
+    default: true,
+  },
+  channelOptionsEnabled: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 const emit = defineEmits(["update:visible", "submit"])
@@ -301,6 +319,7 @@ const localForm = reactive({
   ai_rewrite_model: "",
   ai_rewrite_prompt: "",
   ai_prompt_template_id: null,
+  ai_prompt_mode: "fixed",
   ai_rewrite_max_chars: 800,
   ai_rewrite_ratio: 70,
   ai_rewrite_failure_mode: "fallback",
@@ -371,6 +390,7 @@ watch(
       ai_rewrite_model: val.ai_rewrite_model || "",
       ai_rewrite_prompt: val.ai_rewrite_prompt || "",
       ai_prompt_template_id: normalizeTemplateId(val.ai_prompt_template_id),
+      ai_prompt_mode: val.ai_prompt_mode === "auto" ? "auto" : "fixed",
       ai_rewrite_max_chars: toBoundedNumber(val.ai_rewrite_max_chars, 800, 100, 4000),
       ai_rewrite_ratio: toBoundedNumber(val.ai_rewrite_ratio, 70, 0, 100),
       ai_rewrite_failure_mode: val.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
@@ -380,7 +400,7 @@ watch(
 )
 
 function submit() {
-  emit("submit", {
+  const payload = {
     ...localForm,
     source_channel: normalizeChannelInput(localForm.source_channel),
     target_channels: JSON.stringify(uniqueChannels(parseChannels(localForm.target_channels))),
@@ -398,6 +418,7 @@ function submit() {
     ai_rewrite_model: (localForm.ai_rewrite_model || "").trim(),
     ai_rewrite_prompt: "",
     ai_prompt_template_id: normalizeTemplateId(localForm.ai_prompt_template_id),
+    ai_prompt_mode: localForm.ai_prompt_mode === "auto" ? "auto" : "fixed",
     ai_rewrite_max_chars: toBoundedNumber(localForm.ai_rewrite_max_chars, 800, 100, 4000),
     ai_rewrite_ratio: toBoundedNumber(localForm.ai_rewrite_ratio, 70, 0, 100),
     ai_rewrite_failure_mode: localForm.ai_rewrite_failure_mode === "skip" ? "skip" : "fallback",
@@ -422,7 +443,37 @@ function submit() {
     selected_footer_template_id: localForm.use_random_footer
       ? normalizeTemplateId(localForm.selected_footer_template_id)
       : null,
-  })
+  }
+
+  if (!props.contentProcessingEnabled) {
+    Object.assign(payload, {
+      blocked_keywords: "[]",
+      replace_words: "{}",
+      footer: "",
+      remove_contact_lines: false,
+      filter_qr_code: false,
+      ai_rewrite_enabled: false,
+      ai_rewrite_model: "",
+      ai_rewrite_prompt: "",
+      ai_prompt_template_id: null,
+      ai_prompt_mode: "fixed",
+      ai_rewrite_ratio: 0,
+      use_random_head: false,
+      use_random_body: false,
+      use_random_footer: false,
+      footer_leading_blank_line: false,
+      selected_filter_template_group_id: null,
+      selected_link_template_group_id: null,
+      selected_contact_template_group_id: null,
+      selected_head_template_group_id: null,
+      selected_body_template_group_id: null,
+      selected_footer_template_group_id: null,
+      selected_head_template_id: null,
+      selected_body_template_id: null,
+      selected_footer_template_id: null,
+    })
+  }
+  emit("submit", payload)
 }
 
 function enabledTemplateGroupsByType(type) {

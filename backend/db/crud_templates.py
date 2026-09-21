@@ -1,6 +1,7 @@
 import random
 from datetime import datetime
 
+from auth.tenant import current_tenant_user_id
 from db.database import SessionLocal
 from db.models import ContentTemplate
 from bot.logger import logger
@@ -582,8 +583,16 @@ def normalize_contact_rule_config(value):
     return config
 
 
-def ensure_default_contact_rule():
+def ensure_default_contact_rule(owner_user_id=None):
     import json
+
+    resolved_owner_user_id = (
+        int(owner_user_id)
+        if owner_user_id not in (None, "", 0, "0")
+        else current_tenant_user_id()
+    )
+    if resolved_owner_user_id is None:
+        raise PermissionError("创建默认联系方式规则时缺少归属人")
 
     db = SessionLocal()
 
@@ -591,6 +600,7 @@ def ensure_default_contact_rule():
         group = (
             db.query(ContentTemplate)
             .filter(
+                ContentTemplate.owner_user_id == resolved_owner_user_id,
                 ContentTemplate.type == "contact",
                 ContentTemplate.parent_id.is_(None),
                 ContentTemplate.name == DEFAULT_CONTACT_RULE_NAME,
@@ -600,6 +610,7 @@ def ensure_default_contact_rule():
 
         if not group:
             group = ContentTemplate(
+                owner_user_id=resolved_owner_user_id,
                 parent_id=None,
                 name=DEFAULT_CONTACT_RULE_NAME,
                 type="contact",
@@ -613,6 +624,7 @@ def ensure_default_contact_rule():
         item = (
             db.query(ContentTemplate)
             .filter(
+                ContentTemplate.owner_user_id == resolved_owner_user_id,
                 ContentTemplate.type == "contact",
                 ContentTemplate.parent_id == group.id,
             )
@@ -621,6 +633,7 @@ def ensure_default_contact_rule():
 
         if not item:
             item = ContentTemplate(
+                owner_user_id=resolved_owner_user_id,
                 parent_id=group.id,
                 name=DEFAULT_CONTACT_RULE_ITEM_NAME,
                 type="contact",
@@ -640,7 +653,7 @@ def ensure_default_contact_rule():
         db.close()
 
 
-def get_contact_rule_config(selected_group_id=None):
+def get_contact_rule_config(selected_group_id=None, owner_user_id=None):
     try:
         group = None
         if selected_group_id:
@@ -652,7 +665,14 @@ def get_contact_rule_config(selected_group_id=None):
             or group.type != "contact"
             or group.parent_id is not None
         ):
-            group = ensure_default_contact_rule()
+            resolved_owner_user_id = (
+                int(owner_user_id)
+                if owner_user_id not in (None, "", 0, "0")
+                else current_tenant_user_id()
+            )
+            if resolved_owner_user_id is None:
+                return normalize_contact_rule_config(DEFAULT_CONTACT_RULE_CONFIG)
+            group = ensure_default_contact_rule(resolved_owner_user_id)
 
         items = get_enabled_template_items_by_group("contact", int(group.id))
         for item in items:

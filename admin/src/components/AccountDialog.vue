@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="visible"
     @update:model-value="$emit('update:visible', $event)"
-    :title="isEdit ? '编辑账号' : '新增账号'"
+    title="编辑账号"
     width="min(720px, calc(100vw - 24px))"
     destroy-on-close
   >
@@ -14,11 +14,17 @@
         <el-form-item label="Telegram 用户名">
           <el-input v-model="localForm.username" placeholder="例如 review 或 @review" />
         </el-form-item>
-        <el-form-item label="Session 路径" prop="session_path">
-          <el-input v-model="localForm.session_path" placeholder="例如 data/sessions/main_1" />
-        </el-form-item>
         <el-form-item label="代理">
-          <el-input v-model="localForm.proxy" placeholder="留空则使用系统代理" />
+          <el-input
+            v-model="localForm.proxy"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :disabled="localForm.clear_proxy"
+            :placeholder="isEdit && localForm.has_proxy ? '已配置，留空保持不变' : '留空则使用系统代理'"
+          />
+          <div v-if="isEdit && localForm.has_proxy" class="field-help">代理凭据不会回显；填写新值可替换。</div>
+          <el-checkbox v-if="isEdit && localForm.has_proxy" v-model="localForm.clear_proxy">清除当前代理配置</el-checkbox>
         </el-form-item>
       </div>
 
@@ -50,8 +56,13 @@
             :rows="3"
             maxlength="4096"
             show-word-limit
-            placeholder="例如：您好，感谢您的联系，我们会尽快回复。"
+            placeholder="例如：<b>您好，欢迎咨询！</b>"
           />
+          <div class="field-help">
+            支持 Telegram HTML：<code>&lt;b&gt;加粗&lt;/b&gt;</code>、<code>&lt;i&gt;斜体&lt;/i&gt;</code>、<code>&lt;u&gt;下划线&lt;/u&gt;</code>、<code>&lt;s&gt;删除线&lt;/s&gt;</code>、<code>&lt;code&gt;等宽文字&lt;/code&gt;</code>。
+            链接示例：<code>&lt;a href="https://t.me/example"&gt;联系客服&lt;/a&gt;</code>。
+            换行请直接按回车，不使用 &lt;br&gt;；普通文本可直接填写。显示尖括号或 &amp; 时请写成 &amp;lt;、&amp;gt;、&amp;amp;。
+          </div>
         </el-form-item>
       </section>
 
@@ -110,7 +121,8 @@ const emit = defineEmits(["update:visible", "submit"])
 const formRef = ref(null)
 
 const localForm = reactive({
-  id: null, name: "", username: "", session_path: "", proxy: "", enabled: true, remark: "",
+  id: null, name: "", username: "",
+  proxy: "", has_proxy: false, clear_proxy: false, enabled: true, remark: "",
   greeting_enabled: false, greeting_message: "", away_enabled: false, away_message: "",
   business_start_time: "09:00", business_end_time: "18:00", away_repeat_hours: 12,
 })
@@ -122,7 +134,6 @@ const requiredWhen = (enabledField, message) => (_rule, value, callback) => {
 
 const rules = {
   name: [{ required: true, message: "请输入账号名称", trigger: "blur" }],
-  session_path: [{ required: true, message: "请输入 Session 路径", trigger: "blur" }],
   greeting_message: [{ validator: requiredWhen("greeting_enabled", "请输入问候内容"), trigger: "blur" }],
   away_message: [{ validator: requiredWhen("away_enabled", "请输入离线内容"), trigger: "blur" }],
   business_start_time: [{ required: true, message: "请选择营业开始时间", trigger: "change" }],
@@ -133,7 +144,7 @@ watch(() => props.form, (val) => {
   if (!val) return
   Object.assign(localForm, {
     id: val.id ?? null, name: val.name || "", username: val.username || "",
-    session_path: val.session_path || "", proxy: val.proxy || "", enabled: val.enabled !== false,
+    proxy: "", has_proxy: Boolean(val.has_proxy), clear_proxy: false, enabled: val.enabled !== false,
     remark: val.remark || "", greeting_enabled: Boolean(val.greeting_enabled),
     greeting_message: val.greeting_message || "", away_enabled: Boolean(val.away_enabled),
     away_message: val.away_message || "", business_start_time: val.business_start_time || "09:00",
@@ -157,5 +168,6 @@ async function submit() {
 .section-title { color: var(--el-text-color-primary); font-weight: 600; }
 .section-description, .schedule-note { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.5; }
 .field-suffix { margin-left: 8px; color: var(--el-text-color-secondary); }
+.field-help { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 @media (max-width: 600px) { .form-grid, .schedule-grid { grid-template-columns: 1fr; } .section-heading { gap: 12px; } }
 </style>

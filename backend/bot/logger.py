@@ -3,11 +3,60 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from utils.redaction import redact_sensitive_text
+
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_LEVEL = os.getenv("CLONEBOT_LOG_LEVEL", "INFO").upper()
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Redact credentials and private account identifiers before formatting."""
+
+    def filter(self, record):
+        try:
+            message = record.getMessage()
+        except Exception:
+            message = str(record.msg or "")
+
+        record.msg = redact_sensitive_text(message)
+        record.args = ()
+
+        if record.exc_info:
+            try:
+                exception_text = logging.Formatter().formatException(record.exc_info)
+                record.exc_text = redact_sensitive_text(exception_text)
+            except Exception:
+                record.exc_text = "<exception details unavailable>"
+
+        if record.stack_info:
+            record.stack_info = redact_sensitive_text(record.stack_info)
+
+        return True
+
+
+def _add_sensitive_filter(target):
+    if not any(isinstance(item, SensitiveDataFilter) for item in target.filters):
+        target.addFilter(SensitiveDataFilter())
+
+
+def install_global_sensitive_filter():
+    """Sanitize records from application and third-party loggers at creation."""
+    current_factory = logging.getLogRecordFactory()
+    if getattr(current_factory, "_clonebot_sensitive_factory", False):
+        return
+
+    sensitive_filter = SensitiveDataFilter()
+
+    def redacting_factory(*args, **kwargs):
+        record = current_factory(*args, **kwargs)
+        sensitive_filter.filter(record)
+        return record
+
+    redacting_factory._clonebot_sensitive_factory = True
+    logging.setLogRecordFactory(redacting_factory)
 
 
 class CleanConsoleFilter(logging.Filter):
@@ -108,8 +157,12 @@ def setup_logger():
     logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
     logger.propagate = False
 
+    _add_sensitive_filter(logger)
+
     # 防止重复添加 handler
     if logger.handlers:
+        for handler in logger.handlers:
+            _add_sensitive_filter(handler)
         return logger
 
     formatter = logging.Formatter(
@@ -120,6 +173,7 @@ def setup_logger():
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
+    _add_sensitive_filter(console_handler)
     console_handler.addFilter(CleanConsoleFilter())
 
     # 文件：保留完整日志，方便排查
@@ -131,6 +185,7 @@ def setup_logger():
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
+    _add_sensitive_filter(file_handler)
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
@@ -138,6 +193,7 @@ def setup_logger():
     return logger
 
 
+install_global_sensitive_filter()
 logger = setup_logger()
 
 
@@ -154,3 +210,17 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+
+# These libraries can emit their own records without passing through the
+# clonebot logger. Logger-level filters keep their exception messages safe even
+# when the application logging configuration changes handlers later.
+for logger_name in (
+    "telethon",
+    "telethon.network",
+    "telethon.client",
+    "urllib3",
+    "requests",
+    "uvicorn.access",
+    "uvicorn.error",
+):
+    _add_sensitive_filter(logging.getLogger(logger_name))

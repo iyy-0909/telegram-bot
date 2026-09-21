@@ -1,5 +1,10 @@
 ﻿import asyncio
 import json
+from types import SimpleNamespace
+
+from auth.access import FREE_PLAN_TASK_OVERRIDES, plan_content_processing_enabled
+from auth.runtime_access import evaluate_user_runtime_access
+from auth.tenant import tenant_scope
 from bot.send_queue import send_queue, wait_or_stop
 from bot.runtime_queue import runtime_queue_state
 from accounts.manager import account_manager
@@ -34,8 +39,12 @@ from bot.bot_distributor import send_prepared_by_bot
 from bot.logger import logger
 from bot.notifier import notify_error, notify_task_event
 from bot.qr_filter import find_qr_code_files
+from bot.qr_media_policy import filter_qr_media
 from db.crud_listener import sync_clone_task_to_listener_tasks
 from db.crud_my_channels import update_my_channel_clone_status
+from db.database import SessionLocal
+from db.models import CloneTask, UserAccount
+from utils.redaction import redact_sensitive_text
 
 
 def get_targets(task):
@@ -54,6 +63,172 @@ def get_targets(task):
 
     except Exception:
         return []
+
+
+def _apply_runtime_content_policy(task, user):
+    """Apply the owner's current plan without trusting persisted task fields."""
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    content_processing_enabled = role == "admin" or plan_content_processing_enabled(
+        getattr(user, "plan_tier", None)
+    )
+    setattr(task, "_runtime_content_processing_enabled", content_processing_enabled)
+    if not content_processing_enabled:
+        for field, value in FREE_PLAN_TASK_OVERRIDES.items():
+            if hasattr(task, field):
+                setattr(task, field, value)
+    return task
+
+
+def _clone_content_policy_signature(task):
+    return (
+        bool(getattr(task, "_runtime_content_processing_enabled", True)),
+        *(getattr(task, field, None) for field in FREE_PLAN_TASK_OVERRIDES),
+    )
+
+
+def _clone_route_signature(task):
+    return (
+        getattr(task, "owner_user_id", None),
+        getattr(task, "account_id", None),
+        str(getattr(task, "source_channel", "") or ""),
+    )
+
+
+def _passthrough_task_view(task):
+    """Build a detached view that cannot apply paid filters or templates."""
+    values = {
+        key: value
+        for key, value in vars(task).items()
+        if key != "_sa_instance_state"
+    }
+    view = SimpleNamespace(**values)
+    for field, value in FREE_PLAN_TASK_OVERRIDES.items():
+        if hasattr(view, field):
+            setattr(view, field, value)
+    view._runtime_content_processing_enabled = False
+    return view
+
+
+def load_current_clone_runtime_task(task, *, persist_stop=True):
+    """Load a fresh task and owner snapshot and enforce runtime access.
+
+    A running worker may refresh targets, bot selection and delay settings, but
+    it must never reuse messages already fetched from a different source route.
+    """
+    if not isinstance(task, CloneTask):
+        # Production workers always pass CloneTask ORM objects. Lightweight
+        # test doubles remain compatible with focused sender tests.
+        return task
+
+    task_id = getattr(task, "id", None)
+    if task_id is None:
+        return None
+
+    expected_route = _clone_route_signature(task)
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CloneTask, UserAccount)
+            .outerjoin(UserAccount, UserAccount.id == CloneTask.owner_user_id)
+            .filter(CloneTask.id == int(task_id))
+            .first()
+        )
+    except Exception as exc:
+        logger.error(
+            "failed to refresh clone task; stale worker rejected | "
+            f"task_id={task_id} | error={redact_sensitive_text(exc)}"
+        )
+        return None
+    finally:
+        db.close()
+
+    if not row:
+        return None
+
+    current_task, user = row
+    if _clone_route_signature(current_task) != expected_route:
+        logger.warning(
+            "clone source route changed; stale worker rejected | "
+            f"task_id={task_id}"
+        )
+        return None
+
+    if not bool(getattr(current_task, "enabled", False)):
+        return None
+    if str(getattr(current_task, "status", "") or "") in {
+        "paused",
+        "stopped",
+        "error",
+    }:
+        return None
+
+    access = evaluate_user_runtime_access(user, "clone_tasks")
+    if not access.allowed:
+        if persist_stop:
+            update_clone_task(current_task.id, {"status": "stopped"})
+        logger.warning(
+            "clone task blocked by fresh runtime access | "
+            f"task_id={current_task.id} | reason={access.reason}"
+        )
+        return None
+
+    return _apply_runtime_content_policy(current_task, user)
+
+
+def _passthrough_content_result(raw_text, *, policy_signature=None):
+    return {
+        "blocked": False,
+        "text": raw_text,
+        "_runtime_raw_text": raw_text,
+        "_runtime_passthrough": True,
+        "_runtime_policy_signature": policy_signature,
+    }
+
+
+async def process_current_clone_content(raw_text, task):
+    """Process content against fresh policy and revalidate after awaited AI."""
+    current_task = load_current_clone_runtime_task(task, persist_stop=True)
+    if current_task is None:
+        return None, None
+
+    signature = _clone_content_policy_signature(current_task)
+    if not bool(
+        getattr(current_task, "_runtime_content_processing_enabled", True)
+    ):
+        return current_task, _passthrough_content_result(
+            raw_text,
+            policy_signature=signature,
+        )
+
+    with tenant_scope(
+        getattr(current_task, "owner_user_id", None),
+        is_admin=False,
+    ):
+        result = await process_content_async(raw_text, current_task)
+
+    refreshed_task = load_current_clone_runtime_task(
+        current_task,
+        persist_stop=True,
+    )
+    if refreshed_task is None:
+        return None, None
+
+    refreshed_signature = _clone_content_policy_signature(refreshed_task)
+    if refreshed_signature != signature:
+        logger.warning(
+            "clone content policy changed during processing; using original content | "
+            f"task_id={refreshed_task.id}"
+        )
+        return refreshed_task, _passthrough_content_result(
+            raw_text,
+            policy_signature=refreshed_signature,
+        )
+
+    result = dict(result or {})
+    result["_runtime_raw_text"] = raw_text
+    result["_runtime_passthrough"] = False
+    result["_runtime_policy_signature"] = signature
+    return refreshed_task, result
 
 
 def group_messages(messages):
@@ -102,21 +277,61 @@ def should_stop(stop_event):
 
 def build_processed_text_payload(result):
     if not result.get("parse_mode"):
-        return result.get("text") or ""
+        payload = {
+            "text": result.get("text") or "",
+            "plain_text": result.get("text") or "",
+        }
+    else:
+        payload = {
+            "text": result.get("text") or "",
+            "plain_text": result.get("plain_text") or result.get("text") or "",
+            "parse_mode": result.get("parse_mode"),
+            "html_text": result.get("html_text") or result.get("text") or "",
+            "format_level": result.get("format_level") or "template_html",
+            "kept_entities_count": 0,
+            "dropped_entities_count": 0,
+        }
 
-    return {
-        "text": result.get("text") or "",
-        "plain_text": result.get("plain_text") or result.get("text") or "",
-        "parse_mode": result.get("parse_mode"),
-        "html_text": result.get("html_text") or result.get("text") or "",
-        "format_level": result.get("format_level") or "template_html",
-        "kept_entities_count": 0,
-        "dropped_entities_count": 0,
-    }
+    for key in (
+        "_runtime_raw_text",
+        "_runtime_passthrough",
+        "_runtime_policy_signature",
+    ):
+        if key in result:
+            payload[key] = result.get(key)
+    return payload
 
 
 def should_filter_qr_code(task) -> bool:
     return bool(getattr(task, "filter_qr_code", True))
+
+
+async def _ensure_qr_scan(prepared, task):
+    """Keep original files available for cleanup and runtime policy changes."""
+    if should_filter_qr_code(task) and "_qr_code_files" not in prepared:
+        files = prepared.get("_qr_original_files", prepared.get("files")) or []
+        prepared["_qr_code_files"] = (
+            await asyncio.to_thread(find_qr_code_files, files) if files else []
+        )
+
+
+def _record_clone_qr_filter(task, target, payload, source_message_id, grouped_id):
+    add_clone_send_event(
+        task_id=task.id,
+        target=target,
+        source_message_id=source_message_id,
+        grouped_id=grouped_id,
+        source_message_url=build_message_url(task.source_channel, source_message_id),
+        target_message_url="",
+        target_chat_id=target,
+        message_type="caption" if payload.get("files") else "text",
+        text="",
+        caption=payload.get("text") or "",
+        bot_id=getattr(task, "bot_id", None),
+        event_type="filtered",
+        status="filtered",
+        message=payload.get("_qr_filter_message") or "二维码消息已过滤",
+    )
 
 
 def describe_qr_filter(qr_files):
@@ -240,6 +455,164 @@ def get_clone_message_range(task):
     return start_message_id, end_message_id
 
 
+def _refresh_clone_send_state(task, state):
+    current_task = load_current_clone_runtime_task(task, persist_stop=True)
+    if current_task is None:
+        return None
+
+    current_signature = _clone_content_policy_signature(current_task)
+    expected_signature = state.get("policy_signature")
+    if (
+        expected_signature is not None
+        and current_signature != expected_signature
+    ):
+        state["passthrough"] = True
+        logger.warning(
+            "clone content policy changed before send; using original content | "
+            f"task_id={getattr(current_task, 'id', None)}"
+        )
+    if not bool(
+        getattr(current_task, "_runtime_content_processing_enabled", True)
+    ):
+        state["passthrough"] = True
+
+    state["policy_signature"] = current_signature
+    state["task"] = current_task
+    return current_task
+
+
+def _build_clone_target_payload(
+    prepared,
+    source_payload,
+    text,
+    task,
+    target,
+    *,
+    raw_text,
+    passthrough,
+):
+    target_prepared = filter_qr_media(prepared, enabled=should_filter_qr_code(task))
+    format_task = _passthrough_task_view(task) if passthrough else task
+
+    if passthrough:
+        target_formatted_text = format_prepared_text(
+            source_payload,
+            raw_text,
+            task=format_task,
+            target=target,
+        )
+    elif isinstance(text, dict) and text.get("parse_mode"):
+        target_formatted_text = dict(text)
+        content_html = target_formatted_text.get("content_html")
+        restored_html = restore_source_links_as_html(
+            source_payload,
+            content_html
+            if content_html is not None
+            else target_formatted_text.get("html_text")
+            or target_formatted_text.get("text")
+            or "",
+            task=task,
+            target=target,
+        )
+        restored_html = compose_content_templates_html(
+            target_formatted_text,
+            restored_html,
+        )
+        target_formatted_text["text"] = restored_html
+        target_formatted_text["html_text"] = restored_html
+        target_formatted_text["plain_text"] = html_to_plain_text(restored_html)
+    else:
+        processed_text = (
+            text.get("text") or ""
+            if isinstance(text, dict)
+            else text
+        )
+        target_formatted_text = format_prepared_text(
+            source_payload,
+            processed_text,
+            task=task,
+            target=target,
+        )
+
+    target_send_text = target_formatted_text.get("text") or ""
+    target_prepared["text"] = target_send_text
+    target_prepared["plain_text"] = (
+        target_formatted_text.get("plain_text") or target_send_text or ""
+    )
+    target_prepared["format_level"] = target_formatted_text.get("format_level")
+    target_prepared["kept_entities_count"] = target_formatted_text.get(
+        "kept_entities_count",
+        0,
+    )
+    target_prepared["dropped_entities_count"] = target_formatted_text.get(
+        "dropped_entities_count",
+        0,
+    )
+
+    if target_formatted_text.get("entities"):
+        target_prepared["entities"] = target_formatted_text.get("entities")
+    else:
+        target_prepared.pop("entities", None)
+
+    if target_formatted_text.get("html_text"):
+        target_prepared["html_text"] = target_formatted_text.get("html_text")
+    else:
+        target_prepared.pop("html_text", None)
+
+    if target_formatted_text.get("parse_mode"):
+        target_prepared["parse_mode"] = target_formatted_text.get("parse_mode")
+    else:
+        target_prepared.pop("parse_mode", None)
+
+    return target_prepared
+
+
+async def _send_clone_prepared_with_runtime_guard(
+    target,
+    target_prepared,
+    *,
+    task,
+    state,
+    source_payload,
+    text,
+    raw_text,
+):
+    """Final network-boundary guard, including waits inside SendQueue."""
+    current_task = _refresh_clone_send_state(state.get("task") or task, state)
+    if current_task is None:
+        return False
+    source_prepared = state.get("qr_source_prepared") or target_prepared
+    await _ensure_qr_scan(source_prepared, current_task)
+    current_task = _refresh_clone_send_state(current_task, state)
+    if current_task is None:
+        return False
+    if isinstance(current_task, CloneTask) and target not in get_targets(current_task):
+        logger.warning(
+            "clone target removed before send; skipped | "
+            f"task_id={current_task.id} | target={target}"
+        )
+        return False
+
+    actual_payload = _build_clone_target_payload(
+        source_prepared,
+        source_payload,
+        text,
+        current_task,
+        target,
+        raw_text=raw_text,
+        passthrough=bool(state.get("passthrough")),
+    )
+    target_prepared.clear()
+    target_prepared.update(actual_payload)
+    if target_prepared.get("_qr_filter_blocked"):
+        return {"filtered": True, "message": target_prepared.get("_qr_filter_message")}
+    return await send_prepared_by_bot(
+        target,
+        target_prepared,
+        bot_id=getattr(current_task, "bot_id", None),
+    )
+
+
 async def send_to_targets(
     client,
     task,
@@ -259,6 +632,40 @@ async def send_to_targets(
     每个目标独立发送，单个目标失败不影响其他目标。
     任意目标发送成功后写入 sent_messages，finally 统一清理临时文件。
     """
+    if isinstance(text, dict) and "_runtime_raw_text" in text:
+        raw_text = text.get("_runtime_raw_text")
+    elif message_type == "album":
+        raw_text = get_album_text(source_payload)
+    else:
+        raw_text = getattr(source_payload, "message", None)
+        if raw_text is None:
+            raw_text = (
+                text.get("plain_text") or text.get("text") or ""
+                if isinstance(text, dict)
+                else text or ""
+            )
+    if raw_text is None:
+        raw_text = ""
+
+    state = {
+        "policy_signature": (
+            text.get("_runtime_policy_signature")
+            if isinstance(text, dict)
+            else None
+        ),
+        "passthrough": bool(
+            isinstance(text, dict) and text.get("_runtime_passthrough")
+        ),
+        "task": task,
+    }
+    current_task = _refresh_clone_send_state(task, state)
+    if current_task is None:
+        return False
+    task = current_task
+    if state["policy_signature"] is None:
+        state["policy_signature"] = _clone_content_policy_signature(task)
+    if isinstance(task, CloneTask):
+        targets = get_targets(task)
 
     if not targets:
         logger.warning(f"目标频道为空 | task_id={task.id}")
@@ -282,16 +689,17 @@ async def send_to_targets(
     prepared = None
     sent_count = 0
     failed_count = 0
+    filtered_count = 0
     dedupe_written = False
     source_message_url = build_message_url(task.source_channel, source_message_id)
 
     try:
-        if isinstance(text, dict):
-            formatted_text = text
-            send_text = formatted_text.get("text") or ""
+        if state["passthrough"]:
+            send_text = raw_text
+        elif isinstance(text, dict):
+            send_text = text.get("text") or ""
         else:
-            formatted_text = format_prepared_text(source_payload, text)
-            send_text = formatted_text.get("text") or ""
+            send_text = text or ""
 
         # Prepare media only once and reuse it for all targets.
         if message_type == "album":
@@ -306,43 +714,41 @@ async def send_to_targets(
             )
             return False
 
-        if should_filter_qr_code(task):
-            qr_files = find_qr_code_files(prepared.get("files") or [])
+        state["qr_source_prepared"] = prepared
 
-            if qr_files:
-                filter_message = describe_qr_filter(qr_files)
-                logger.warning(
-                    f"二维码过滤，跳过发送 | task_id={task.id} | "
-                    f"source_message_id={source_message_id} | grouped_id={grouped_id} | "
-                    f"detail={filter_message} | files={qr_files}"
+        # Media preparation can download for a long time. Refresh task, owner,
+        # plan and targets immediately after that await.
+        current_task = _refresh_clone_send_state(state.get("task") or task, state)
+        if current_task is None:
+            return False
+        task = current_task
+        targets = get_targets(task) if isinstance(task, CloneTask) else targets
+        if not targets:
+            logger.warning(f"目标频道为空 | task_id={task.id}")
+            return False
+
+        await _ensure_qr_scan(prepared, task)
+        current_task = _refresh_clone_send_state(state.get("task") or task, state)
+        if current_task is None:
+            return False
+        task = current_task
+        targets = get_targets(task) if isinstance(task, CloneTask) else targets
+        if not targets:
+            return False
+        qr_payload = filter_qr_media(prepared, enabled=should_filter_qr_code(task))
+        if qr_payload.get("_qr_filter_blocked"):
+            mark_message_sent(
+                task_id=task.id,
+                source_message_id=source_message_id,
+                grouped_id=grouped_id if message_type == "album" else None,
+            )
+            for target in targets:
+                _record_clone_qr_filter(
+                    task, target, qr_payload, source_message_id, grouped_id,
                 )
+            return "filtered"
 
-                mark_message_sent(
-                    task_id=task.id,
-                    source_message_id=source_message_id,
-                    grouped_id=grouped_id if message_type == "album" else None,
-                )
-
-                for target in targets:
-                    add_clone_send_event(
-                        task_id=task.id,
-                        target=target,
-                        source_message_id=source_message_id,
-                        grouped_id=grouped_id,
-                        source_message_url=source_message_url,
-                        target_message_url="",
-                        target_chat_id=target,
-                        message_type="caption" if prepared.get("files") else "text",
-                        text="",
-                        caption=prepared.get("text") or "",
-                        bot_id=getattr(task, "bot_id", None),
-                        event_type="filtered",
-                        status="filtered",
-                        message=filter_message,
-                    )
-
-                return "filtered"
-
+        scheduled_targets = set(targets)
         for index, target in enumerate(targets):
             target_label = "主目标" if index == 0 else "附加目标"
 
@@ -359,77 +765,54 @@ async def send_to_targets(
                     f"target={target} | source_message_id={source_message_id}"
                 )
 
-                target_prepared = dict(prepared)
-                if isinstance(text, dict):
-                    target_formatted_text = dict(formatted_text)
-                    if target_formatted_text.get("parse_mode"):
-                        content_html = target_formatted_text.get("content_html")
-                        restored_html = restore_source_links_as_html(
-                            source_payload,
-                            content_html
-                            if content_html is not None
-                            else target_formatted_text.get("html_text")
-                            or target_formatted_text.get("text")
-                            or "",
-                            task=task,
-                            target=target,
-                        )
-                        restored_html = compose_content_templates_html(
-                            target_formatted_text,
-                            restored_html,
-                        )
-                        target_formatted_text["text"] = restored_html
-                        target_formatted_text["html_text"] = restored_html
-                        target_formatted_text["plain_text"] = html_to_plain_text(
-                            restored_html
-                        )
-                else:
-                    target_formatted_text = format_prepared_text(
-                        source_payload,
-                        text,
-                        task=task,
-                        target=target,
+                current_task = _refresh_clone_send_state(
+                    state.get("task") or task,
+                    state,
+                )
+                if current_task is None:
+                    return False
+                task = current_task
+                latest_targets = (
+                    get_targets(task)
+                    if isinstance(task, CloneTask)
+                    else targets
+                )
+                for latest_target in latest_targets:
+                    if latest_target not in scheduled_targets:
+                        targets.append(latest_target)
+                        scheduled_targets.add(latest_target)
+                if isinstance(task, CloneTask) and target not in latest_targets:
+                    logger.info(
+                        "clone target removed before queue; skipped | "
+                        f"task_id={task.id} | target={target}"
                     )
-                target_send_text = target_formatted_text.get("text") or ""
-                target_prepared["text"] = target_send_text
-                target_prepared["plain_text"] = (
-                    target_formatted_text.get("plain_text") or target_send_text or ""
-                )
-                target_prepared["format_level"] = target_formatted_text.get("format_level")
-                target_prepared["kept_entities_count"] = target_formatted_text.get(
-                    "kept_entities_count",
-                    0,
-                )
-                target_prepared["dropped_entities_count"] = target_formatted_text.get(
-                    "dropped_entities_count",
-                    0,
-                )
+                    continue
 
-                if target_formatted_text.get("entities"):
-                    target_prepared["entities"] = target_formatted_text.get("entities")
-                else:
-                    target_prepared.pop("entities", None)
-
-                if target_formatted_text.get("html_text"):
-                    target_prepared["html_text"] = target_formatted_text.get("html_text")
-                else:
-                    target_prepared.pop("html_text", None)
-
-                if target_formatted_text.get("parse_mode"):
-                    target_prepared["parse_mode"] = target_formatted_text.get("parse_mode")
-                else:
-                    target_prepared.pop("parse_mode", None)
+                target_prepared = _build_clone_target_payload(
+                    prepared,
+                    source_payload,
+                    text,
+                    task,
+                    target,
+                    raw_text=raw_text,
+                    passthrough=bool(state.get("passthrough")),
+                )
 
                 send_result = await send_queue.send(
-                    send_prepared_by_bot,
+                    _send_clone_prepared_with_runtime_guard,
                     target,
                     target_prepared,
-                    bot_id=getattr(task, "bot_id", None),
                     task_id=task.id,
                     target=target,
-                    target_delay=delay,
+                    target_delay=getattr(task, "target_delay", delay),
+                    owner_user_id=getattr(task, "owner_user_id", None),
                     skip_initial_delay=skip_initial_delay and index == 0,
                     stop_event=stop_event,
+                    task=task,
+                    state=state,
+                    source_payload=source_payload,
+                    text=text,
+                    raw_text=raw_text,
                     queue_meta={
                         "source_type": "clone",
                         "task_id": task.id,
@@ -441,6 +824,28 @@ async def send_to_targets(
                         "message_type": message_type,
                     },
                 )
+
+                # The queue itself may await global delay or retries. Refresh
+                # once more before recording any post-send state or next target.
+                post_send_task = _refresh_clone_send_state(
+                    state.get("task") or task,
+                    state,
+                )
+                if post_send_task is None:
+                    return False
+                task = post_send_task
+                if isinstance(task, CloneTask):
+                    for latest_target in get_targets(task):
+                        if latest_target not in scheduled_targets:
+                            targets.append(latest_target)
+                            scheduled_targets.add(latest_target)
+
+                if isinstance(send_result, dict) and send_result.get("filtered"):
+                    filtered_count += 1
+                    _record_clone_qr_filter(
+                        task, target, target_prepared, source_message_id, grouped_id,
+                    )
+                    continue
 
                 if send_result:
                     sent_count += 1
@@ -478,7 +883,11 @@ async def send_to_targets(
                         bot_name=send_result.get("bot_name") if isinstance(send_result, dict) else "",
                         event_type="success",
                         status="success",
-                        message="Bot API 已成功发送到目标频道",
+                        message=(
+                            "Bot API 已成功发送到目标频道"
+                            + (f"；{target_prepared['_qr_filter_message']}"
+                               if target_prepared.get("_qr_removed_files") else "")
+                        ),
                     )
 
                     if not dedupe_written:
@@ -500,21 +909,24 @@ async def send_to_targets(
                             )
 
                         except Exception as e:
+                            safe_error = redact_sensitive_text(e)
                             logger.exception(
                                 f"目标发送成功，但写入去重失败 | task_id={task.id} | "
                                 f"target={target} | source_message_id={source_message_id} | "
-                                f"grouped_id={grouped_id} | {e}"
+                                f"grouped_id={grouped_id} | {safe_error}"
                             )
                             return False
 
                 else:
                     failed_count += 1
-                    error = prepared.get("_last_error") or "Bot API 发送失败"
+                    safe_error = redact_sensitive_text(
+                        target_prepared.get("_last_error") or "Bot API 发送失败"
+                    )
 
                     logger.warning(
                         f"{target_label}发送失败，继续其他目标 | task_id={task.id} | "
                         f"target={target} | source_message_id={source_message_id} | "
-                        f"error={error}"
+                        f"error={safe_error}"
                     )
                     add_clone_send_event(
                         task_id=task.id,
@@ -525,21 +937,22 @@ async def send_to_targets(
                         target_message_url="",
                         target_chat_id=target,
                         message_type="caption" if prepared.get("files") else "text",
-                        text=(prepared.get("text") or "") if not prepared.get("files") else "",
-                        caption=(prepared.get("text") or "") if prepared.get("files") else "",
+                        text=(target_prepared.get("text") or "") if not prepared.get("files") else "",
+                        caption=(target_prepared.get("text") or "") if prepared.get("files") else "",
                         bot_id=getattr(task, "bot_id", None),
                         event_type="failed",
                         status="failed",
                         message="Bot API 发送失败",
-                        error=error,
+                        error=safe_error,
                     )
 
             except Exception as e:
                 failed_count += 1
+                safe_error = redact_sensitive_text(e)
 
                 logger.exception(
                     f"发送{target_label}异常，继续其他目标 | task_id={task.id} | "
-                    f"target={target} | source_message_id={source_message_id} | {e}"
+                    f"target={target} | source_message_id={source_message_id} | {safe_error}"
                 )
                 add_clone_send_event(
                     task_id=task.id,
@@ -556,7 +969,7 @@ async def send_to_targets(
                     event_type="failed",
                     status="failed",
                     message="克隆发送异常",
-                    error=str(e),
+                    error=safe_error,
                 )
 
         if sent_count > 0:
@@ -568,6 +981,15 @@ async def send_to_targets(
             )
             return True
 
+        if filtered_count > 0 and failed_count == 0:
+            if not dedupe_written:
+                mark_message_sent(
+                    task_id=task.id,
+                    source_message_id=source_message_id,
+                    grouped_id=grouped_id if message_type == "album" else None,
+                )
+            return "filtered"
+
         logger.warning(
             f"所有目标发送失败 | task_id={task.id} | "
             f"success={sent_count} | failed={failed_count} | "
@@ -578,9 +1000,10 @@ async def send_to_targets(
         return False
 
     except Exception as e:
+        safe_error = redact_sensitive_text(e)
         logger.exception(
             f"send_to_targets 异常 | task_id={task.id} | "
-            f"source_message_id={source_message_id} | grouped_id={grouped_id} | {e}"
+            f"source_message_id={source_message_id} | grouped_id={grouped_id} | {safe_error}"
         )
         return False
 
@@ -596,11 +1019,12 @@ async def clone_task(task, stop_event=None):
         mark_stopped(task.id)
         return
 
-    latest_task = update_clone_task(task.id, {})
+    latest_task = load_current_clone_runtime_task(task, persist_stop=True)
 
-    if latest_task and latest_task.status == "stopped":
-        logger.warning(f"克隆任务启动前已是停止状态 | task_id={task.id}")
+    if latest_task is None:
+        logger.warning(f"克隆任务启动前运行权限不可用 | task_id={task.id}")
         return
+    task = latest_task
 
     client = account_manager.get_client(task.account_id)
 
@@ -610,6 +1034,11 @@ async def clone_task(task, stop_event=None):
         )
         loaded = await account_manager.load_account(task.account_id)
         client = account_manager.get_client(task.account_id) if loaded else None
+
+        latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+        if latest_task is None:
+            return
+        task = latest_task
 
     if not client:
         message = (
@@ -630,6 +1059,10 @@ async def clone_task(task, stop_event=None):
         update_clone_task(task.id, {"status": "error"})
         return
 
+    latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+    if latest_task is None:
+        return
+    task = latest_task
     targets = get_targets(task)
 
     if not targets:
@@ -655,13 +1088,19 @@ async def clone_task(task, stop_event=None):
         mark_stopped(task.id)
         return
 
-    latest_task = update_clone_task(task.id, {})
+    latest_task = load_current_clone_runtime_task(task, persist_stop=True)
 
-    if latest_task and latest_task.status == "stopped":
-        logger.warning(f"克隆任务启动前收到停止状态 | task_id={task.id}")
+    if latest_task is None:
+        logger.warning(f"克隆任务启动前收到停止或权限状态 | task_id={task.id}")
         return
+    task = latest_task
 
     update_clone_task(task.id, {"status": "running"})
+    latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+    if latest_task is None:
+        return
+    task = latest_task
+    targets = get_targets(task)
 
     logger.info(
         f"开始克隆 | task_id={task.id} | "
@@ -679,6 +1118,12 @@ async def clone_task(task, stop_event=None):
             f"进度：{task.last_message_id}"
         ),
     )
+
+    latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+    if latest_task is None:
+        return
+    task = latest_task
+    targets = get_targets(task)
 
     try:
         messages = []
@@ -719,6 +1164,11 @@ async def clone_task(task, stop_event=None):
                 mark_stopped(task.id)
                 return
 
+            latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+            if latest_task is None:
+                return
+            task = latest_task
+
             listener_result = await enter_listener_after_clone(task)
 
             if not listener_result.get("consistent"):
@@ -751,30 +1201,21 @@ async def clone_task(task, stop_event=None):
                 mark_stopped(task.id)
                 return
 
-            latest_task = update_clone_task(task.id, {})
+            latest_task = load_current_clone_runtime_task(
+                task,
+                persist_stop=True,
+            )
 
             if not latest_task:
-                message = (
-                    "克隆任务不存在\n"
-                    f"任务ID：{task.id}"
+                logger.warning(
+                    f"克隆任务运行状态或权限已变化 | task_id={task.id}"
                 )
-
-                logger.error(message)
-
-                await notify_error(
-                    title="克隆任务不存在",
-                    detail=message,
-                    task_id=task.id,
-                )
-
                 return
 
-            if latest_task.status == "paused":
-                logger.info(f"克隆已暂停 | task_id={task.id}")
-                return
-
-            if latest_task.status == "stopped":
-                logger.warning(f"克隆已停止 | task_id={task.id}")
+            task = latest_task
+            targets = get_targets(latest_task)
+            if not targets:
+                logger.warning(f"目标频道为空 | task_id={task.id}")
                 return
 
             content_delay = max(int(latest_task.single_delay or 1), 1)
@@ -798,7 +1239,17 @@ async def clone_task(task, stop_event=None):
                         continue
 
                     raw_text = get_message_text(message)
-                    result = await process_content_async(raw_text, latest_task)
+                    latest_task, result = await process_current_clone_content(
+                        raw_text,
+                        latest_task,
+                    )
+                    if latest_task is None:
+                        return
+                    task = latest_task
+                    targets = get_targets(latest_task)
+                    if not targets:
+                        logger.warning(f"目标频道为空 | task_id={task.id}")
+                        return
 
                     if result.get("blocked"):
                         update_clone_progress(task.id, message_id)
@@ -828,6 +1279,15 @@ async def clone_task(task, stop_event=None):
                         skip_initial_delay=first_send_pending,
                     )
                     first_send_pending = False
+
+                    latest_task = load_current_clone_runtime_task(
+                        latest_task,
+                        persist_stop=True,
+                    )
+                    if latest_task is None:
+                        return
+                    task = latest_task
+                    targets = get_targets(latest_task)
 
                     if should_stop(stop_event):
                         mark_stopped(task.id)
@@ -875,7 +1335,17 @@ async def clone_task(task, stop_event=None):
                         continue
 
                     raw_text = get_album_text(album_messages)
-                    result = await process_content_async(raw_text, latest_task)
+                    latest_task, result = await process_current_clone_content(
+                        raw_text,
+                        latest_task,
+                    )
+                    if latest_task is None:
+                        return
+                    task = latest_task
+                    targets = get_targets(latest_task)
+                    if not targets:
+                        logger.warning(f"目标频道为空 | task_id={task.id}")
+                        return
 
                     if result.get("blocked"):
                         update_clone_progress(task.id, max_id)
@@ -906,6 +1376,15 @@ async def clone_task(task, stop_event=None):
                     )
                     first_send_pending = False
 
+                    latest_task = load_current_clone_runtime_task(
+                        latest_task,
+                        persist_stop=True,
+                    )
+                    if latest_task is None:
+                        return
+                    task = latest_task
+                    targets = get_targets(latest_task)
+
                     if should_stop(stop_event):
                         mark_stopped(task.id)
                         return
@@ -932,8 +1411,9 @@ async def clone_task(task, stop_event=None):
                     continue
 
             except Exception as e:
+                safe_error = redact_sensitive_text(e)
                 logger.exception(
-                    f"克隆单组失败，继续下一组 | task_id={task.id} | {e}"
+                    f"克隆单组失败，继续下一组 | task_id={task.id} | {safe_error}"
                 )
 
                 # await notify_error(
@@ -942,7 +1422,7 @@ async def clone_task(task, stop_event=None):
                 #         f"任务ID：{task.id}\n"
                 #         f"任务名称：{task.name}\n"
                 #         f"源频道：{task.source_channel}\n"
-                #         f"错误：{e}"
+                #         f"错误：{safe_error}"
                 #     ),
                 #     task_id=task.id,
                 # )
@@ -953,14 +1433,26 @@ async def clone_task(task, stop_event=None):
             mark_stopped(task.id)
             return
 
+        latest_task = load_current_clone_runtime_task(task, persist_stop=True)
+        if latest_task is None:
+            return
+        task = latest_task
+        targets = get_targets(task)
+
         listener_result = await enter_listener_after_clone(task)
 
         if not listener_result.get("consistent"):
             update_clone_task(task.id, {"status": "done"})
 
+        latest_task = load_current_clone_runtime_task(task, persist_stop=False)
+        if latest_task is not None:
+            task = latest_task
+            targets = get_targets(task)
+
         updated_channels = update_my_channel_clone_status(
             targets,
             task.source_channel,
+            owner_user_id=getattr(task, "owner_user_id", None),
         )
 
         logger.info(f"克隆完成 | task_id={task.id}")
@@ -979,12 +1471,13 @@ async def clone_task(task, stop_event=None):
         return
 
     except ValueError as e:
-        message = (
+        safe_error = redact_sensitive_text(e)
+        message = redact_sensitive_text(
             "克隆失败：源频道异常或链接范围错误\n"
             f"任务ID：{task.id}\n"
             f"任务名称：{task.name}\n"
             f"源频道：{task.source_channel}\n"
-            f"错误：{e}"
+            f"错误：{safe_error}"
         )
 
         logger.error(message)
@@ -999,12 +1492,13 @@ async def clone_task(task, stop_event=None):
         return
 
     except Exception as e:
-        message = (
+        safe_error = redact_sensitive_text(e)
+        message = redact_sensitive_text(
             "克隆任务异常\n"
             f"任务ID：{task.id}\n"
             f"任务名称：{task.name}\n"
             f"源频道：{task.source_channel}\n"
-            f"错误：{e}"
+            f"错误：{safe_error}"
         )
 
         logger.exception(message)

@@ -8,7 +8,12 @@
       <el-button :loading="loading" @click="emit('refresh')">刷新</el-button>
     </header>
 
-    <AiSettingsPanel :settings="settings" :saving="settingsSaving" @submit="emit('save-settings', $event)" />
+    <AiSettingsPanel
+      :settings="settings"
+      :saving="settingsSaving"
+      :loading="settingsLoading"
+      @submit="emit('save-settings', $event)"
+    />
     <AiPromptLibrary
       :prompts="prompts"
       :loading="loading"
@@ -19,16 +24,19 @@
       @delete="emit('delete-prompt', $event)"
       @set-default="emit('set-default-prompt', $event)"
     />
+    <AiRewritePreview :default-provider="settings.default_provider" />
   </div>
 </template>
 
 <script setup>
 import AiPromptLibrary from "./AiPromptLibrary.vue"
 import AiSettingsPanel from "./AiSettingsPanel.vue"
+import AiRewritePreview from "./AiRewritePreview.vue"
 
 defineProps({
   settings: { type: Object, default: () => ({ providers: {} }) },
   settingsSaving: Boolean,
+  settingsLoading: Boolean,
   prompts: { type: Array, default: () => [] },
   loading: Boolean,
   deletingId: { type: Number, default: null },

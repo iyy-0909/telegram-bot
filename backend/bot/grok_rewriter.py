@@ -10,12 +10,10 @@ import threading
 import aiohttp
 
 from bot.logger import logger
+from db.crud_settings import DEFAULT_AI_REWRITE_PROMPT
 
 
-DEFAULT_PROMPT = """你是 Telegram 内容编辑。请在保留原文事实、数字、时间、地点、价格、联系方式和相关标签的前提下，对内容进行明显重写和排版优化。不得编造信息，不得照搬固定模板，只输出可直接发送的 Telegram HTML 正文。总长度不得超过 {{max_chars}} 个字符。
-
-待处理文本：
-{{content}}"""
+DEFAULT_PROMPT = DEFAULT_AI_REWRITE_PROMPT
 
 PROVIDERS = {
     "grok": {
@@ -51,40 +49,42 @@ AI_LAYOUT_VARIANTS = (
     {
         "key": "minimal",
         "name": "极简短文",
-        "instruction": """使用一个简短加粗主标题和 2～3 个自然段完成全文。不要设置小标题，不要使用项目符号；把联系方式和标签放在末尾。""",
+        "instruction": """保留原文内容，用简短自然段形成清楚的阅读层次。标题适当加粗，较长内容可用贴合内容的表情引导区块；同一主题中可调整信息位置，关联条件须放在一起。无需把每句话都列成清单，不补写导语或收尾；联系方式完整独立成行。""",
     },
     {
         "key": "info_card",
         "name": "信息卡片",
-        "instruction": """采用紧凑信息卡结构：加粗主标题后，按原文实际信息组织为 2～3 个短区块。价格、时间、地点等事实可以逐行展示；小标题必须根据内容临时命名。""",
+        "instruction": """根据整篇已有信息形成紧凑信息卡：标题加粗，同一对象的介绍、费用、地址等分别成组，区块之间留一行空白。栏目名适度加粗并配一个相关表情，费用项目用 ▫️ 或 • 逐行紧凑排列。可以提炼已有内容的中性栏目名，不能为凑卡片补出不存在的信息。""",
     },
     {
         "key": "scene",
-        "name": "场景叙述",
-        "instruction": """从一个自然场景或读者需求切入，用连贯短段落介绍核心内容，最后再集中放置事实信息、联系方式和标签。除主标题外最多使用一个小标题。""",
+        "name": "自然分段",
+        "instruction": """按完整文案的语义分组，把同一主题的相关内容放在一起，用自然段与空行区分层次。标题和少量栏目适当加粗，表情用于提示区块。保留原句意思和宣传力度，只按本次比例少量润色，不补写场景、读者需求、开场或收尾。""",
     },
     {
         "key": "checklist",
         "name": "重点清单",
-        "instruction": """先用一段简短导语概括主题，再用项目符号整理原文明示的卖点或信息，最后紧凑呈现联系方式和标签。条目数量由原文事实决定，信息不足时可以少于三条，禁止为了凑数添加新场景或新卖点；禁止再添加“适合场景”段落。""",
+        "instruction": """原文存在并列内容时，用 ▫️ 或 • 整理原有条目，并把同一主题的条目归到对应栏目。栏目可用一个相关表情和加粗名称引导，清单内部保持紧凑。保留每条原意，不新增导语、总结或信息条目，不把连续叙述强拆为清单，不新增数字编号。""",
     },
     {
         "key": "qa",
-        "name": "问答引导",
-        "instruction": """标题或开场使用一个与原文直接相关的自然问题，正文以回答该问题的方式展开；信息较多时只使用一个事实清单，不要套用广告卡片的固定小标题。""",
+        "name": "信息分组",
+        "instruction": """重新梳理同一主题中的介绍、费用、地点、通知等已有信息，归入清楚的区块。可使用贴合已有内容的中性栏目名、相关表情和适度加粗；不混合不同对象，不拆散费用与条件，不新增问答、情境或解释。联系方式与链接的受保护行完整保留。""",
     },
     {
         "key": "editorial",
-        "name": "编辑短评",
-        "instruction": """采用编辑推荐式短文：加粗主题标题、简短判断或概括、两段重新组织的正文，末尾列出必要事实和联系方式。不要使用 Emoji 小标题。""",
+        "name": "重点加粗",
+        "instruction": """保留原文内容，重点突出标题、栏目名及少量关键字段，用适量区块表情和空行帮助扫读。同一主题可以重新分组，但不添加编辑评价、推荐理由、总结或新的宣传措辞；不要把整段全部加粗。""",
     },
 )
 
 AI_ANTI_TEMPLATE_PROTOCOL = """【反模板要求】
-本次版式由程序指定，优先于配置提示词里的推荐结构、示例结构或惯用结构。
-禁止机械使用“核心亮点”“适合场景”“营业信息”“联系与预约”等通用小标题；只有原文语义确实需要且本次版式允许时，才可换成与内容直接相关的自然标题。
+本次任务以保留原文内容、整理排版和表情为主，不进行独立创作或大幅重写。该要求优先于配置提示词中的场景开头、问答、短评和创作要求。
+本次版式由程序指定，只适用于原文已有内容；先理解整篇，再对同一主题分组和安排区块，不必沿用原来的段落位置。原文不适合某种排版时保持自然结构，不得为套用版式添加或删除信息。
+栏目名称可以从已有内容中提炼，例如已有介绍、费用、地址时可用“场所介绍”“消费明细”“地址”。禁止机械使用“核心亮点”“适合场景”等与内容不符的小标题，不强迫每段都有栏目；0% 时不新增栏目文字。
 禁止反复使用“氛围感拉满”“这里都能接住”“提前预约更省心”“夜已深，就差你”等套话。
-不要为了凑齐区块而增加原文没有的信息。段落数量、是否使用列表、开场方式和收尾方式必须服从本次指定版式。"""
+装饰性表情用于引导区块，按长度通常选用 2—5 个，短文可更少；评分符号与 ▫️ 等小型列表符号不计入该建议。标题和栏目名适度加粗，不整段加粗、不在每句堆表情；表示评分、数量、状态或条件的表情不得改变含义与数量。
+不得新增开场、收尾、场景、问答、观点、卖点或承诺，不得跨主题重组、改变宣传力度或删除原有有效信息。"""
 
 AI_RECENT_LAYOUT_COUNT = 2
 AI_RECENT_OUTPUT_COUNT = 5
@@ -186,7 +186,7 @@ def build_layout_directive(layout):
 
 【本次指定版式：{layout['name']}】
 {layout['instruction']}
-本次不得改用其他版式，不得补回固定的“标题＋亮点＋场景＋营业信息＋联系”结构。"""
+按本次版式和原文内容安排区块，不为凑齐“标题＋亮点＋场景＋营业信息＋联系”结构新增信息。"""
 
 
 def _plain_output_text(text):
@@ -420,28 +420,6 @@ def ensure_preserved_metadata(source_text, rewritten_text):
 
     output_tags = extract_source_hashtags(output)
     source_tags = extract_source_hashtags(source_text)
-    source_tag_keys = {tag.casefold() for tag in source_tags}
-    generated_tags = [
-        tag
-        for tag in output_tags
-        if tag.casefold() not in source_tag_keys
-    ][:1]
-
-    if len(source_tags) > 5:
-        output_tag_keys = {tag.casefold() for tag in output_tags}
-        selected_source_tags = [
-            tag for tag in source_tags if tag.casefold() in output_tag_keys
-        ][:5]
-        if len(selected_source_tags) < 5:
-            selected_keys = {tag.casefold() for tag in selected_source_tags}
-            selected_source_tags.extend(
-                tag
-                for tag in source_tags
-                if tag.casefold() not in selected_keys
-            )
-            selected_source_tags = selected_source_tags[:5]
-    else:
-        selected_source_tags = source_tags
 
     if output_tags:
         output = AI_HASHTAG_PATTERN.sub("", output)
@@ -452,9 +430,8 @@ def ensure_preserved_metadata(source_text, rewritten_text):
     if missing_contacts:
         output = f"{output.rstrip()}\n\n" + "\n".join(missing_contacts)
 
-    final_tags = _unique_preserving_order(selected_source_tags + generated_tags)
-    if final_tags:
-        output = f"{output.rstrip()}\n\n" + " ".join(final_tags)
+    if source_tags:
+        output = f"{output.rstrip()}\n\n" + " ".join(source_tags)
     return output.strip()
 
 
@@ -622,21 +599,41 @@ def normalize_rewrite_ratio(task):
 
 
 def build_rewrite_ratio_directive(ratio):
-    retained_ratio = 100 - ratio
     if ratio == 0:
-        guidance = "不得改写原句，只允许整理换行、空行和 Telegram HTML 排版。"
+        guidance = "保持原文措辞，不得改写原句或新增栏目文字；只整理换行、空行、Telegram HTML 排版和装饰性表情，不增删原有内容。"
     elif ratio <= 25:
-        guidance = "轻度润色，保留绝大多数原句、用词和信息顺序，只调整少量表达。"
+        guidance = "轻度整理：以换行、留白和少量装饰性表情调整为主，保持原句，仅在不改变原意时轻微润色。"
     elif ratio <= 50:
-        guidance = "中度改写，保留主要句式和信息顺序，可重写部分表达并优化段落。"
+        guidance = "适度整理：将同一主题的相关内容归为区块，以标题、栏目加粗和相关表情区分层次，最多对不通顺的少量措辞轻微润色。"
     elif ratio <= 75:
-        guidance = "较明显改写，可重新组织多数句子和段落，但仍需保留部分原文表达。"
+        guidance = "明显整理：按整篇已有内容重新安排同主题区块，用相关表情引导栏目、标题和栏目适度加粗；并列信息用紧凑列表展示，只允许少量轻微润色。"
     else:
-        guidance = "高强度改写，可全面重组表达、句式和排版，但不得改变事实或受保护内容。"
+        guidance = "充分整理：围绕完整文案安排同主题信息，明显优化区块顺序、段间留白、紧凑列表、标题加粗和栏目表情；保持主要内容、表达意思和宣传力度，只允许少量轻微润色。"
 
     return f"""【改写比例：{ratio}%｜最高优先级】
-目标约改写原文 {ratio}% 的表达，约保留 {retained_ratio}% 的原有措辞与结构。{guidance}
-该比例控制表达变化强度，不允许据此删除事实、添加事实或修改受保护的链接、数字、时间、地点、价格、联系方式和标签。"""
+该比例控制排版与装饰性表情的整理程度，不代表文字替换比例，也不是要求重新创作。{guidance}
+任何比例都必须保留原文的大致内容、原意和信息，不得大幅改写、补写场景、观点、导语或结尾。
+不得删除事实、添加事实或修改受保护的链接、数字、时间、地点、价格、联系方式和标签。评分、数量、状态或条件类表情必须保留原意与数量。"""
+
+
+def build_common_rewrite_rules(task, max_chars):
+    from db.crud_settings import get_ai_common_rewrite_rules
+
+    content = get_ai_common_rewrite_rules(
+        owner_user_id=getattr(task, "owner_user_id", None),
+    )
+    values = {
+        "max_chars": str(max_chars),
+        "rewrite_ratio": str(normalize_rewrite_ratio(task)),
+    }
+    # Source content is provided separately, never interpolated into common rules.
+    content = re.sub(r"\{\{(max_chars|rewrite_ratio)\}\}", lambda match: values[match[1]], content)
+    return (
+        "【所有改写共用规则】\n"
+        "以下共同规则适用于全文，优先于分类或固定提示词中冲突的写法；"
+        "不得覆盖系统的输出协议、改写比例、事实保护与长度限制。\n"
+        + content
+    )
 
 
 def build_prompt(task, text, layout=None):
@@ -647,6 +644,7 @@ def build_prompt(task, text, layout=None):
     template = get_prompt_content_for_task(
         getattr(task, "ai_prompt_template_id", None),
         getattr(task, "ai_rewrite_prompt", ""),
+        owner_user_id=getattr(task, "owner_user_id", None),
     ) or DEFAULT_PROMPT
     prompt = (
         template
@@ -662,8 +660,10 @@ def build_prompt(task, text, layout=None):
     prompt = (
         f"{AI_OUTPUT_PROTOCOL}\n\n"
         f"{prompt}\n\n"
+        f"{build_common_rewrite_rules(task, max_chars)}\n\n"
         f"{build_layout_directive(layout)}\n\n"
-        f"{build_rewrite_ratio_directive(rewrite_ratio)}"
+        f"{build_rewrite_ratio_directive(rewrite_ratio)}\n\n"
+        f"【长度与完整性】最终输出不得超过 {max_chars} 字符。不得为了缩短篇幅删除原有有效信息、事实或联系方式；空间不足时减少装饰、额外标题和空行。"
     )
     if metadata_directive:
         prompt = f"{prompt}\n\n{metadata_directive}"
@@ -707,18 +707,29 @@ def build_completion_token_limit(max_chars):
     )
 
 
-async def rewrite_text(task, text):
+async def rewrite_text(task, text, *, details=None):
     """Return (rewritten_text, error). Never exposes the API key in errors."""
     if not is_rewrite_enabled(task) or not text.strip():
         return text, None
 
-    provider_name = (getattr(task, "ai_rewrite_provider", "grok") or "grok").strip().lower()
+    configured_provider = (getattr(task, "ai_rewrite_provider", "") or "").strip().lower()
+    if configured_provider in PROVIDERS:
+        provider_name = configured_provider
+    else:
+        from db.crud_settings import get_default_ai_provider
+
+        provider_name = get_default_ai_provider(
+            owner_user_id=getattr(task, "owner_user_id", None),
+        )
     provider = PROVIDERS.get(provider_name)
     if not provider:
         return text, "不支持的 AI 供应商"
     from db.crud_settings import get_ai_provider_config
 
-    saved_config = get_ai_provider_config(provider_name) or {}
+    saved_config = get_ai_provider_config(
+        provider_name,
+        owner_user_id=getattr(task, "owner_user_id", None),
+    ) or {}
     api_key = saved_config.get("api_key") or os.getenv(provider["api_key_env"], "").strip()
     if not api_key:
         return text, f"未配置 {provider['api_key_env']}"
@@ -728,6 +739,16 @@ async def rewrite_text(task, text):
         or saved_config.get("model")
         or os.getenv(provider["model_env"], provider["default_model"])
     )
+    if getattr(task, "ai_prompt_mode", "fixed") == "auto":
+        from bot.ai_prompt_routing import rewrite_automatically
+        api_url = os.getenv(provider["base_url_env"], provider["default_url"])
+        async def request(payload):
+            return await _request_completion(api_url, api_key, payload)
+        try:
+            return await rewrite_automatically(task, text, model_name, request, details)
+        except Exception:
+            return text, f"{provider_name} 自动改写请求失败"
+
     layout = select_layout_variant(task, text)
     payload, max_chars = _build_request_payload(
         task,
@@ -735,6 +756,8 @@ async def rewrite_text(task, text):
         model_name,
         layout,
     )
+    if details is not None:
+        details["rewrite_prompt"] = payload["messages"][0]["content"]
     api_url = os.getenv(provider["base_url_env"], provider["default_url"])
     try:
         logger.info(
@@ -769,9 +792,15 @@ async def rewrite_text(task, text):
         if not rewritten:
             return text, f"{provider_name} 未返回可用文本"
         if len(rewritten) > max_chars:
-            rewritten = rewritten[:max_chars].rstrip()
-            rewritten = ensure_preserved_html_links(text, rewritten)
-            rewritten = ensure_preserved_plain_url_lines(text, rewritten)
+            return text, "改写结果超过最大输出字数，已保留原文供失败策略处理"
+        from bot.ai_prompt_routing import _expression_fingerprint, validate_rewrite
+
+        try:
+            validate_rewrite(text, rewritten, [])
+            if normalize_rewrite_ratio(task) == 0 and _expression_fingerprint(text) != _expression_fingerprint(rewritten):
+                raise ValueError("改写比例为 0% 时只能整理排版和装饰性表情，不得改变原文措辞")
+        except ValueError as exc:
+            return text, f"改写校验未通过：{exc}"
 
         initial_similarity = max_recent_output_similarity(task, rewritten)
         if initial_similarity >= AI_STRUCTURE_SIMILARITY_THRESHOLD:
@@ -817,15 +846,16 @@ async def rewrite_text(task, text):
                     retry_rewritten,
                 )
                 if len(retry_rewritten) > max_chars:
-                    retry_rewritten = retry_rewritten[:max_chars].rstrip()
-                    retry_rewritten = ensure_preserved_html_links(
-                        text,
-                        retry_rewritten,
-                    )
-                    retry_rewritten = ensure_preserved_plain_url_lines(
-                        text,
-                        retry_rewritten,
-                    )
+                    if details is not None:
+                        details["rewrite_prompt"] = retry_payload["messages"][0]["content"]
+                    return text, "改写结果超过最大输出字数，已保留原文供失败策略处理"
+                try:
+                    validate_rewrite(text, retry_rewritten, [])
+                    if normalize_rewrite_ratio(task) == 0 and _expression_fingerprint(text) != _expression_fingerprint(retry_rewritten):
+                        raise ValueError("改写比例为 0% 时只能整理排版和装饰性表情，不得改变原文措辞")
+                except ValueError as exc:
+                    logger.warning("AI 换版重试未通过事实校验，保留首次结果 | task_id=%s reason=%s", getattr(task, "id", None), exc)
+                    retry_rewritten = rewritten
                 retry_similarity = max_recent_output_similarity(
                     task,
                     retry_rewritten,
@@ -834,6 +864,8 @@ async def rewrite_text(task, text):
                     rewritten = retry_rewritten
                     layout = alternate_layout
                     initial_similarity = retry_similarity
+                    if details is not None:
+                        details["rewrite_prompt"] = retry_payload["messages"][0]["content"]
 
         remember_rewrite_output(task, rewritten)
         logger.info(

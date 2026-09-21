@@ -1,0 +1,15 @@
+{
+  "accounts": [
+    {"platform": "wechat", "username": "XZyule888", "focus": "上海", "enabled": false},
+    {"platform": "wechat", "username": "KTV-XZ8888", "focus": "北京及全国城市", "enabled": false},
+    {"platform": "telegram", "username": "shanghai_xiaozhang", "focus": "上海", "enabled": false},
+    {"platform": "telegram", "username": "KTV_AZ", "focus": "北京及全国城市", "enabled": false}
+  ],
+  "budget_basis": "人均",
+  "debounce_seconds": 5,
+  "history_messages": 12,
+  "codex_executable": "C:/Users/Administrator/AppData/Local/OpenAI/Codex/bin/2d468d2a6f48dd72/codex.exe",
+  "knowledge_file": "knowledge.md",
+  "auto_accept_wechat_friends": true,
+  "friend_greeting": "你好"
+}

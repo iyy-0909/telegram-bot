@@ -3,11 +3,18 @@ import ast
 from collections import OrderedDict
 from datetime import datetime
 
+from auth.runtime_access import get_owner_runtime_access
+from auth.tenant import current_tenant_user_id, tenant_scope
 from bot.bot_sender import BotApiError, bot_get_me, request_post
 from bot.logger import logger
 from bot.notifier import resolve_support_bot_alerts, send_ack_required_alert
-from bot.support_media import is_uploaded_media_ref, resolve_uploaded_media_path
+from bot.support_media import (
+    SupportMediaError,
+    is_uploaded_media_ref,
+    validate_uploaded_media_ref,
+)
 from db.crud_bot import get_bot
+from db.crud_users import get_single_active_admin
 from db.crud_support import (
     add_support_message,
     as_bool,
@@ -21,10 +28,12 @@ from db.crud_support import (
     set_customer_blocked,
     update_conversation_topic,
     update_conversation_status,
+    update_support_bot,
     update_support_bot_error,
     update_support_message_group_message_id,
     upsert_customer,
 )
+from utils.redaction import redact_sensitive_text
 
 
 _polling_task = None
@@ -36,6 +45,9 @@ _recent_group_chats = OrderedDict()
 _group_join_notice_sent = set()
 _last_polling_conflict_log_at = 0
 TRANSIENT_BOT_API_ERROR_CODES = {500, 502, 503, 504}
+RECENT_GROUP_CHAT_LIMIT = 20
+RECENT_GROUP_CHAT_OWNER_LIMIT = 200
+_CACHE_OWNER_UNSET = object()
 
 
 class SupportBotConfigError(Exception):
@@ -120,6 +132,7 @@ def support_bot_settings(config):
         "business_start_hour": str(config.get("business_start_hour") or 9),
         "business_end_hour": str(config.get("business_end_hour") or 22),
         "_support_bot_id": config.get("id"),
+        "_owner_user_id": config.get("_owner_user_id"),
     }
 
 
@@ -137,16 +150,52 @@ async def notify_support_warning(title, detail="", context=None):
     display_detail = detail
     if bot_name and f"客服机器人：{bot_name}" not in str(detail or ""):
         display_detail = f"客服机器人：{bot_name}\n{detail or ''}".strip()
-    return await send_ack_required_alert(
-        alert_key=alert_key,
-        title=display_title,
-        detail=display_detail,
-        module="客服机器人",
-        context={
+    alert_kwargs = {
+        "alert_key": alert_key,
+        "title": display_title,
+        "detail": display_detail,
+        "module": "客服机器人",
+        "context": {
             **context,
             "module": "客服机器人",
         },
-    )
+    }
+
+    if support_bot_id != "global":
+        return await send_ack_required_alert(**alert_kwargs)
+
+    try:
+        admin = get_single_active_admin()
+    except Exception as exc:
+        logger.warning(
+            "Support Bot global alert owner lookup failed; alert skipped | "
+            f"error_type={type(exc).__name__}"
+        )
+        return None
+
+    admin_id = (admin or {}).get("id")
+    if admin_id in (None, "", 0, "0"):
+        logger.warning(
+            "Support Bot global alert skipped: exactly one active admin is required"
+        )
+        return None
+
+    with tenant_scope(int(admin_id), is_admin=True):
+        return await send_ack_required_alert(**alert_kwargs)
+
+
+async def notify_support_warning_safely(title, detail="", context=None):
+    """Best-effort warning delivery that must never stop a background worker."""
+    try:
+        return await notify_support_warning(title, detail, context=context)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Support Bot warning persistence failed; background worker continues | "
+            f"error_type={type(exc).__name__}"
+        )
+        return None
 
 
 def support_bot_display_name(support_bot_id):
@@ -241,7 +290,28 @@ async def ensure_polling_mode(token):
     logger.info("客服 Bot 已切换到 polling 模式：deleteWebhook ok")
 
 
-def remember_group_chat(chat):
+def resolve_recent_group_owner(owner_user_id=_CACHE_OWNER_UNSET):
+    if owner_user_id is _CACHE_OWNER_UNSET:
+        owner_user_id = current_tenant_user_id()
+    if owner_user_id in (None, "", 0, "0"):
+        return None
+    return int(owner_user_id)
+
+
+def recent_group_chat_bucket(owner_user_id=_CACHE_OWNER_UNSET, *, create=False):
+    owner_key = resolve_recent_group_owner(owner_user_id)
+    bucket = _recent_group_chats.get(owner_key)
+    if bucket is None and create:
+        bucket = OrderedDict()
+        _recent_group_chats[owner_key] = bucket
+        while len(_recent_group_chats) > RECENT_GROUP_CHAT_OWNER_LIMIT:
+            _recent_group_chats.popitem(last=False)
+    elif bucket is not None:
+        _recent_group_chats.move_to_end(owner_key)
+    return bucket
+
+
+def remember_group_chat(chat, *, owner_user_id=_CACHE_OWNER_UNSET):
     chat_type = chat.get("type")
     if chat_type not in {"group", "supergroup"}:
         return
@@ -250,19 +320,24 @@ def remember_group_chat(chat):
     if not chat_id:
         return
 
-    _recent_group_chats[chat_id] = {
+    bucket = recent_group_chat_bucket(owner_user_id, create=True)
+    bucket[chat_id] = {
         "chat_id": chat_id,
         "title": chat.get("title") or "",
         "type": chat_type,
         "username": chat.get("username") or "",
         "last_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    while len(_recent_group_chats) > 20:
-        _recent_group_chats.popitem(last=False)
+    bucket.move_to_end(chat_id)
+    while len(bucket) > RECENT_GROUP_CHAT_LIMIT:
+        bucket.popitem(last=False)
 
 
-def get_recent_group_chats():
-    return list(reversed(list(_recent_group_chats.values())))
+def get_recent_group_chats(*, owner_user_id=_CACHE_OWNER_UNSET):
+    bucket = recent_group_chat_bucket(owner_user_id)
+    if not bucket:
+        return []
+    return list(reversed(list(bucket.values())))
 
 
 async def maybe_send_group_chat_id_notice(token, message):
@@ -334,11 +409,11 @@ async def test_support_bot_config():
         return {
             "ok": False,
             "mode": "polling",
-            "message": str(e),
+            "message": redact_sensitive_text(e),
         }
 
 
-def extract_group_chats_from_updates(updates):
+def extract_group_chats_from_updates(updates, *, owner_user_id=_CACHE_OWNER_UNSET):
     groups = OrderedDict()
     for update in updates or []:
         message = update.get("message") or {}
@@ -346,7 +421,7 @@ def extract_group_chats_from_updates(updates):
         if chat.get("type") not in {"group", "supergroup"}:
             continue
 
-        remember_group_chat(chat)
+        remember_group_chat(chat, owner_user_id=owner_user_id)
         chat_id = str(chat.get("id") or "")
         groups[chat_id] = {
             "chat_id": chat_id,
@@ -396,17 +471,18 @@ async def check_group_topic_permission(token, chat_id):
     except Exception as e:
         return {
             "ok": False,
-            "message": str(e),
+            "message": redact_sensitive_text(e),
         }
 
 
-async def get_recent_support_updates(limit=30):
+async def get_recent_support_updates(limit=30, *, owner_user_id=_CACHE_OWNER_UNSET):
+    resolved_owner_user_id = resolve_recent_group_owner(owner_user_id)
     token, settings = get_support_token_and_settings()
     if not token:
         return {
             "ok": False,
             "message": "客服 Bot 未配置",
-            "groups": get_recent_group_chats(),
+            "groups": get_recent_group_chats(owner_user_id=resolved_owner_user_id),
         }
 
     try:
@@ -423,21 +499,26 @@ async def get_recent_support_updates(limit=30):
             None,
         )
         updates = result.get("result") or []
-        groups = extract_group_chats_from_updates(updates)
+        groups = extract_group_chats_from_updates(
+            updates,
+            owner_user_id=resolved_owner_user_id,
+        )
         for group in groups:
             group["permission"] = await check_group_topic_permission(token, group["chat_id"])
         return {
             "ok": True,
             "mode": "polling",
-            "groups": groups or get_recent_group_chats(),
+            "groups": groups or get_recent_group_chats(
+                owner_user_id=resolved_owner_user_id,
+            ),
             "updates_count": len(updates),
         }
     except Exception as e:
         return {
             "ok": False,
             "mode": "polling",
-            "message": str(e),
-            "groups": get_recent_group_chats(),
+            "message": redact_sensitive_text(e),
+            "groups": get_recent_group_chats(owner_user_id=resolved_owner_user_id),
         }
 
 
@@ -679,6 +760,7 @@ async def send_telegram_by_type(
     message_thread_id=None,
     reply_to_message_id=None,
     retry_429=True,
+    owner_user_id=None,
 ):
     method, field_name = SEND_METHOD_BY_TYPE.get(message_type, ("sendMessage", "text"))
     data = {"chat_id": chat_id}
@@ -699,9 +781,15 @@ async def send_telegram_by_type(
             raise BotApiError(f"{message_type} missing file_id")
         files = None
         if is_uploaded_media_ref(file_id):
-            media_path = resolve_uploaded_media_path(file_id)
-            if not media_path or not media_path.exists():
-                raise BotApiError(f"{message_type} uploaded media missing")
+            try:
+                media_path = validate_uploaded_media_ref(
+                    file_id,
+                    owner_user_id=owner_user_id,
+                )
+            except SupportMediaError as exc:
+                raise BotApiError(
+                    f"{message_type} uploaded media unavailable for current owner"
+                ) from exc
             upload_file = media_path.open("rb")
             files = {
                 field_name: (media_path.name, upload_file),
@@ -951,6 +1039,7 @@ async def maybe_send_auto_message(customer, conversation, text, token, settings,
                 customer.telegram_chat_id,
                 media_type,
                 payload,
+                owner_user_id=settings.get("_owner_user_id"),
             )
             message_type = media_type
         else:
@@ -1326,7 +1415,8 @@ async def handle_support_update(update, token=None, settings=None):
     chat = message.get("chat") or {}
     if settings is None:
         settings = get_support_settings()
-    remember_group_chat(chat)
+    owner_user_id = settings.get("_owner_user_id", _CACHE_OWNER_UNSET)
+    remember_group_chat(chat, owner_user_id=owner_user_id)
 
     if chat.get("type") in {"group", "supergroup"} and token:
         try:
@@ -1365,6 +1455,24 @@ async def support_polling_worker(config):
                     "Support Bot 配置已删除，worker 退出",
                     detail,
                     context={"support_bot_id": support_bot_id},
+                )
+                return
+
+            access = get_owner_runtime_access(
+                latest_config.get("_owner_user_id"),
+                "support",
+            )
+            if not access.allowed:
+                update_support_bot(
+                    support_bot_id,
+                    {
+                        "polling_enabled": False,
+                        "last_error": access.message,
+                    },
+                )
+                logger.warning(
+                    "Support Bot stopped by runtime access | "
+                    f"support_bot_id={support_bot_id} | reason={access.reason}"
                 )
                 return
 
@@ -1464,7 +1572,32 @@ async def support_polling_manager():
     logger.info("Support Bot polling manager started")
     while True:
         try:
-            configs = list_support_bots(include_disabled=False, include_secret=True)
+            configs = list_support_bots(
+                include_disabled=False,
+                include_secret=True,
+                include_internal=True,
+            )
+            authorized_configs = []
+            for config in configs:
+                access = get_owner_runtime_access(
+                    config.get("_owner_user_id"),
+                    "support",
+                )
+                if access.allowed:
+                    authorized_configs.append(config)
+                    continue
+                update_support_bot(
+                    config["id"],
+                    {
+                        "polling_enabled": False,
+                        "last_error": access.message,
+                    },
+                )
+                logger.warning(
+                    "Support Bot restore blocked by runtime access | "
+                    f"support_bot_id={config['id']} | reason={access.reason}"
+                )
+            configs = authorized_configs
             active_ids = {config["id"] for config in configs}
 
             for support_bot_id, task in list(_polling_tasks.items()):
@@ -1482,9 +1615,15 @@ async def support_polling_manager():
                 )
 
         except Exception as e:
-            detail = f"Support Bot polling manager error | {e}"
+            detail = (
+                "Support Bot polling manager error | "
+                f"{redact_sensitive_text(e)}"
+            )
             logger.warning(detail)
-            await notify_support_warning("Support Bot polling manager 异常", detail)
+            await notify_support_warning_safely(
+                "Support Bot polling manager 异常",
+                detail,
+            )
 
         await asyncio.sleep(10)
 

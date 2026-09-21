@@ -61,6 +61,8 @@
         </div>
 
         <el-card class="table-card">
+          <el-alert v-if="loadError" :title="loadError" type="error" show-icon :closable="false" class="channel-feedback" />
+          <p class="activity-help">更新状态按频道最后发布新内容的时间判断，超过 5 天未更新显示异常；未知时可点击“检测”。</p>
           <el-table
             :data="channels"
             v-loading="loading"
@@ -70,6 +72,13 @@
             empty-text="暂无频道，请点击“新增频道”添加你的目标频道。"
           >
             <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
+            <el-table-column label="更新状态" width="110">
+              <template #default="{ row }">
+                <el-tooltip :content="activityDescription(row)" placement="top">
+                  <span tabindex="0"><StatusTag :status="row.update_status || 'unknown'" /></span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column label="username" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">
                 <CopyText v-if="row.username" :value="row.username" :text="row.username" tone="primary" />
@@ -110,7 +119,7 @@
               </template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-            <el-table-column label="操作" width="382" fixed="right">
+            <el-table-column label="操作" width="382" :fixed="isNarrow ? false : 'right'">
               <template #default="{ row }">
                 <div class="row-actions">
                   <el-button size="small" type="primary" :disabled="row.status === 'disabled'" @click="openChannelSubmit(row)">提交</el-button>
@@ -320,8 +329,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="720px">
-      <el-descriptions :column="2" border>
+    <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑频道' : '新增频道'" width="min(720px, calc(100vw - 24px))" top="5vh" class="channel-edit-dialog">
+      <el-descriptions :column="isNarrow ? 1 : 2" border>
         <el-descriptions-item label="频道名称">
           <el-input v-model="form.title" class="description-field" placeholder="可留空，保存后自动读取频道名称" />
         </el-descriptions-item>
@@ -360,6 +369,34 @@
           <div class="readonly-field">
             <el-input v-model="form.collection_status" class="description-field" disabled />
           </div>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="editing?.id" label="更新状态">
+          <StatusTag :status="editing.update_status || 'unknown'" />
+        </el-descriptions-item>
+        <el-descriptions-item v-if="editing?.id" label="频道上次更新时间">
+          {{ editing.last_content_at ? formatDateTime(editing.last_content_at) : '未知，尚未获取内容时间' }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="editing?.id" label="收录审核信息" :span="2">
+          <p class="activity-help">以下为只读信息，展示各次提交记录的当前审核结果。</p>
+          <div v-if="editReviewLoading" role="status">正在加载收录审核信息…</div>
+          <div v-else-if="editReviewError" role="alert">
+            <el-alert :title="editReviewError" type="error" :closable="false" show-icon />
+            <el-button text type="primary" @click="loadEditReviews(editing.id)">重新加载</el-button>
+          </div>
+          <dl v-else class="review-details">
+            <template v-for="group in reviewGroups" :key="group.status">
+              <dt>{{ group.label }}（{{ group.rows.length }}）</dt>
+              <dd v-if="!group.rows.length">暂无{{ group.label }}记录</dd>
+              <dd v-for="record in group.rows" :key="record.id">
+                <strong>{{ record.search_bot_name || '搜索机器人' }} {{ record.search_bot_username }}</strong>
+                <span>提交时间：{{ formatUtcDateTime(record.submitted_at) }}</span>
+                <span>结果更新时间：{{ formatUtcDateTime(record.last_checked_at || record.updated_at) }}</span>
+                <span>提交账号：{{ submissionAccountLabel(record) }}</span>
+                <span v-if="record.last_error">记录信息：{{ record.last_error }}</span>
+                <span v-else-if="group.status === 'rejected'">未记录拒绝原因</span>
+              </dd>
+            </template>
+          </dl>
         </el-descriptions-item>
         <el-descriptions-item label="克隆状态" :span="2">{{ editing?.clone_status || "-" }}</el-descriptions-item>
         <el-descriptions-item label="成员数">{{ formatMemberCount(editing) }}</el-descriptions-item>
@@ -458,7 +495,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue"
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
   Connection,
@@ -518,6 +555,19 @@ const cloneDialogVisible = ref(false)
 const editing = ref(null)
 const cloneEditing = ref(null)
 const loading = ref(false)
+const loadError = ref("")
+const isNarrow = ref(window.innerWidth < 768)
+const editReviewLoading = ref(false)
+const editReviewError = ref("")
+const editReviewRows = ref([])
+let editReviewRequest = 0
+const reviewGroups = computed(() => [
+  { status: "approved", label: "收录通过信息" },
+  { status: "rejected", label: "收录被拒信息" },
+].map((group) => ({ ...group, rows: editReviewRows.value.filter((row) => row.review_status === group.status) })))
+function updateViewport() { isNarrow.value = window.innerWidth < 768 }
+onMounted(() => window.addEventListener("resize", updateViewport))
+onUnmounted(() => window.removeEventListener("resize", updateViewport))
 const cloneLoading = ref(false)
 const saving = ref(false)
 const cloneSaving = ref(false)
@@ -585,9 +635,12 @@ function uniqueGroups(list) {
 
 async function load() {
   loading.value = true
+  loadError.value = ""
   try {
     const res = await getMyChannels(filters)
     channels.value = res.data.items || []
+  } catch (error) {
+    loadError.value = readError(error, "加载频道失败，请点击刷新重试")
   } finally {
     loading.value = false
   }
@@ -765,6 +818,7 @@ function submissionStatusType(status) {
 }
 
 function openCreate() {
+  editReviewRequest += 1
   editing.value = null
   Object.assign(form, emptyForm())
   dialogVisible.value = true
@@ -786,6 +840,33 @@ function openEdit(row) {
     tags: row.tags || "[]",
   })
   dialogVisible.value = true
+  loadEditReviews(row.id)
+}
+
+async function loadEditReviews(channelId) {
+  const request = ++editReviewRequest
+  editReviewRows.value = []
+  editReviewError.value = ""
+  editReviewLoading.value = true
+  try {
+    const res = await getSearchBotSubmissions({ my_channel_id: channelId })
+    if (request === editReviewRequest) editReviewRows.value = res.data.items || []
+  } catch (error) {
+    if (request === editReviewRequest) editReviewError.value = readError(error, "加载收录审核信息失败")
+  } finally {
+    if (request === editReviewRequest) editReviewLoading.value = false
+  }
+}
+
+function activityDescription(row) {
+  if (!row.last_content_at) return "尚未获取内容时间，请使用可访问频道的在线用户号进行检测"
+  return `${row.update_status === 'error' ? '超过 5 天未更新；' : ''}上次更新：${formatDateTime(row.last_content_at)}`
+}
+
+function formatUtcDateTime(value) {
+  if (!value) return "-"
+  const text = String(value).trim().replace(" ", "T")
+  return formatDateTime(/(?:Z|[+-]\d{2}:\d{2})$/i.test(text) ? text : `${text}Z`)
 }
 
 function openCloneCreate() {
@@ -1142,6 +1223,23 @@ function readError(error, fallback) {
 .description-field {
   width: 100%;
 }
+
+.activity-help {
+  margin: 0 0 12px;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.channel-feedback { margin-bottom: 12px; }
+.review-details { margin: 0; overflow-wrap: anywhere; }
+.review-details dt { font-weight: 600; margin: 12px 0 6px; }
+.review-details dd { margin: 0 0 10px; }
+.review-details dd span { display: block; color: var(--el-text-color-regular); }
+.channel-edit-dialog :deep(.el-descriptions__table) { table-layout: fixed; }
+.channel-edit-dialog :deep(.el-descriptions__label) { width: 112px; }
+.channel-edit-dialog :deep(.el-descriptions__content) { overflow-wrap: anywhere; }
+:global(.channel-edit-dialog .el-dialog__body) { max-height: min(70vh, 720px); overflow: auto; }
 
 @media (max-width: 900px) {
   .toolbar {

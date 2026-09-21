@@ -25,13 +25,16 @@ class DefaultCloneAccountTests(unittest.TestCase):
             db.add_all([
                 Account(
                     id=1,
+                    owner_user_id=1,
                     name="账号一",
                     session_path="data/sessions/one",
+                    proxy="socks5://user:secret@127.0.0.1:1080",
                     enabled=True,
                     is_default=True,
                 ),
                 Account(
                     id=2,
+                    owner_user_id=1,
                     name="账号二",
                     session_path="data/sessions/two",
                     enabled=True,
@@ -77,6 +80,22 @@ class DefaultCloneAccountTests(unittest.TestCase):
             [item.id for item in accounts if item.is_default],
             [2],
         )
+
+    def test_blank_write_only_fields_preserve_existing_and_proxy_can_be_cleared(self):
+        with patch.object(crud, "SessionLocal", self.session_factory):
+            preserved = crud.update_account(1, {
+                "name": "账号一",
+                "session_path": "",
+                "proxy": "",
+            })
+            self.assertEqual(preserved.session_path, "data/sessions/one")
+            self.assertEqual(preserved.proxy, "socks5://user:secret@127.0.0.1:1080")
+
+            cleared = crud.update_account(1, {
+                "name": "账号一",
+                "clear_proxy": True,
+            })
+            self.assertEqual(cleared.proxy, "")
 
     def test_missing_default_returns_readable_error(self):
         db = self.session_factory()

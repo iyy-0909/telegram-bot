@@ -142,6 +142,7 @@ async def notify_listener_event(event):
             ),
             "module": "listener",
             "task_id": event.get("task_id"),
+            "listener_task_id": event.get("task_id"),
             "channel": event.get("source_channel"),
             "target": event.get("target"),
             "bot_name": event.get("bot_name"),
@@ -243,6 +244,8 @@ def add_listener_send_event(
     db = SessionLocal()
 
     try:
+        task = get_listener_task(task_id)
+        owner_user_id = getattr(task, "owner_user_id", None) if task else None
         event = find_existing_content_event(
             db,
             task_id=task_id,
@@ -252,8 +255,13 @@ def add_listener_send_event(
         )
 
         if event is None:
-            event = ListenerSendEvent(task_id=task_id)
+            event = ListenerSendEvent(
+                task_id=task_id,
+                owner_user_id=owner_user_id,
+            )
             db.add(event)
+        elif event.owner_user_id is None:
+            event.owner_user_id = owner_user_id
 
         apply_event_fields(
             event,

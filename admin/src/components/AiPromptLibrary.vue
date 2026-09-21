@@ -5,12 +5,14 @@
         <div>
           <div class="card-title">提示词库</div>
           <div class="card-subtitle">
-            监听和克隆任务可以选择这里的提示词；未选择时自动使用系统默认项。
+            固定模式按任务选择；自动模式按适用类型匹配最近保存且启用的提示词，未配置时使用内置规则。
           </div>
         </div>
         <el-button type="primary" @click="emit('add')">新增提示词</el-button>
       </div>
     </template>
+
+    <AiCommonRulesEditor :refreshing="loading" />
 
     <el-alert
       v-if="defaultPrompt"
@@ -21,9 +23,10 @@
       class="default-alert"
     />
 
+    <p v-if="compact" class="card-subtitle">左右滑动表格查看适用类型和操作。</p>
     <el-table
       :data="prompts"
-      :loading="loading"
+      v-loading="loading"
       height="520"
       empty-text="暂无提示词，请点击“新增提示词”创建。"
     >
@@ -38,18 +41,21 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="内容预览" min-width="360" show-overflow-tooltip>
+      <el-table-column label="适用类型" width="130">
+        <template #default="{ row }"><el-tag type="info">{{ contentTypeLabel(row.content_type) }}</el-tag></template>
+      </el-table-column>
+      <el-table-column label="内容预览" min-width="260" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="content-preview">{{ compactContent(row.content) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="任务使用" width="110" align="center">
+      <el-table-column label="固定引用" width="110" align="center">
         <template #default="{ row }">{{ row.usage_count || 0 }} 个</template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="250" fixed="right">
+      <el-table-column label="操作" width="250" :fixed="compact ? false : 'right'">
         <template #default="{ row }">
           <el-button link type="primary" @click="emit('edit', row)">编辑</el-button>
           <el-button
@@ -86,7 +92,9 @@
 </template>
 
 <script setup>
-import { computed } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { contentTypeLabel } from "../config/aiContentTypes"
+import AiCommonRulesEditor from "./AiCommonRulesEditor.vue"
 
 const props = defineProps({
   prompts: { type: Array, default: () => [] },
@@ -97,6 +105,11 @@ const props = defineProps({
 
 const emit = defineEmits(["add", "edit", "delete", "set-default"])
 const defaultPrompt = computed(() => props.prompts.find((item) => item.is_default))
+const compact = ref(false)
+const mediaQuery = window.matchMedia("(max-width: 900px)")
+const updateCompact = () => { compact.value = mediaQuery.matches }
+onMounted(() => { updateCompact(); mediaQuery.addEventListener("change", updateCompact) })
+onBeforeUnmount(() => mediaQuery.removeEventListener("change", updateCompact))
 
 function compactContent(value) {
   return String(value || "").replace(/\s+/g, " ").trim()

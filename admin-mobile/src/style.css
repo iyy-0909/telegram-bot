@@ -32,6 +32,47 @@ body {
   background: var(--bg);
 }
 
+.auth-bootstrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  background: var(--bg);
+  font-size: 14px;
+}
+
+.auth-bootstrap .el-icon {
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.auth-bootstrap--error {
+  flex-direction: column;
+  padding: 24px;
+}
+
+.auth-bootstrap--error .el-alert {
+  width: min(440px, 100%);
+}
+
+.auth-bootstrap__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-bootstrap__actions .el-button {
+  min-height: 44px;
+  margin-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-bootstrap .is-loading {
+    animation: none;
+  }
+}
+
 button,
 input,
 textarea,
@@ -146,6 +187,19 @@ select {
 
 .data-card {
   padding: 12px;
+}
+
+.more-entry {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-entry:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 35%, transparent);
+  outline-offset: 2px;
 }
 
 .expandable-card:not(.expanded) {

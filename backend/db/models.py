@@ -13,6 +13,7 @@ class ChannelRule(Base):
     __tablename__ = "channel_rules"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     source = Column(String, nullable=False)
     target = Column(String, nullable=False)
     account_id = Column(Integer, default=1)
@@ -32,8 +33,16 @@ class ChannelRule(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id",
+            "session_path",
+            name="uq_account_owner_session_path",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     name = Column(String, nullable=False)
     username = Column(String, default="")
     phone = Column(String, default="")
@@ -59,6 +68,7 @@ class AccountAutoReplyState(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     account_id = Column(Integer, nullable=False, index=True)
     telegram_user_id = Column(String, nullable=False, index=True)
     greeting_sent_at = Column(DateTime, nullable=True)
@@ -71,6 +81,7 @@ class NotificationAccountSetting(Base):
     __tablename__ = "notification_account_settings"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     account_id = Column(Integer, nullable=False, unique=True, index=True)
     ntfy_url = Column(Text, default="")
     enabled = Column(Boolean, default=False)
@@ -84,6 +95,7 @@ class CloneTask(Base):
     __tablename__ = "clone_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     name = Column(String, nullable=False)
     source_channel = Column(String, nullable=False)
@@ -117,6 +129,7 @@ class CloneTask(Base):
     ai_rewrite_model = Column(String, default="")
     ai_rewrite_prompt = Column(Text, default="")
     ai_prompt_template_id = Column(Integer, nullable=True, index=True)
+    ai_prompt_mode = Column(String, default="fixed", nullable=False)
     ai_rewrite_max_chars = Column(Integer, default=800)
     ai_rewrite_ratio = Column(Integer, default=70)
     ai_rewrite_failure_mode = Column(String, default="fallback")
@@ -143,6 +156,7 @@ class ContentTemplate(Base):
     __tablename__ = "content_templates"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     parent_id = Column(Integer, nullable=True, index=True)
     name = Column(String, default="")
     type = Column(String, nullable=False, index=True)
@@ -159,6 +173,7 @@ class SentMessage(Base):
     __tablename__ = "sent_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     task_id = Column(Integer, index=True, nullable=False)
     source_message_id = Column(Integer, index=True, nullable=False)
@@ -176,6 +191,7 @@ class ListenerTask(Base):
     __tablename__ = "listener_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     name = Column(String, nullable=False)
     source_channel = Column(String, nullable=False, index=True)
@@ -197,6 +213,7 @@ class ListenerTask(Base):
     ai_rewrite_model = Column(String, default="")
     ai_rewrite_prompt = Column(Text, default="")
     ai_prompt_template_id = Column(Integer, nullable=True, index=True)
+    ai_prompt_mode = Column(String, default="fixed", nullable=False)
     ai_rewrite_max_chars = Column(Integer, default=800)
     ai_rewrite_ratio = Column(Integer, default=70)
     ai_rewrite_failure_mode = Column(String, default="fallback")
@@ -229,6 +246,7 @@ class ListenerSentMessage(Base):
     __tablename__ = "listener_sent_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     listener_task_id = Column(Integer, index=True, nullable=False)
     target_channel = Column(String, index=True, nullable=False)
@@ -244,6 +262,7 @@ class CloneSendEvent(Base):
     __tablename__ = "clone_send_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     time = Column(String, default="")
     task_id = Column(Integer, index=True, nullable=True)
     target = Column(String, default="", index=True)
@@ -271,6 +290,7 @@ class ListenerSendEvent(Base):
     __tablename__ = "listener_send_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     time = Column(String, default="")
     task_id = Column(Integer, index=True, nullable=True)
     task_name = Column(String, default="")
@@ -300,6 +320,7 @@ class BulkReplaceJob(Base):
     __tablename__ = "bulk_replace_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     old_text = Column(Text, default="")
     new_text = Column(Text, default="")
     channel_ids = Column(Text, default="[]")
@@ -319,6 +340,7 @@ class BulkReplaceJobItem(Base):
     __tablename__ = "bulk_replace_job_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     job_id = Column(Integer, index=True, nullable=False)
     source_type = Column(String, default="", index=True)
     source_record_id = Column(Integer, index=True, nullable=False)
@@ -337,6 +359,7 @@ class ControlCommandLog(Base):
     __tablename__ = "control_command_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     chat_id = Column(String, default="", index=True)
     message_id = Column(Integer, nullable=True, index=True)
     user_id = Column(String, default="", index=True)
@@ -356,6 +379,7 @@ class BotAccount(Base):
     __tablename__ = "bot_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     name = Column(String, nullable=False)
     token = Column(Text, nullable=False)
@@ -376,6 +400,7 @@ class TargetBotBinding(Base):
     __tablename__ = "target_bot_bindings"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
 
     target_channel = Column(String, nullable=False, index=True)
     bot_id = Column(Integer, nullable=False, index=True)
@@ -392,6 +417,7 @@ class MyChannel(Base):
     __tablename__ = "my_channels"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     title = Column(String, default="")
     username = Column(String, default="", index=True)
     chat_id = Column(String, default="", index=True)
@@ -419,6 +445,7 @@ class MyChannel(Base):
     creator_name = Column(String, default="")
     can_view_creator = Column(Boolean, default=False)
 
+    last_content_at = Column(DateTime, nullable=True)
     last_check_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -431,6 +458,7 @@ class SearchBot(Base):
     __tablename__ = "search_bots"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     name = Column(String, nullable=False)
     username = Column(String, nullable=False, index=True)
     bot_link = Column(String, default="")
@@ -452,6 +480,7 @@ class SearchBotChannelSubmission(Base):
     __tablename__ = "search_bot_channel_submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     search_bot_id = Column(Integer, nullable=False, index=True)
     my_channel_id = Column(Integer, nullable=False, index=True)
     account_id = Column(Integer, nullable=True, index=True)
@@ -481,6 +510,7 @@ class CloneChannel(Base):
     __tablename__ = "clone_channels"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     title = Column(String, default="")
     channel_link = Column(String, nullable=False, index=True)
     group_name = Column(String, default="", index=True)
@@ -494,10 +524,15 @@ class AiPromptTemplate(Base):
     """Reusable AI rewrite prompt selectable by clone and listener tasks."""
 
     __tablename__ = "ai_prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "name", name="uq_ai_prompt_owner_name"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)
     content = Column(Text, nullable=False)
+    content_type = Column(String, default="", nullable=False)
     is_default = Column(Boolean, default=False, index=True)
     enabled = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -508,9 +543,13 @@ class SystemSetting(Base):
     """系统级配置"""
 
     __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "key", name="uq_system_setting_owner_key"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, nullable=False, unique=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    key = Column(String, nullable=False, index=True)
     value = Column(Text, default="")
     remark = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -522,6 +561,7 @@ class SupportCustomer(Base):
     __tablename__ = "support_customers"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     support_bot_id = Column(Integer, nullable=True, index=True)
     telegram_user_id = Column(String, nullable=False, index=True)
     telegram_chat_id = Column(String, nullable=False, index=True)
@@ -543,6 +583,7 @@ class SupportConversation(Base):
     __tablename__ = "support_conversations"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     support_bot_id = Column(Integer, nullable=True, index=True)
     customer_id = Column(Integer, nullable=False, index=True)
     status = Column(String, default="open", index=True)
@@ -563,6 +604,7 @@ class SupportMessage(Base):
     __tablename__ = "support_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     support_bot_id = Column(Integer, nullable=True, index=True)
     conversation_id = Column(Integer, nullable=False, index=True)
     customer_id = Column(Integer, nullable=False, index=True)
@@ -595,6 +637,7 @@ class SupportQuickReply(Base):
     __tablename__ = "support_quick_replies"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     title = Column(String, nullable=False)
     content = Column(Text, default="")
     sort = Column(Integer, default=0, index=True)
@@ -607,9 +650,13 @@ class SupportTag(Base):
     """Customer tag."""
 
     __tablename__ = "support_tags"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "name", name="uq_support_tag_owner_name"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)
     color = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -621,6 +668,7 @@ class SupportCustomerTag(Base):
     __tablename__ = "support_customer_tags"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     customer_id = Column(Integer, nullable=False, index=True)
     tag_id = Column(Integer, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -630,9 +678,13 @@ class SupportSetting(Base):
     """Support bot settings."""
 
     __tablename__ = "support_settings"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "key", name="uq_support_setting_owner_key"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, nullable=False, unique=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    key = Column(String, nullable=False, index=True)
     value = Column(Text, default="")
     remark = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -644,6 +696,7 @@ class SupportBot(Base):
     __tablename__ = "support_bots"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
     name = Column(String, default="")
     bot_id = Column(Integer, nullable=True, index=True)
     bot_token = Column(Text, default="")
@@ -669,9 +722,13 @@ class ControlAckAlert(Base):
     """Control bot alert that must be acknowledged by an admin."""
 
     __tablename__ = "control_ack_alerts"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "alert_key", name="uq_control_alert_owner_key"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    alert_key = Column(String, nullable=False, unique=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    alert_key = Column(String, nullable=False, index=True)
     level = Column(String, default="warning", index=True)
     module = Column(String, default="", index=True)
     title = Column(String, default="")
@@ -706,6 +763,19 @@ class UserAccount(Base):
     password_hash = Column(Text, nullable=False)
     role = Column(String(32), default="user", nullable=False, index=True)
     status = Column(String(32), default="active", nullable=False, index=True)
+    plan_tier = Column(String(16), default="free", nullable=False, index=True)
+    feature_keys_json = Column(Text, default="[]", nullable=False)
+    access_expires_at = Column(DateTime, nullable=True)
+    advertisement_text = Column(
+        Text,
+        default="本消息由 Telegram 运营系统免费版自动发送。",
+        nullable=False,
+    )
+    advertisement_send_time = Column(
+        String(5),
+        default="12:00",
+        nullable=False,
+    )
     failed_login_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     last_login_at = Column(DateTime, nullable=True)
@@ -730,3 +800,30 @@ class UserSession(Base):
     revoked_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DailyAdvertisementDelivery(Base):
+    """One free-plan advertisement delivery per target channel and day."""
+
+    __tablename__ = "daily_advertisement_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "delivery_date",
+            "bot_id",
+            "target_channel",
+            name="uq_daily_advertisement_delivery",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    delivery_date = Column(String(10), nullable=False, index=True)
+    bot_id = Column(Integer, nullable=False, index=True)
+    target_channel = Column(String(255), nullable=False, index=True)
+    status = Column(String(16), default="pending", nullable=False, index=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    last_error = Column(Text, default="", nullable=False)
+    sent_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)

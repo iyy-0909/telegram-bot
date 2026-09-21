@@ -1,6 +1,9 @@
 import json
 
+from accounts.session_storage import generate_owner_session_path
+from auth.tenant import current_tenant_user_id
 from db.database import SessionLocal
+from utils.redaction import redact_sensitive_text
 from db.models import ChannelRule, Account
 
 
@@ -280,7 +283,7 @@ def sync_clone_task_to_channel_rules(clone_task):
 
         return {
             "ok": False,
-            "message": str(e),
+            "message": redact_sensitive_text(e),
             "created": 0,
         }
 
@@ -314,19 +317,24 @@ def delete_channel_rules_by_clone_task_id(clone_task_id: int):
 # 账号 CRUD
 # =========================
 
-def ensure_default_account_in_session(db):
-    default_account = db.query(Account).filter(
+def ensure_default_account_in_session(db, owner_user_id=None):
+    owner_id = owner_user_id or current_tenant_user_id()
+    query = db.query(Account)
+    if owner_id not in (None, "", 0, "0"):
+        query = query.filter(Account.owner_user_id == int(owner_id))
+
+    default_account = query.filter(
         Account.enabled == True,
         Account.is_default == True,
     ).order_by(Account.id.asc()).first()
     if default_account:
         return default_account
 
-    db.query(Account).update(
+    query.update(
         {Account.is_default: False},
         synchronize_session=False,
     )
-    default_account = db.query(Account).filter(
+    default_account = query.filter(
         Account.enabled == True,
     ).order_by(Account.id.asc()).first()
     if default_account:
@@ -358,7 +366,7 @@ def get_all_accounts():
 
 def create_account(
     name: str,
-    session_path: str,
+    session_path: str = "",
     username: str = "",
     proxy: str = "",
     remark: str = "",
@@ -370,14 +378,30 @@ def create_account(
     business_start_time: str = "09:00",
     business_end_time: str = "18:00",
     away_repeat_hours: int = 12,
+    owner_user_id: int | None = None,
 ):
+    owner_id = owner_user_id or current_tenant_user_id()
+    if owner_id in (None, "", 0, "0"):
+        raise PermissionError("创建 Telegram 账号时缺少归属人")
+    owner_id = int(owner_id)
     db = SessionLocal()
 
     try:
+        occupied_paths = [
+            item[0]
+            for item in db.query(Account.session_path).filter(
+                Account.owner_user_id == owner_id
+            ).all()
+        ]
+        generated_session_path = generate_owner_session_path(
+            owner_id,
+            occupied_paths=occupied_paths,
+        )
         account = Account(
+            owner_user_id=owner_id,
             name=name,
             username=(username or "").strip().lstrip("@"),
-            session_path=session_path,
+            session_path=generated_session_path,
             proxy=proxy,
             enabled=True,
             is_default=bool(is_default),
@@ -392,14 +416,14 @@ def create_account(
         )
 
         if account.is_default:
-            db.query(Account).update(
+            db.query(Account).filter(Account.owner_user_id == owner_id).update(
                 {Account.is_default: False},
                 synchronize_session=False,
             )
 
         db.add(account)
         db.flush()
-        ensure_default_account_in_session(db)
+        ensure_default_account_in_session(db, owner_id)
         db.commit()
         db.refresh(account)
 
@@ -413,6 +437,16 @@ def update_account(account_id: int, data: dict):
     db = SessionLocal()
 
     try:
+        data = dict(data or {})
+        clear_proxy = bool(data.pop("clear_proxy", False))
+        data.pop("session_path", None)
+        for write_only_field in ("proxy",):
+            value = data.get(write_only_field)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                data.pop(write_only_field, None)
+        if clear_proxy:
+            data["proxy"] = ""
+
         account = (
             db.query(Account)
             .filter(Account.id == account_id)
@@ -424,10 +458,13 @@ def update_account(account_id: int, data: dict):
 
         requested_default = data.get("is_default")
         if requested_default is True:
-            db.query(Account).filter(Account.id != account_id).update(
-                {Account.is_default: False},
-                synchronize_session=False,
-            )
+            other_defaults = db.query(Account).filter(
+                Account.owner_user_id == account.owner_user_id,
+                Account.id != account_id,
+                Account.is_default == True,
+            ).all()
+            for other_account in other_defaults:
+                other_account.is_default = False
             account.is_default = True
             account.enabled = True
 
@@ -452,7 +489,7 @@ def update_account(account_id: int, data: dict):
             account.is_default = False
 
         db.flush()
-        ensure_default_account_in_session(db)
+        ensure_default_account_in_session(db, account.owner_user_id)
         db.commit()
         db.refresh(account)
 
@@ -477,7 +514,7 @@ def delete_account(account_id: int):
 
         db.delete(account)
         db.flush()
-        ensure_default_account_in_session(db)
+        ensure_default_account_in_session(db, account.owner_user_id)
         db.commit()
 
         return True

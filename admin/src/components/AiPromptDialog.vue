@@ -7,7 +7,7 @@
     destroy-on-close
     @update:model-value="emit('update:visible', $event)"
   >
-    <el-form ref="formRef" :model="localForm" :rules="rules" label-position="top">
+    <el-form ref="formRef" :model="localForm" :rules="rules" label-position="top" :disabled="saving">
       <el-form-item label="提示词名称" prop="name">
         <el-input
           v-model="localForm.name"
@@ -15,6 +15,20 @@
           show-word-limit
           placeholder="例如：商务活动改写"
         />
+      </el-form-item>
+
+      <el-form-item label="适用类型" prop="content_type">
+        <el-select v-model="localForm.content_type" aria-label="适用类型" placeholder="仅固定选择（不参与自动匹配）" style="width: 100%">
+          <el-option label="仅固定选择（不参与自动匹配）" value="" />
+          <el-option v-for="item in aiContentTypes" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+        <div class="field-help">自动模式采用同类型最近保存且启用的提示词。未配置分类时使用内置规则。</div>
+      </el-form-item>
+      <el-form-item v-if="localForm.content_type">
+        <el-button :loading="presetsLoading" :disabled="!selectedPreset || Boolean(localForm.content.trim())" @click="usePreset">填入内置提示词</el-button>
+        <div class="field-help">内容为空时可填入内置规则，再按需要编辑；已有内容将保留。</div>
+        <el-alert v-if="presetsError" :title="presetsError" type="error" :closable="false" show-icon />
+        <el-button v-if="presetsError" link type="primary" @click="loadPresets">重新加载内置规则</el-button>
       </el-form-item>
 
       <el-form-item label="提示词内容" prop="content">
@@ -27,7 +41,8 @@
           placeholder="填写模型需要执行的改写规则"
         />
         <div class="field-help">
-          支持 {{ contentToken }}、{{ maxCharsToken }} 和 {{ rewriteRatioToken }} 占位符；未写 {{ contentToken }} 时系统会自动附加待处理内容。
+          通用规则会自动应用，此处只需填写本套提示词的风格和分类要求。
+          支持 {{ contentToken }}、{{ maxCharsToken }} 和 {{ rewriteRatioToken }}；自动模式另支持 {{ analysisToken }}，系统会自动附加分析结果和原文。
         </div>
       </el-form-item>
 
@@ -49,7 +64,9 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from "vue"
+import { computed, reactive, ref, watch } from "vue"
+import { aiContentTypes } from "../config/aiContentTypes"
+import { getAiPromptPresets } from "../api/aiPrompts"
 
 const props = defineProps({
   visible: Boolean,
@@ -63,11 +80,36 @@ const formRef = ref(null)
 const contentToken = "{{content}}"
 const maxCharsToken = "{{max_chars}}"
 const rewriteRatioToken = "{{rewrite_ratio}}"
+const analysisToken = "{{analysis}}"
+const presets = ref([])
+const presetsLoading = ref(false)
+const presetsError = ref("")
+const selectedPreset = computed(() => presets.value.find((item) => item.content_type === localForm.content_type))
+
+async function loadPresets() {
+  if (presetsLoading.value) return
+  presetsLoading.value = true
+  presetsError.value = ""
+  try {
+    presets.value = (await getAiPromptPresets()).data || []
+  } catch {
+    presetsError.value = "内置规则加载失败，请重试。也可以直接填写提示词。"
+  } finally {
+    presetsLoading.value = false
+  }
+}
+
+function usePreset() {
+  if (!selectedPreset.value || localForm.content.trim()) return
+  localForm.content = selectedPreset.value.content
+  if (!localForm.name.trim()) localForm.name = `${selectedPreset.value.name}改写`
+}
 
 const localForm = reactive({
   id: null,
   name: "",
   content: "",
+  content_type: "",
   enabled: true,
   is_default: false,
 })
@@ -87,10 +129,12 @@ watch(
   () => [props.visible, props.prompt],
   ([visible, prompt]) => {
     if (!visible) return
+    if (!presets.value.length) loadPresets()
     Object.assign(localForm, {
       id: prompt?.id || null,
       name: prompt?.name || "",
       content: prompt?.content || "",
+      content_type: prompt?.content_type || "",
       enabled: prompt?.enabled ?? true,
       is_default: prompt?.is_default ?? false,
     })
@@ -109,6 +153,7 @@ async function submit() {
     id: localForm.id,
     name: localForm.name.trim(),
     content: localForm.content.trim(),
+    content_type: localForm.content_type,
     enabled: localForm.is_default ? true : localForm.enabled,
     is_default: localForm.is_default,
   })

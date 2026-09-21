@@ -1,6 +1,7 @@
 from db.database import SessionLocal
 from db.models import BotAccount, TargetBotBinding
 from sqlalchemy import func
+from utils.redaction import is_masked_secret, redact_sensitive_text
 
 
 def normalize_target_channel(target_channel: str) -> str:
@@ -122,9 +123,11 @@ def create_bot(data: dict):
         bot = BotAccount(
             name=data.get("name", ""),
             token=(data.get("token", "") or "").strip(),
+            username=(data.get("username", "") or "").strip(),
+            bot_link=(data.get("bot_link", "") or "").strip(),
             enabled=data.get("enabled", True),
             remark=data.get("remark", ""),
-            last_error="",
+            last_error=redact_sensitive_text(data.get("last_error", "")),
         )
 
         db.add(bot)
@@ -153,6 +156,8 @@ def update_bot(bot_id: int, data: dict):
         for key, value in data.items():
             if key == "token":
                 value = (value or "").strip()
+                if not value or is_masked_secret(value):
+                    continue
 
             if hasattr(bot, key):
                 setattr(bot, key, value)
@@ -206,7 +211,7 @@ def update_bot_error(bot_id: int, error: str):
         if not bot:
             return False
 
-        bot.last_error = error or ""
+        bot.last_error = redact_sensitive_text(error)
         db.commit()
 
         return True

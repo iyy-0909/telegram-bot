@@ -5,7 +5,7 @@
         <div class="mobile-product-mark">TG</div>
         <div>
           <h1 id="mobile-auth-title">移动运营台</h1>
-          <p>{{ mode === "login" ? "正常登录请输入用户名和密码" : "首次使用请在服务器本机创建首个账号" }}</p>
+          <p>{{ mode === "login" ? "正常登录请输入用户名和密码" : "注册后由管理员分配功能和使用期限" }}</p>
         </div>
       </header>
 
@@ -40,7 +40,7 @@
             placeholder="4-24 位，以字母开头"
             clearable
           />
-          <p class="mobile-field-help">支持字母、数字和下划线。首个账号成为管理员，后续注册由系统配置决定。</p>
+          <p class="mobile-field-help">支持字母、数字和下划线。新账号默认不开放业务功能，等待管理员授权。</p>
         </el-form-item>
 
         <el-form-item v-else label="用户名" prop="loginUsername">
@@ -52,7 +52,7 @@
             placeholder="请输入用户名"
             clearable
           />
-          <p class="mobile-field-help">正常登录需要填写已注册的用户名。首次使用可在服务器本机切换到注册。</p>
+          <p class="mobile-field-help">正常登录需要填写已注册的用户名。没有账号时可切换到注册。</p>
         </el-form-item>
 
         <el-form-item label="密码" prop="password">

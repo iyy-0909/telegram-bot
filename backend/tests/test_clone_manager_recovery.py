@@ -17,9 +17,11 @@ class CloneWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(run, "start_bot", AsyncMock()),
             patch.object(run, "send_worker", AsyncMock()),
             patch.object(run.clone_manager, "restore_running_tasks", restore),
+            patch.object(run, "enforce_runtime_access_state"),
             patch.object(run, "start_support_polling"),
             patch.object(run, "start_control_polling"),
             patch.object(run, "start_listener_health_worker"),
+            patch.object(run, "start_runtime_access_guard"),
             patch.object(run, "start_api", AsyncMock()),
         ):
             await run.main()

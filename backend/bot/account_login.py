@@ -1,37 +1,64 @@
 import asyncio
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError, SessionPasswordNeededError
 from telethon.network import ConnectionTcpFull
 
 from bot.logger import logger
+from accounts.session_storage import (
+    SessionPathError,
+    generate_owner_session_path,
+    normalize_session_path,
+    resolve_owner_session_path,
+    session_path_key,
+    stored_owner_session_path,
+)
+from auth.tenant import current_tenant_user_id
 from config import API_HASH, API_ID
 from db.database import SessionLocal
 from db.models import Account
 from db.crud import ensure_default_account_in_session
 from utils.proxy_utils import normalize_proxy_for_runtime
+from utils.redaction import mask_phone, redact_sensitive_text
 
 
 LOGIN_TTL_MINUTES = 10
 
 
-def normalize_session_path(value):
-    return str(value or "").strip().replace("\\", "/").removesuffix(".session")
-
-
-def session_file_path(session_path):
-    path = Path(session_path)
-    if path.suffix != ".session":
-        path = path.with_suffix(".session")
-    return path
+def _required_owner_id(owner_user_id=None):
+    owner_id = owner_user_id or current_tenant_user_id()
+    if owner_id in (None, "", 0, "0"):
+        raise PermissionError("Telegram 账号操作缺少归属人")
+    return int(owner_id)
 
 
 def account_to_payload(account):
+    if not account:
+        return None
+
+    phone = account.phone or ""
+    session_path = account.session_path or ""
+    proxy = account.proxy or ""
+    return {
+        "id": account.id,
+        "name": account.name or "",
+        "username": account.username or "",
+        "phone": "",
+        "phone_masked": mask_phone(phone),
+        "has_phone": bool(phone),
+        "session_path": "",
+        "has_session_path": bool(session_path),
+        "proxy": "",
+        "has_proxy": bool(proxy),
+        "enabled": bool(account.enabled),
+        "remark": account.remark or "",
+    }
+
+
+def _account_to_internal_payload(account):
     if not account:
         return None
 
@@ -47,6 +74,28 @@ def account_to_payload(account):
     }
 
 
+def _internal_account_to_public_payload(account):
+    if not account:
+        return None
+    phone = account.get("phone") or ""
+    session_path = account.get("session_path") or ""
+    proxy = account.get("proxy") or ""
+    return {
+        "id": account.get("id"),
+        "name": account.get("name") or "",
+        "username": account.get("username") or "",
+        "phone": "",
+        "phone_masked": mask_phone(phone),
+        "has_phone": bool(phone),
+        "session_path": "",
+        "has_session_path": bool(session_path),
+        "proxy": "",
+        "has_proxy": bool(proxy),
+        "enabled": bool(account.get("enabled")),
+        "remark": account.get("remark") or "",
+    }
+
+
 @dataclass
 class PendingAccountLogin:
     login_id: str
@@ -57,6 +106,7 @@ class PendingAccountLogin:
     proxy: str
     remark: str
     account_id: int | None
+    owner_user_id: int
     created_at: datetime
     needs_password: bool = False
 
@@ -79,45 +129,62 @@ class AccountLoginManager:
         ]
 
         for login_id in expired_ids:
-            await self.cancel(login_id)
+            await self._discard_session(login_id)
 
-    async def cancel(self, login_id):
+    async def _discard_session(self, login_id):
         session = self.sessions.pop(login_id, None)
         if not session:
-            return
+            return False
 
         self.reserved_session_paths.discard(
-            normalize_session_path(session.session_path)
+            session_path_key(session.session_path)
         )
         try:
             await session.client.disconnect()
         except Exception:
             pass
+        return True
 
-    def get_account(self, account_id):
+    async def cancel(self, login_id, *, owner_user_id=None):
+        owner_id = _required_owner_id(owner_user_id)
+        session = self.sessions.get(login_id)
+        if not session or int(session.owner_user_id) != owner_id:
+            return False
+        return await self._discard_session(login_id)
+
+    def get_account(self, account_id, owner_user_id):
         db = SessionLocal()
         try:
-            return db.query(Account).filter(Account.id == account_id).first()
+            return db.query(Account).filter(
+                Account.id == account_id,
+                Account.owner_user_id == int(owner_user_id),
+            ).first()
         finally:
             db.close()
 
-    def find_account_by_session_path(self, session_path):
-        normalized = normalize_session_path(session_path)
+    def find_account_by_session_path(self, owner_user_id, session_path):
+        normalized = session_path_key(session_path)
         db = SessionLocal()
         try:
-            for account in db.query(Account).order_by(Account.id.asc()).all():
-                if normalize_session_path(account.session_path) == normalized:
-                    return account_to_payload(account)
+            accounts = db.query(Account).filter(
+                Account.owner_user_id == int(owner_user_id)
+            ).order_by(Account.id.asc()).all()
+            for account in accounts:
+                if session_path_key(account.session_path) == normalized:
+                    return _account_to_internal_payload(account)
             return None
         finally:
             db.close()
 
-    def find_account_by_identity(self, username, phone):
+    def find_account_by_identity(self, owner_user_id, username, phone):
         username = str(username or "").strip().lstrip("@").lower()
         phone = str(phone or "").strip()
         db = SessionLocal()
         try:
-            for account in db.query(Account).order_by(Account.id.asc()).all():
+            accounts = db.query(Account).filter(
+                Account.owner_user_id == int(owner_user_id)
+            ).order_by(Account.id.asc()).all()
+            for account in accounts:
                 account_username = str(account.username or "").strip().lstrip("@").lower()
                 account_phone = str(account.phone or "").strip()
 
@@ -130,52 +197,41 @@ class AccountLoginManager:
         finally:
             db.close()
 
-    def next_session_path(self):
-        used_paths = {
-            normalize_session_path(session.session_path)
+    def next_session_path(self, owner_user_id):
+        owner_id = _required_owner_id(owner_user_id)
+        used_paths = [
+            session.session_path
             for session in self.sessions.values()
-        }
-        used_paths.update(self.reserved_session_paths)
+            if int(session.owner_user_id) == owner_id
+        ]
         db = SessionLocal()
         try:
-            used_paths.update(
-                normalize_session_path(account.session_path)
-                for account in db.query(Account).all()
+            used_paths.extend(
+                account.session_path
+                for account in db.query(Account).filter(
+                    Account.owner_user_id == owner_id
+                ).all()
             )
         finally:
             db.close()
-
-        session_dir = Path("data/sessions")
-        if session_dir.exists():
-            used_paths.update(
-                normalize_session_path(path)
-                for path in session_dir.glob("collector_*.session")
-            )
-
-        numbers = []
-        for path in used_paths:
-            match = re.fullmatch(r"data/sessions/collector_(\d+)", path)
-            if match:
-                numbers.append(int(match.group(1)))
-
-        number = max(numbers, default=0) + 1
-        while True:
-            candidate = f"data/sessions/collector_{number}"
-            if candidate not in used_paths and not session_file_path(candidate).exists():
-                return candidate
-            number += 1
+        used_paths.extend(
+            session.session_path
+            for session in self.sessions.values()
+        )
+        used_paths.extend(self.reserved_session_paths)
+        return generate_owner_session_path(owner_id, occupied_paths=used_paths)
 
     async def start_login(
         self,
         *,
         phone,
         name="",
-        session_path="",
         proxy="",
         remark="",
         account_id=None,
-        update_existing=False,
+        owner_user_id=None,
     ):
+        owner_id = _required_owner_id(owner_user_id)
         async with self.lock:
             await self._cleanup_expired()
 
@@ -184,16 +240,9 @@ class AccountLoginManager:
         proxy = str(proxy or "").strip()
         remark = str(remark or "").strip()
 
-        if not phone:
-            return {
-                "ok": False,
-                "code": "phone_required",
-                "message": "手机号不能为空",
-            }
-
         account = None
         if account_id:
-            account = self.get_account(account_id)
+            account = self.get_account(account_id, owner_id)
             if not account:
                 return {
                     "ok": False,
@@ -202,36 +251,62 @@ class AccountLoginManager:
                 }
 
             name = name or account.name or f"账号{account.id}"
+            phone = phone or account.phone or ""
             session_path = (
                 normalize_session_path(account.session_path)
-                or self.next_session_path()
+                or self.next_session_path(owner_id)
             )
             proxy = proxy if proxy != "" else (account.proxy or "")
             remark = remark if remark != "" else (account.remark or "")
+            async with self.lock:
+                reservation_key = session_path_key(session_path)
+                if reservation_key in self.reserved_session_paths:
+                    return {
+                        "ok": False,
+                        "code": "login_in_progress",
+                        "message": "该账号已有登录验证正在进行",
+                    }
+                self.reserved_session_paths.add(reservation_key)
         else:
             async with self.lock:
-                session_path = self.next_session_path()
-                self.reserved_session_paths.add(session_path)
+                session_path = self.next_session_path(owner_id)
+                self.reserved_session_paths.add(session_path_key(session_path))
+
+        if not phone:
+            self.reserved_session_paths.discard(session_path_key(session_path))
+            return {
+                "ok": False,
+                "code": "phone_required",
+                "message": "手机号不能为空",
+            }
 
         if not name:
             name = "采集账号"
 
-        existing = self.find_account_by_session_path(session_path)
-        if existing and (not account_id or int(existing["id"]) != int(account_id)):
-            if not update_existing:
-                self.reserved_session_paths.discard(session_path)
-                return {
-                    "ok": False,
-                    "code": "session_path_exists",
-                    "message": "该 Session 路径已存在，是否更新已有账号？",
-                    "existing_account": existing,
-                }
-            account_id = existing["id"]
-            name = existing["name"] or name
-            proxy = proxy if proxy != "" else (existing.get("proxy") or "")
-            remark = remark if remark != "" else (existing.get("remark") or "")
+        try:
+            resolved_session_path = resolve_owner_session_path(
+                owner_id,
+                session_path,
+                create_parent=True,
+            )
+        except SessionPathError:
+            self.reserved_session_paths.discard(session_path_key(session_path))
+            return {
+                "ok": False,
+                "code": "session_path_invalid",
+                "message": "账号 Session 路径未完成归属迁移，请联系管理员",
+            }
 
-        Path(session_path).parent.mkdir(parents=True, exist_ok=True)
+        existing = self.find_account_by_session_path(owner_id, session_path)
+        if existing and (not account_id or int(existing["id"]) != int(account_id)):
+            self.reserved_session_paths.discard(session_path_key(session_path))
+            return {
+                "ok": False,
+                "code": "session_path_exists",
+                "message": "账号 Session 路径冲突，请联系管理员",
+                "existing_account": _internal_account_to_public_payload(existing),
+            }
+
         runtime_proxy = normalize_proxy_for_runtime(
             proxy or None,
             account_id=account_id,
@@ -239,7 +314,7 @@ class AccountLoginManager:
         )
 
         client = TelegramClient(
-            session_path,
+            str(resolved_session_path),
             API_ID,
             API_HASH,
             connection=ConnectionTcpFull,
@@ -262,8 +337,9 @@ class AccountLoginManager:
                     proxy=proxy,
                     remark=remark,
                     me=me,
+                    owner_user_id=owner_id,
                 )
-                self.reserved_session_paths.discard(session_path)
+                self.reserved_session_paths.discard(session_path_key(session_path))
                 return {
                     "ok": True,
                     "already_authorized": True,
@@ -274,7 +350,7 @@ class AccountLoginManager:
             await client.send_code_request(phone)
         except AuthKeyDuplicatedError:
             await client.disconnect()
-            self.reserved_session_paths.discard(session_path)
+            self.reserved_session_paths.discard(session_path_key(session_path))
             return {
                 "ok": False,
                 "code": "auth_key_duplicated",
@@ -282,12 +358,17 @@ class AccountLoginManager:
             }
         except Exception as e:
             await client.disconnect()
-            self.reserved_session_paths.discard(session_path)
-            logger.exception(f"后台账号登录发送验证码失败 | account_id={account_id} | phone={phone} | {e}")
+            self.reserved_session_paths.discard(session_path_key(session_path))
+            safe_error = redact_sensitive_text(e)
+            logger.exception(
+                "后台账号登录发送验证码失败 | account_id=%s | error=%s",
+                account_id,
+                safe_error,
+            )
             return {
                 "ok": False,
                 "code": "send_code_failed",
-                "message": f"发送验证码失败：{e}",
+                "message": f"发送验证码失败：{safe_error}",
             }
 
         login_id = uuid.uuid4().hex
@@ -300,6 +381,7 @@ class AccountLoginManager:
             proxy=proxy,
             remark=remark,
             account_id=account_id,
+            owner_user_id=owner_id,
             created_at=datetime.utcnow(),
         )
 
@@ -310,9 +392,17 @@ class AccountLoginManager:
             "message": "验证码已发送，请在 10 分钟内输入验证码",
         }
 
-    async def verify_code(self, *, login_id, code, password=""):
+    async def verify_code(
+        self,
+        *,
+        login_id,
+        code,
+        password="",
+        owner_user_id=None,
+    ):
+        owner_id = _required_owner_id(owner_user_id)
         session = self.sessions.get(login_id)
-        if not session:
+        if not session or int(session.owner_user_id) != owner_id:
             return {
                 "ok": False,
                 "code": "login_not_found",
@@ -320,7 +410,7 @@ class AccountLoginManager:
             }
 
         if session.expired:
-            await self.cancel(login_id)
+            await self._discard_session(login_id)
             return {
                 "ok": False,
                 "code": "login_expired",
@@ -367,9 +457,10 @@ class AccountLoginManager:
                 proxy=session.proxy,
                 remark=session.remark,
                 me=me,
+                owner_user_id=owner_id,
             )
 
-            await self.cancel(login_id)
+            await self._discard_session(login_id)
             return {
                 "ok": True,
                 "account": account_to_payload(saved),
@@ -378,17 +469,39 @@ class AccountLoginManager:
             }
 
         except Exception as e:
+            safe_error = redact_sensitive_text(e)
             logger.exception(
-                f"后台账号登录验证失败 | account_id={session.account_id} | "
-                f"session={session.session_path} | {e}"
+                "后台账号登录验证失败 | account_id=%s | error=%s",
+                session.account_id,
+                safe_error,
             )
             return {
                 "ok": False,
                 "code": "verify_failed",
-                "message": f"登录验证失败：{e}",
+                "message": f"登录验证失败：{safe_error}",
             }
 
-    def save_account(self, *, account_id, name, session_path, proxy, remark, me):
+    def save_account(
+        self,
+        *,
+        account_id,
+        name,
+        session_path,
+        proxy,
+        remark,
+        me,
+        owner_user_id=None,
+    ):
+        owner_id = _required_owner_id(owner_user_id)
+        resolved_session_path = resolve_owner_session_path(
+            owner_id,
+            session_path,
+            create_parent=True,
+        )
+        stored_session_path = stored_owner_session_path(
+            owner_id,
+            resolved_session_path,
+        )
         username = getattr(me, "username", "") or ""
         phone = getattr(me, "phone", "") or ""
 
@@ -397,10 +510,18 @@ class AccountLoginManager:
             account = None
 
             if account_id:
-                account = db.query(Account).filter(Account.id == account_id).first()
+                account = db.query(Account).filter(
+                    Account.id == account_id,
+                    Account.owner_user_id == owner_id,
+                ).first()
+                if account is None:
+                    raise PermissionError("Telegram 账号不存在或不属于当前用户")
 
             identity_account = None
-            for item in db.query(Account).order_by(Account.id.asc()).all():
+            accounts = db.query(Account).filter(
+                Account.owner_user_id == owner_id
+            ).order_by(Account.id.asc()).all()
+            for item in accounts:
                 if account and item.id == account.id:
                     continue
 
@@ -415,11 +536,24 @@ class AccountLoginManager:
             if identity_account:
                 account = identity_account
 
+            for item in accounts:
+                if account and item.id == account.id:
+                    continue
+                try:
+                    item_path = resolve_owner_session_path(
+                        owner_id,
+                        item.session_path,
+                    )
+                except SessionPathError:
+                    continue
+                if item_path == resolved_session_path:
+                    raise SessionPathError("Telegram Session 路径已被其他账号使用")
+
             if account:
                 account.name = name or account.name or username or phone or f"账号{account.id}"
                 account.username = username
                 account.phone = phone
-                account.session_path = normalize_session_path(session_path)
+                account.session_path = stored_session_path
                 account.proxy = proxy or account.proxy or ""
                 account.enabled = True
                 account.remark = remark if remark != "" else (account.remark or "")
@@ -428,10 +562,11 @@ class AccountLoginManager:
                     name=name or username or phone or "采集账号",
                     username=username,
                     phone=phone,
-                    session_path=normalize_session_path(session_path),
+                    session_path=stored_session_path,
                     proxy=proxy or "",
                     enabled=True,
                     remark=remark or "",
+                    owner_user_id=owner_id,
                 )
                 db.add(account)
 
@@ -439,7 +574,7 @@ class AccountLoginManager:
                 account.updated_at = datetime.utcnow()
 
             db.flush()
-            ensure_default_account_in_session(db)
+            ensure_default_account_in_session(db, owner_id)
             db.commit()
             db.refresh(account)
             return account

@@ -1,3 +1,4 @@
+import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -5,7 +6,9 @@ from urllib.parse import unquote
 
 from sqlalchemy import inspect, text
 
+from auth.tenant import tenant_scope
 from db.database import Base
+from db.database import SessionLocal
 from db.database import engine
 from db.models import Account
 from db.models import AccountAutoReplyState
@@ -15,6 +18,7 @@ from db.models import CloneChannel
 from db.models import CloneSendEvent
 from db.models import CloneTask
 from db.models import ContentTemplate
+from db.models import DailyAdvertisementDelivery
 from db.models import ListenerSendEvent
 from db.models import ListenerSentMessage
 from db.models import ListenerTask
@@ -47,6 +51,7 @@ _REGISTERED_MODELS = (
     CloneSendEvent,
     CloneTask,
     ContentTemplate,
+    DailyAdvertisementDelivery,
     ListenerSendEvent,
     ListenerSentMessage,
     ListenerTask,
@@ -147,6 +152,7 @@ def has_support_customer_telegram_unique_index():
 
 def schema_needs_migration():
     existing_tables, existing_columns = get_existing_schema()
+    inspector = inspect(engine)
 
     for table in Base.metadata.sorted_tables:
         if table.name not in existing_tables:
@@ -155,6 +161,17 @@ def schema_needs_migration():
         current_columns = existing_columns.get(table.name, set())
         for column in table.columns:
             if column.name not in current_columns:
+                return True
+        if "owner_user_id" in table.c:
+            current_owner_column = next(
+                (
+                    item
+                    for item in inspector.get_columns(table.name)
+                    if item["name"] == "owner_user_id"
+                ),
+                None,
+            )
+            if current_owner_column and current_owner_column.get("nullable", True):
                 return True
 
     if has_support_customer_telegram_unique_index():
@@ -253,6 +270,7 @@ def rebuild_support_customers_without_unique_index(conn):
     conn.execute(text("""
         CREATE TABLE support_customers_new (
             id INTEGER NOT NULL PRIMARY KEY,
+            owner_user_id INTEGER,
             support_bot_id INTEGER,
             telegram_user_id VARCHAR NOT NULL,
             telegram_chat_id VARCHAR NOT NULL,
@@ -271,6 +289,7 @@ def rebuild_support_customers_without_unique_index(conn):
     conn.execute(text("""
         INSERT INTO support_customers_new (
             id,
+            owner_user_id,
             support_bot_id,
             telegram_user_id,
             telegram_chat_id,
@@ -287,6 +306,7 @@ def rebuild_support_customers_without_unique_index(conn):
         )
         SELECT
             id,
+            owner_user_id,
             support_bot_id,
             telegram_user_id,
             telegram_chat_id,
@@ -304,6 +324,7 @@ def rebuild_support_customers_without_unique_index(conn):
     """))
     conn.execute(text("DROP TABLE support_customers"))
     conn.execute(text("ALTER TABLE support_customers_new RENAME TO support_customers"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_owner_user_id ON support_customers (owner_user_id)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_support_bot_id ON support_customers (support_bot_id)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_telegram_user_id ON support_customers (telegram_user_id)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_telegram_chat_id ON support_customers (telegram_chat_id)"))
@@ -314,23 +335,130 @@ def rebuild_support_customers_without_unique_index(conn):
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_customers_last_message_at ON support_customers (last_message_at)"))
 
 
-def ensure_defaults():
+def ensure_defaults_for_owner(owner_user_id):
     from db.crud import ensure_default_account
     from db.crud_ai_prompts import ensure_default_ai_prompt
     from db.crud_settings import ensure_default_settings
     from db.crud_support import ensure_support_defaults
     from db.crud_templates import ensure_default_contact_rule
 
-    ensure_default_account()
-    ensure_default_settings()
-    ensure_default_ai_prompt()
-    ensure_support_defaults()
-    ensure_default_contact_rule()
+    owner_user_id = int(owner_user_id)
+    with tenant_scope(owner_user_id, is_admin=False):
+        ensure_default_account()
+        ensure_default_settings(owner_user_id)
+        ensure_default_ai_prompt(owner_user_id=owner_user_id)
+        ensure_support_defaults(owner_user_id)
+        ensure_default_contact_rule(owner_user_id)
 
 
-def init_db():
+def ensure_defaults():
+    """Seed defaults only when every existing resource already has an owner."""
+    db = SessionLocal()
+    try:
+        users = db.query(UserAccount.id).order_by(UserAccount.id.asc()).all()
+        if not users:
+            return
+
+        for mapper in Base.registry.mappers:
+            model = mapper.class_
+            if not hasattr(model, "owner_user_id"):
+                continue
+            if db.query(model.id).filter(model.owner_user_id.is_(None)).first():
+                # Legacy databases are backfilled by the explicit ownership
+                # migration before any tenant defaults are created.
+                return
+        owner_ids = [int(row[0]) for row in users]
+    finally:
+        db.close()
+
+    for owner_user_id in owner_ids:
+        ensure_defaults_for_owner(owner_user_id)
+
+
+def migrate_legacy_user_plans():
+    """Map legacy granular grants to the nearest fixed edition once."""
+    from auth.access import PLAN_FREE, PLAN_PAID, dump_feature_keys_json, plan_feature_keys
+
+    free_features = set(plan_feature_keys(PLAN_FREE))
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT id, role, feature_keys_json FROM user_accounts")
+        ).mappings().all()
+        for row in rows:
+            role = str(row.get("role") or "").strip().lower()
+            try:
+                legacy_features = set(json.loads(row.get("feature_keys_json") or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                legacy_features = set()
+            plan_tier = (
+                PLAN_PAID
+                if role == "admin" or bool(legacy_features - free_features)
+                else PLAN_FREE
+            )
+            conn.execute(
+                text(
+                    "UPDATE user_accounts "
+                    "SET plan_tier = :plan_tier, feature_keys_json = :features "
+                    "WHERE id = :user_id"
+                ),
+                {
+                    "plan_tier": plan_tier,
+                    "features": dump_feature_keys_json(plan_feature_keys(plan_tier)),
+                    "user_id": row["id"],
+                },
+            )
+
+
+def find_unowned_resource_counts():
+    """Return legacy rows that would bypass tenant isolation."""
+    inspector = inspect(engine)
+    counts = {}
+    with engine.connect() as conn:
+        for table_name in inspector.get_table_names():
+            columns = {
+                item["name"]
+                for item in inspector.get_columns(table_name)
+            }
+            if "owner_user_id" not in columns:
+                continue
+            count = conn.execute(
+                text(
+                    f"SELECT COUNT(*) FROM {quote_name(table_name)} "
+                    "WHERE owner_user_id IS NULL"
+                )
+            ).scalar_one()
+            if count:
+                counts[table_name] = int(count)
+    return counts
+
+
+def find_nullable_owner_tables():
+    inspector = inspect(engine)
+    nullable_tables = []
+    for table_name in inspector.get_table_names():
+        for column in inspector.get_columns(table_name):
+            if column["name"] == "owner_user_id" and column.get("nullable", True):
+                nullable_tables.append(table_name)
+                break
+    return nullable_tables
+
+
+def init_db(*, allow_legacy_unowned=False):
+    from migrate_channel_activity import migrate as migrate_channel_activity
+    activity_backup = migrate_channel_activity(engine)
+    if activity_backup:
+        print(f"Channel activity database backup: {activity_backup}")
+    from migrate_ai_prompt_routing import migrate
+    routing_backup = migrate(engine)
+    if routing_backup:
+        print(f"AI routing database backup: {routing_backup}")
     db_path = get_sqlite_db_path()
     db_existed_before_check = bool(db_path and db_path.exists())
+    existing_tables, existing_columns = get_existing_schema()
+    migrate_user_plans = (
+        "user_accounts" in existing_tables
+        and "plan_tier" not in existing_columns.get("user_accounts", set())
+    )
     needs_migration = schema_needs_migration()
     backup_path = backup_database_if_needed(
         needs_migration,
@@ -339,7 +467,26 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
     add_missing_columns()
+    if migrate_user_plans:
+        migrate_legacy_user_plans()
     drop_support_customer_telegram_unique_index()
+
+    unowned_counts = find_unowned_resource_counts()
+    if unowned_counts and not allow_legacy_unowned:
+        tables = ", ".join(sorted(unowned_counts))
+        raise RuntimeError(
+            "检测到尚未分配归属人的旧数据，服务已拒绝启动；"
+            "请先执行单一管理员归属迁移。涉及表：" + tables
+        )
+    nullable_owner_tables = find_nullable_owner_tables()
+    if nullable_owner_tables and not allow_legacy_unowned:
+        tables = ", ".join(sorted(nullable_owner_tables))
+        raise RuntimeError(
+            "检测到归属人字段仍允许为空，服务已拒绝启动；"
+            "请先执行单一管理员归属迁移。涉及表：" + tables
+        )
+
+    # Validate legacy ownership before querying or creating tenant defaults.
     ensure_defaults()
 
     if backup_path:

@@ -44,3 +44,7 @@ SessionLocal = sessionmaker(
 
 
 Base = declarative_base()
+
+# Register the fail-closed per-request tenant filters for every SessionLocal
+# consumer. The model list is resolved lazily to avoid an import cycle.
+from db import tenant_scope as _tenant_scope  # noqa: E402,F401

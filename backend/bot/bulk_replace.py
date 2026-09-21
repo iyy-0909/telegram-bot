@@ -20,6 +20,7 @@ from bot.bot_sender import (
     request_post,
 )
 from bot.logger import logger
+from utils.redaction import redact_sensitive_text
 
 
 SOURCE_MODELS = {
@@ -266,7 +267,7 @@ def parse_retry_after(error):
 
 
 def error_text(error):
-    return str(error)[:1000]
+    return redact_sensitive_text(error)[:1000]
 
 
 def get_record(db, source_type, record_id):
@@ -569,13 +570,14 @@ async def execute_bulk_replace(
 
             except Exception as e:
                 item.status = "failed"
-                item.error_message = error_text(e)
+                safe_error = error_text(e)
+                item.error_message = safe_error
                 item.updated_at = datetime.utcnow()
                 job.failed_count += 1
                 db.commit()
                 logger.warning(
                     f"批量替换单条失败 | job_id={job.id} | "
-                    f"source={current_source_type}:{source_record_id} | {e}"
+                    f"source={current_source_type}:{source_record_id} | {safe_error}"
                 )
 
         job.status = "done"
@@ -601,7 +603,7 @@ def job_item_to_dict(item):
         "original_text": item.original_text,
         "replaced_text": item.replaced_text,
         "status": item.status,
-        "error_message": item.error_message,
+        "error_message": redact_sensitive_text(item.error_message),
         "created_at": str(item.created_at) if item.created_at else "",
         "updated_at": str(item.updated_at) if item.updated_at else "",
     }

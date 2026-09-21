@@ -231,7 +231,7 @@ import { ElMessage, ElMessageBox } from "element-plus"
 import { Connection, Delete, Edit, EditPen, Location, Plus, Search, Setting } from "@element-plus/icons-vue"
 import EmptyState from "./EmptyState.vue"
 import StatusPill from "./StatusPill.vue"
-import { checkSearchBot, createSearchBot, createSearchBotSubmission, deleteSearchBot, getAccounts, getMyChannels, getSearchBots, getSearchBotSubmissions, updateSearchBot, updateSearchBotSubmission, updateSearchBotSubmissionPermissions } from "../api"
+import { checkSearchBot, createSearchBot, createSearchBotSubmission, deleteSearchBot, getAccountOptions, getMyChannels, getSearchBots, getSearchBotSubmissions, updateSearchBot, updateSearchBotSubmission, updateSearchBotSubmissionPermissions } from "../api"
 import { getErrorMessage } from "../api/client"
 import { matchesSearch } from "../utils/search"
 
@@ -316,7 +316,7 @@ function applyAdjustmentPreset(preset) {
   for (const key of enabled) permissionForm.admin_rights[key] = true
 }
 function adminRightLabels(rights) { const value = rights && typeof rights === "object" ? rights : {}; return allPermissionOptions.filter((item) => value[item.key]).map((item) => item.label) }
-async function loadAll() { loading.value = true; recordLoading.value = true; try { const [botRes, channelRes, accountRes, recordRes] = await Promise.all([getSearchBots(), getMyChannels(), getAccounts(), getSearchBotSubmissions()]); bots.value = botRes.data.items || []; channels.value = channelRes.data.items || []; accounts.value = Array.isArray(accountRes.data) ? accountRes.data : accountRes.data.items || []; records.value = recordRes.data.items || []; if (channelStatusChannel.value?.id) channelStatusChannel.value = channels.value.find((item) => Number(item.id) === Number(channelStatusChannel.value.id)) || channelStatusChannel.value } catch (error) { ElMessage.error(getErrorMessage(error, "加载搜索机器人失败")) } finally { loading.value = false; recordLoading.value = false } }
+async function loadAll() { loading.value = true; recordLoading.value = true; try { const [botRes, channelRes, accountRes, recordRes] = await Promise.all([getSearchBots(), getMyChannels(), getAccountOptions(), getSearchBotSubmissions()]); bots.value = botRes.data.items || []; channels.value = channelRes.data.items || []; accounts.value = Array.isArray(accountRes.data) ? accountRes.data : accountRes.data.items || []; records.value = recordRes.data.items || []; if (channelStatusChannel.value?.id) channelStatusChannel.value = channels.value.find((item) => Number(item.id) === Number(channelStatusChannel.value.id)) || channelStatusChannel.value } catch (error) { ElMessage.error(getErrorMessage(error, "加载搜索机器人失败")) } finally { loading.value = false; recordLoading.value = false } }
 function openBotCreate() { editingBot.value = null; Object.assign(botForm, emptyBot()); botDrawer.value = true }
 function openBotEdit(bot) { editingBot.value = bot; Object.assign(botForm, { ...emptyBot(), ...bot }); botDrawer.value = true }
 async function saveBot() { if (!(await botFormRef.value?.validate().catch(() => false))) return; saving.value = true; try { editingBot.value?.id ? await updateSearchBot(editingBot.value.id, botForm) : await createSearchBot(botForm); ElMessage.success("搜索机器人已保存"); botDrawer.value = false; await loadAll() } catch (error) { ElMessage.error(getErrorMessage(error, "保存失败")) } finally { saving.value = false } }

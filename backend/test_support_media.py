@@ -16,10 +16,12 @@ def test_safe_upload_filename_keeps_extension_and_removes_bad_chars():
 
 
 def test_uploaded_media_ref_resolves_inside_media_dir():
-    media_ref = make_uploaded_media_ref("abc.png")
+    media_ref = make_uploaded_media_ref("abc.png", owner_user_id=101)
 
     assert is_uploaded_media_ref(media_ref)
-    assert resolve_uploaded_media_path(media_ref) == Path("data/support_media/abc.png")
+    assert resolve_uploaded_media_path(media_ref, owner_user_id=101) == Path(
+        "data/support_media/101/abc.png"
+    )
 
 
 if __name__ == "__main__":

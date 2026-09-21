@@ -1,6 +1,6 @@
 <template>
   <div class="mobile-settings">
-    <section class="settings-section">
+    <section v-if="showSystem" class="settings-section">
       <div class="section-head">
         <div>
           <h2>发送设置</h2>
@@ -21,7 +21,7 @@
       </el-form>
     </section>
 
-    <section class="settings-section">
+    <section v-if="showAi" class="settings-section">
       <div class="section-head">
         <div><h2>AI 内容改写</h2><p>密钥不会重新显示；留空保存不会覆盖已配置密钥。</p></div>
       </div>
@@ -38,7 +38,7 @@
       </el-form>
     </section>
 
-    <el-collapse v-model="openSections" class="settings-collapse">
+    <el-collapse v-if="showSystem" v-model="openSections" class="settings-collapse">
       <el-collapse-item
         v-for="section in visibleSections"
         :key="section.key"
@@ -102,6 +102,8 @@ const props = defineProps({
   aiSettings: { type: Object, default: () => ({ providers: {} }) },
   templates: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false },
+  showSystem: { type: Boolean, default: true },
+  showAi: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(["save-settings", "save-ai-settings", "create-template", "edit-template", "delete-template", "toggle-template"])

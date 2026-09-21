@@ -1,9 +1,12 @@
 import { defineConfig } from "vite"
 import vue from "@vitejs/plugin-vue"
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   base: "/mobile/",
   plugins: [vue()],
+  esbuild: command === "build"
+    ? { drop: ["console", "debugger"] }
+    : undefined,
   server: {
     proxy: {
       "/api": {
@@ -12,4 +15,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

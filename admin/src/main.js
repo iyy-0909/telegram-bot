@@ -4,28 +4,13 @@ import 'element-plus/dist/index.css'
 import axios from 'axios'
 import App from './App.vue'
 import { redirectToMobileSite } from './deviceRedirect'
+import {
+  installAuthSessionInterceptors,
+  installAuthStorageListener,
+} from './authSession'
 
-axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('admin_token')
-
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-
-  return config
-})
-
-axios.interceptors.response.use(
-  response => response,
-  error => {
-    if (error.response?.status === 401 && !error.config?.url?.includes('/api/auth/')) {
-      localStorage.removeItem('admin_token')
-      window.location.reload()
-    }
-
-    return Promise.reject(error)
-  },
-)
+installAuthSessionInterceptors(axios)
+installAuthStorageListener()
 
 if (!redirectToMobileSite()) {
   createApp(App).use(ElementPlus).mount('#app')

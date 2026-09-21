@@ -1,11 +1,53 @@
 from datetime import datetime
 
+from auth.tenant import current_tenant_user_id
 from db.database import SessionLocal
 from db.models import AiPromptTemplate, CloneTask, ListenerTask, SystemSetting
 from db.crud_settings import DEFAULT_AI_REWRITE_PROMPT
 
 
 DEFAULT_PROMPT_NAME = "系统默认提示词"
+
+
+def _normalize_content_type(value):
+    from bot.ai_prompt_routing import CONTENT_TYPES
+    value = str(value or "").strip()
+    if value and value not in CONTENT_TYPES:
+        raise ValueError("不支持的文案类型")
+    return value
+
+
+def get_routing_prompts(owner_user_id=None):
+    """Latest enabled template per category, strictly within the current owner."""
+    db = SessionLocal()
+    try:
+        prompts = _prompt_query(db, owner_user_id).filter(
+            AiPromptTemplate.enabled == True,
+            AiPromptTemplate.content_type != "",
+        ).order_by(AiPromptTemplate.updated_at.desc(), AiPromptTemplate.id.desc()).all()
+        result = {}
+        for prompt in prompts:
+            if prompt.content_type not in result and str(prompt.content or "").strip():
+                result[prompt.content_type] = {
+                    "id": prompt.id, "name": prompt.name, "content": prompt.content,
+                }
+        return result
+    finally:
+        db.close()
+
+
+def _resolve_owner_user_id(owner_user_id=None):
+    if owner_user_id not in (None, ""):
+        return int(owner_user_id)
+    return current_tenant_user_id()
+
+
+def _prompt_query(db, owner_user_id=None):
+    owner_user_id = _resolve_owner_user_id(owner_user_id)
+    query = db.query(AiPromptTemplate)
+    if owner_user_id is None:
+        return query.filter(AiPromptTemplate.owner_user_id.is_(None))
+    return query.filter(AiPromptTemplate.owner_user_id == owner_user_id)
 
 
 def _normalize_name(value):
@@ -26,18 +68,27 @@ def _normalize_content(value):
     return content
 
 
-def _legacy_default_content(db):
-    setting = db.query(SystemSetting).filter(
+def _legacy_default_content(db, owner_user_id=None):
+    owner_user_id = _resolve_owner_user_id(owner_user_id)
+    setting_query = db.query(SystemSetting).filter(
         SystemSetting.key == "ai_default_rewrite_prompt"
-    ).first()
+    )
+    if owner_user_id is None:
+        setting_query = setting_query.filter(SystemSetting.owner_user_id.is_(None))
+    else:
+        setting_query = setting_query.filter(SystemSetting.owner_user_id == owner_user_id)
+    setting = setting_query.first()
     return str(getattr(setting, "value", "") or "").strip() or DEFAULT_AI_REWRITE_PROMPT
 
 
-def ensure_default_ai_prompt(db=None):
+def ensure_default_ai_prompt(db=None, owner_user_id=None):
     owns_session = db is None
     session = db or SessionLocal()
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     try:
-        default_prompt = session.query(AiPromptTemplate).filter(
+        if resolved_owner_user_id is None and session.query(AiPromptTemplate.id).first() is not None:
+            return _prompt_query(session, None).order_by(AiPromptTemplate.id.asc()).first()
+        default_prompt = _prompt_query(session, resolved_owner_user_id).filter(
             AiPromptTemplate.is_default == True
         ).order_by(AiPromptTemplate.id.asc()).first()
         if default_prompt:
@@ -47,7 +98,7 @@ def ensure_default_ai_prompt(db=None):
                 session.commit()
             return default_prompt
 
-        first_prompt = session.query(AiPromptTemplate).order_by(
+        first_prompt = _prompt_query(session, resolved_owner_user_id).order_by(
             AiPromptTemplate.id.asc()
         ).first()
         if first_prompt:
@@ -59,8 +110,9 @@ def ensure_default_ai_prompt(db=None):
             return first_prompt
 
         default_prompt = AiPromptTemplate(
+            owner_user_id=resolved_owner_user_id,
             name=DEFAULT_PROMPT_NAME,
-            content=_legacy_default_content(session),
+            content=_legacy_default_content(session, resolved_owner_user_id),
             is_default=True,
             enabled=True,
         )
@@ -73,25 +125,33 @@ def ensure_default_ai_prompt(db=None):
             session.close()
 
 
-def _usage_counts(db, prompt_id):
+def _usage_counts(db, prompt_id, owner_user_id=None):
+    owner_user_id = _resolve_owner_user_id(owner_user_id)
     clone_count = db.query(CloneTask).filter(
         CloneTask.ai_prompt_template_id == prompt_id
-    ).count()
+    )
     listener_count = db.query(ListenerTask).filter(
         ListenerTask.ai_prompt_template_id == prompt_id
-    ).count()
-    return clone_count, listener_count
+    )
+    if owner_user_id is None:
+        clone_count = clone_count.filter(CloneTask.owner_user_id.is_(None))
+        listener_count = listener_count.filter(ListenerTask.owner_user_id.is_(None))
+    else:
+        clone_count = clone_count.filter(CloneTask.owner_user_id == owner_user_id)
+        listener_count = listener_count.filter(ListenerTask.owner_user_id == owner_user_id)
+    return clone_count.count(), listener_count.count()
 
 
-def prompt_to_dict(prompt, db=None):
+def prompt_to_dict(prompt, db=None, owner_user_id=None):
     owns_session = db is None
     session = db or SessionLocal()
     try:
-        clone_count, listener_count = _usage_counts(session, prompt.id)
+        clone_count, listener_count = _usage_counts(session, prompt.id, owner_user_id or prompt.owner_user_id)
         return {
             "id": prompt.id,
             "name": prompt.name,
             "content": prompt.content,
+            "content_type": prompt.content_type or "",
             "is_default": bool(prompt.is_default),
             "enabled": bool(prompt.enabled),
             "clone_task_count": clone_count,
@@ -105,48 +165,52 @@ def prompt_to_dict(prompt, db=None):
             session.close()
 
 
-def list_ai_prompts():
+def list_ai_prompts(owner_user_id=None):
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     db = SessionLocal()
     try:
-        ensure_default_ai_prompt(db)
-        prompts = db.query(AiPromptTemplate).order_by(
+        ensure_default_ai_prompt(db, resolved_owner_user_id)
+        prompts = _prompt_query(db, resolved_owner_user_id).order_by(
             AiPromptTemplate.is_default.desc(),
             AiPromptTemplate.enabled.desc(),
             AiPromptTemplate.updated_at.desc(),
             AiPromptTemplate.id.desc(),
         ).all()
-        return [prompt_to_dict(prompt, db) for prompt in prompts]
+        return [prompt_to_dict(prompt, db, resolved_owner_user_id) for prompt in prompts]
     finally:
         db.close()
 
 
-def get_ai_prompt(prompt_id):
+def get_ai_prompt(prompt_id, owner_user_id=None):
     if prompt_id in (None, "", 0):
         return None
     db = SessionLocal()
     try:
-        return db.query(AiPromptTemplate).filter(
+        return _prompt_query(db, owner_user_id).filter(
             AiPromptTemplate.id == int(prompt_id)
         ).first()
     finally:
         db.close()
 
 
-def create_ai_prompt(data):
+def create_ai_prompt(data, owner_user_id=None):
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     db = SessionLocal()
     try:
         name = _normalize_name(data.get("name"))
         content = _normalize_content(data.get("content"))
-        if db.query(AiPromptTemplate).filter(AiPromptTemplate.name == name).first():
+        if _prompt_query(db, resolved_owner_user_id).filter(AiPromptTemplate.name == name).first():
             raise ValueError("提示词名称已存在")
 
         make_default = bool(data.get("is_default"))
         if make_default:
-            db.query(AiPromptTemplate).update({"is_default": False})
+            _prompt_query(db, resolved_owner_user_id).update({"is_default": False})
 
         prompt = AiPromptTemplate(
+            owner_user_id=resolved_owner_user_id,
             name=name,
             content=content,
+            content_type=_normalize_content_type(data.get("content_type")),
             is_default=make_default,
             enabled=True if make_default else bool(data.get("enabled", True)),
         )
@@ -154,14 +218,14 @@ def create_ai_prompt(data):
         db.commit()
         db.refresh(prompt)
 
-        if not db.query(AiPromptTemplate).filter(
+        if not _prompt_query(db, resolved_owner_user_id).filter(
             AiPromptTemplate.is_default == True
         ).first():
             prompt.is_default = True
             prompt.enabled = True
             db.commit()
             db.refresh(prompt)
-        return prompt_to_dict(prompt, db)
+        return prompt_to_dict(prompt, db, resolved_owner_user_id)
     except Exception:
         db.rollback()
         raise
@@ -169,10 +233,11 @@ def create_ai_prompt(data):
         db.close()
 
 
-def update_ai_prompt(prompt_id, data):
+def update_ai_prompt(prompt_id, data, owner_user_id=None):
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     db = SessionLocal()
     try:
-        prompt = db.query(AiPromptTemplate).filter(
+        prompt = _prompt_query(db, resolved_owner_user_id).filter(
             AiPromptTemplate.id == int(prompt_id)
         ).first()
         if not prompt:
@@ -180,13 +245,16 @@ def update_ai_prompt(prompt_id, data):
 
         if "name" in data and data.get("name") is not None:
             name = _normalize_name(data.get("name"))
-            duplicate = db.query(AiPromptTemplate).filter(
+            duplicate = _prompt_query(db, resolved_owner_user_id).filter(
                 AiPromptTemplate.name == name,
                 AiPromptTemplate.id != prompt.id,
             ).first()
             if duplicate:
                 raise ValueError("提示词名称已存在")
             prompt.name = name
+
+        if "content_type" in data and data.get("content_type") is not None:
+            prompt.content_type = _normalize_content_type(data["content_type"])
 
         if "content" in data and data.get("content") is not None:
             prompt.content = _normalize_content(data.get("content"))
@@ -198,7 +266,7 @@ def update_ai_prompt(prompt_id, data):
             prompt.enabled = enabled
 
         if bool(data.get("is_default")):
-            db.query(AiPromptTemplate).filter(
+            _prompt_query(db, resolved_owner_user_id).filter(
                 AiPromptTemplate.id != prompt.id
             ).update({"is_default": False})
             prompt.is_default = True
@@ -207,7 +275,7 @@ def update_ai_prompt(prompt_id, data):
         prompt.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(prompt)
-        return prompt_to_dict(prompt, db)
+        return prompt_to_dict(prompt, db, resolved_owner_user_id)
     except Exception:
         db.rollback()
         raise
@@ -215,14 +283,19 @@ def update_ai_prompt(prompt_id, data):
         db.close()
 
 
-def set_default_ai_prompt(prompt_id):
-    return update_ai_prompt(prompt_id, {"is_default": True, "enabled": True})
+def set_default_ai_prompt(prompt_id, owner_user_id=None):
+    return update_ai_prompt(
+        prompt_id,
+        {"is_default": True, "enabled": True},
+        owner_user_id=owner_user_id,
+    )
 
 
-def delete_ai_prompt(prompt_id):
+def delete_ai_prompt(prompt_id, owner_user_id=None):
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     db = SessionLocal()
     try:
-        prompt = db.query(AiPromptTemplate).filter(
+        prompt = _prompt_query(db, resolved_owner_user_id).filter(
             AiPromptTemplate.id == int(prompt_id)
         ).first()
         if not prompt:
@@ -230,7 +303,7 @@ def delete_ai_prompt(prompt_id):
         if prompt.is_default:
             raise ValueError("系统默认提示词不能删除，请先设置其他默认提示词")
 
-        clone_count, listener_count = _usage_counts(db, prompt.id)
+        clone_count, listener_count = _usage_counts(db, prompt.id, resolved_owner_user_id)
         if clone_count or listener_count:
             raise ValueError(
                 f"该提示词正在被 {clone_count + listener_count} 个任务使用，无法删除"
@@ -246,12 +319,13 @@ def delete_ai_prompt(prompt_id):
         db.close()
 
 
-def get_prompt_content_for_task(prompt_id=None, legacy_prompt=""):
+def get_prompt_content_for_task(prompt_id=None, legacy_prompt="", owner_user_id=None):
+    resolved_owner_user_id = _resolve_owner_user_id(owner_user_id)
     db = SessionLocal()
     try:
         if prompt_id not in (None, "", 0):
             try:
-                selected = db.query(AiPromptTemplate).filter(
+                selected = _prompt_query(db, resolved_owner_user_id).filter(
                     AiPromptTemplate.id == int(prompt_id),
                     AiPromptTemplate.enabled == True,
                 ).first()
@@ -264,11 +338,11 @@ def get_prompt_content_for_task(prompt_id=None, legacy_prompt=""):
         if legacy:
             return legacy
 
-        default_prompt = ensure_default_ai_prompt(db)
+        default_prompt = ensure_default_ai_prompt(db, resolved_owner_user_id)
         return str(default_prompt.content or DEFAULT_AI_REWRITE_PROMPT).strip()
     finally:
         db.close()
 
 
-def get_default_ai_prompt_content():
-    return get_prompt_content_for_task()
+def get_default_ai_prompt_content(owner_user_id=None):
+    return get_prompt_content_for_task(owner_user_id=owner_user_id)

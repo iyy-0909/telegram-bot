@@ -298,6 +298,7 @@ async def send_task_alert(task, title, level, message, alert_key, target=""):
             "alert_key": alert_key,
             "module": "listener_health",
             "task_id": current_task.id,
+            "listener_task_id": current_task.id,
             "channel": current_task.source_channel,
             "target": target,
         },

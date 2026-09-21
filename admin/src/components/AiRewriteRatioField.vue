@@ -4,7 +4,7 @@
       <div>
         <div class="rewrite-ratio-field__value">{{ ratioValue }}% · {{ ratioLabel }}</div>
         <div class="rewrite-ratio-field__summary">
-          约保留 {{ 100 - ratioValue }}% 原有措辞与结构
+          保留原文大意，用表情分区、适当加粗，整理整篇版式
         </div>
       </div>
       <el-input-number
@@ -28,11 +28,11 @@
 
     <div class="rewrite-ratio-field__scale" aria-hidden="true">
       <span>0% 仅排版</span>
-      <span>50% 中度</span>
-      <span>100% 重写</span>
+      <span>50% 适度整理</span>
+      <span>100% 加强排版</span>
     </div>
     <div class="rewrite-ratio-field__help">
-      比例越高，句式和排版变化越明显；事实、数字及受保护链接始终保留。该值表示模型改写强度，不是机械字数占比。
+      0% 只调整版式、表情和加粗；比例越高，整篇布局调整越明显，可少量润色措辞。大致内容、价格、地址、联系方式和链接保持不变，不按比例替换原文字数。
     </div>
   </div>
 </template>
@@ -60,10 +60,10 @@ const ratioValue = computed({
 
 const ratioLabel = computed(() => {
   if (ratioValue.value === 0) return "只整理排版"
-  if (ratioValue.value <= 25) return "轻度润色"
-  if (ratioValue.value <= 50) return "中度改写"
-  if (ratioValue.value <= 75) return "明显改写"
-  return "高强度重写"
+  if (ratioValue.value <= 25) return "轻度整理"
+  if (ratioValue.value <= 50) return "适度整理"
+  if (ratioValue.value <= 75) return "明显排版调整"
+  return "加强排版"
 })
 
 function clampRatio(value) {
@@ -73,7 +73,7 @@ function clampRatio(value) {
 }
 
 function formatTooltip(value) {
-  return `${value}% 改写强度`
+  return `${value}% 排版与润色强度`
 }
 </script>
 

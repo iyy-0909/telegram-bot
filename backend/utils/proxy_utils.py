@@ -2,6 +2,7 @@ import os
 from urllib.parse import urlparse
 
 from bot.logger import logger
+from utils.redaction import redact_url_credentials
 
 
 LOCAL_PROXY_HOSTS = {
@@ -49,17 +50,7 @@ def _proxy_host(proxy):
 
 
 def _safe_proxy_text(proxy):
-    text = _proxy_to_text(proxy)
-
-    if not text:
-        return ""
-
-    parsed = urlparse(text if "://" in text else f"//{text}")
-
-    if parsed.password:
-        return text.replace(parsed.password, "***")
-
-    return text
+    return redact_url_credentials(_proxy_to_text(proxy))
 
 
 def is_production():

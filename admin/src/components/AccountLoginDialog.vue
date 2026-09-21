@@ -31,12 +31,23 @@
         <el-input v-model="form.name" placeholder="例如 主采集账号" />
       </el-form-item>
 
-      <el-form-item label="手机号" required>
-        <el-input v-model="form.phone" placeholder="例如 +86138xxxx 或 86138xxxx" />
+      <el-form-item label="手机号" :required="!isRelogin">
+        <el-input
+          v-model="form.phone"
+          :placeholder="isRelogin && account?.has_phone ? `已配置 ${account.phone_masked || ''}，留空继续使用` : '例如 +86138xxxx 或 86138xxxx'"
+        />
+        <div v-if="isRelogin && account?.has_phone" class="field-help">手机号不会完整回显；留空会使用当前账号手机号。</div>
       </el-form-item>
 
       <el-form-item label="代理">
-        <el-input v-model="form.proxy" placeholder="可留空，例如 socks5://host:port" />
+        <el-input
+          v-model="form.proxy"
+          type="password"
+          show-password
+          autocomplete="new-password"
+          :placeholder="isRelogin && account?.has_proxy ? '代理已配置，留空继续使用' : '可留空，例如 socks5://host:port'"
+        />
+        <div v-if="isRelogin && account?.has_proxy" class="field-help">代理凭据不会回显；填写新值可替换。</div>
       </el-form-item>
 
       <el-form-item label="备注">
@@ -189,7 +200,7 @@ function validateBaseForm() {
     return false
   }
 
-  if (!form.phone) {
+  if (!form.phone && !isRelogin.value) {
     ElMessage.error("手机号不能为空")
     return false
   }
@@ -278,6 +289,15 @@ async function verifyCode() {
   }
 }
 </script>
+
+<style scoped>
+.field-help {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+</style>
 
 <style scoped>
 .login-steps {

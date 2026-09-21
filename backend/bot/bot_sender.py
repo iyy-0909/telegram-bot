@@ -2,7 +2,6 @@ import asyncio
 import json
 import mimetypes
 import os
-import re
 from pathlib import Path
 
 import requests
@@ -12,6 +11,11 @@ from db.crud_bot import normalize_target_channel
 from bot.logger import logger
 from utils.proxy_utils import is_production
 from utils.proxy_utils import normalize_bot_api_proxy_for_runtime
+from utils.redaction import (
+    redact_sensitive_text,
+    redact_telegram_bot_tokens,
+    redact_url_credentials,
+)
 
 
 BOT_API_BASE = "https://api.telegram.org"
@@ -44,11 +48,30 @@ def get_bot_api_proxies():
 
 
 class BotApiError(Exception):
-    pass
+    def __init__(self, message="", *, error_code=None, description=""):
+        self.error_code = error_code
+        self.description = redact_sensitive_text(description)[:1000]
+        super().__init__(redact_sensitive_text(message)[:1000])
 
 
 class BotApiNetworkError(BotApiError):
     pass
+
+
+def bot_api_response_error(result) -> BotApiError:
+    """Preserve Telegram's error classification without exposing credentials."""
+    data = result if isinstance(result, dict) else {}
+    error_code = data.get("error_code")
+    try:
+        error_code = int(error_code) if error_code is not None else None
+    except (TypeError, ValueError):
+        error_code = None
+    description = redact_sensitive_text(data.get("description") or "")[:1000]
+    return BotApiError(
+        redact_sensitive_text(data or result)[:1000],
+        error_code=error_code,
+        description=description,
+    )
 
 
 class BotProfilePartialUpdateError(BotApiError):
@@ -65,7 +88,7 @@ class BotProfilePartialUpdateError(BotApiError):
 
 
 def redact_bot_token(text: str) -> str:
-    return re.sub(r"/bot[^/\s]+", "/bot<hidden>", text or "")
+    return redact_telegram_bot_tokens(text)
 
 
 def is_parse_mode_error(error: Exception) -> bool:
@@ -102,7 +125,8 @@ def describe_request_error(error: Exception, method: str) -> str:
     proxies = get_bot_api_proxies()
     proxy = proxies.get("https") or proxies.get("http") or "未配置"
     error_name = type(error).__name__
-    raw_error = redact_bot_token(str(error))
+    proxy = redact_url_credentials(proxy)
+    raw_error = redact_sensitive_text(error)
 
     if isinstance(error, request_exceptions.SSLError):
         reason = "SSL 连接被中断，通常是本机代理或网络节点不稳定"
@@ -142,10 +166,20 @@ def request_post(token: str, method: str, data=None, files=None):
     try:
         result = response.json()
     except Exception:
-        raise BotApiError(f"Bot API returned non-JSON response: {response.text}")
+        safe_body = redact_sensitive_text(response.text)[:1000]
+        raise BotApiError(f"Bot API returned non-JSON response: {safe_body}")
 
     if not result.get("ok"):
-        raise BotApiError(str(result))
+        raise bot_api_response_error(result)
+
+    if method in {"sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendAudio",
+                  "sendAnimation", "sendVoice", "sendVideoNote", "sendMediaGroup", "forwardMessage"}:
+        try:
+            from db.channel_activity import record_bot_content
+            record_bot_content(token, result.get("result"))
+        except Exception as exc:
+            # A tracking failure must never cause a successfully sent post to be retried.
+            logger.warning(f"频道内容时间记录失败：{redact_sensitive_text(exc)}")
 
     return result
 
@@ -168,10 +202,11 @@ def request_get(token: str, method: str):
     try:
         result = response.json()
     except Exception:
-        raise BotApiError(f"Bot API returned non-JSON response: {response.text}")
+        safe_body = redact_sensitive_text(response.text)[:1000]
+        raise BotApiError(f"Bot API returned non-JSON response: {safe_body}")
 
     if not result.get("ok"):
-        raise BotApiError(str(result))
+        raise bot_api_response_error(result)
 
     return result
 

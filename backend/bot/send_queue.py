@@ -1,9 +1,11 @@
 import asyncio
 import time
 
+from auth.tenant import tenant_scope
 from bot.logger import logger
 from bot.runtime_queue import runtime_queue_state
 from db.crud_settings import get_send_settings
+from utils.redaction import redact_sensitive_text
 
 
 async def wait_or_stop(seconds, stop_event=None):
@@ -104,9 +106,10 @@ class SendQueue:
         skip_initial_delay=False,
         stop_event=None,
         queue_meta=None,
+        owner_user_id=None,
         **kwargs,
     ):
-        settings = get_send_settings()
+        settings = get_send_settings(owner_user_id=owner_user_id)
         global_delay = settings["global_send_delay"]
         retry_count = settings["send_retry_count"]
         retry_delay = settings["send_retry_delay"]
@@ -188,7 +191,16 @@ class SendQueue:
                             queue_item_id,
                             reason=(queue_meta or {}).get("sending_reason", ""),
                         )
-                        result = await sender_func(*args, **kwargs)
+                        with tenant_scope(owner_user_id, is_admin=False):
+                            result = await sender_func(*args, **kwargs)
+                        if isinstance(result, dict) and result.get("filtered") is True:
+                            reason = str(result.get("message") or "内容被过滤，已取消发送")
+                            runtime_queue_state.cancel(queue_item_id, reason)
+                            logger.info(
+                                "全局发送取消：内容被过滤 | task_id=%s | target=%s | reason=%s",
+                                task_id, target, reason,
+                            )
+                            return result
                         self.last_sent_at = time.monotonic()
 
                         logger.info(
@@ -206,31 +218,32 @@ class SendQueue:
 
                     except Exception as e:
                         self.last_sent_at = time.monotonic()
+                        safe_error = redact_sensitive_text(e)
 
                         if attempt >= attempts:
                             logger.exception(
                                 f"全局发送队列发送异常，已达最大重试次数 | "
                                 f"task_id={task_id} | target={target} | "
-                                f"attempt={attempt}/{attempts} | {e}"
+                                f"attempt={attempt}/{attempts} | {safe_error}"
                             )
                             runtime_queue_state.finish(
                                 queue_item_id,
                                 success=False,
-                                error=str(e),
+                                error=safe_error,
                             )
                             return False
 
                         logger.exception(
                             f"全局发送队列发送异常，准备重试 | "
                             f"task_id={task_id} | target={target} | "
-                            f"attempt={attempt}/{attempts} | retry_delay={retry_delay}s | {e}"
+                            f"attempt={attempt}/{attempts} | retry_delay={retry_delay}s | {safe_error}"
                         )
 
                         if retry_delay > 0:
                             runtime_queue_state.update_current(
                                 status="retrying",
                                 reason=f"发送异常，{retry_delay}s 后重试",
-                                error=str(e),
+                                error=safe_error,
                             )
                             stopped = await wait_or_stop(retry_delay, stop_event)
 
@@ -254,7 +267,11 @@ class SendQueue:
             raise
 
         except BaseException as e:
-            runtime_queue_state.cancel(queue_item_id, f"发送协程异常退出，运行态已清理：{e}")
+            safe_error = redact_sensitive_text(e)
+            runtime_queue_state.cancel(
+                queue_item_id,
+                f"发送协程异常退出，运行态已清理：{safe_error}",
+            )
             raise
 
 

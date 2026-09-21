@@ -2,7 +2,7 @@
   <el-container class="layout">
     <el-aside width="220px" class="aside">
       <div class="logo">校长克隆机器人</div>
-      <AppMenu :active-menu="activeMenu" @select="handleSelect" />
+      <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" @select="handleSelect" />
     </el-aside>
 
     <el-container class="content-shell">
@@ -12,13 +12,23 @@
           <small>运营管理后台</small>
         </div>
 
-        <el-tag :type="status === 'running' ? 'success' : 'danger'" size="small">
-          {{ status || "unknown" }}
-        </el-tag>
+        <div class="header-actions">
+          <el-tag v-if="allowedMenus.includes('home')" :type="status === 'running' ? 'success' : 'danger'" size="small">
+            {{ status || "unknown" }}
+          </el-tag>
+          <div class="current-user">
+            <div class="current-user__identity">
+              <strong>{{ currentUser?.username || "后台用户" }}</strong>
+              <span>{{ roleLabel }} · {{ accessValidityLabel }}</span>
+            </div>
+            <el-tag :type="roleTagType" size="small" effect="plain">{{ roleLabel }}</el-tag>
+            <el-button size="small" plain :loading="loggingOut" @click="$emit('logout')">退出</el-button>
+          </div>
+        </div>
       </el-header>
 
       <div class="mobile-menu">
-        <AppMenu :active-menu="activeMenu" @select="handleSelect" />
+        <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" @select="handleSelect" />
       </div>
 
       <el-main class="main">
@@ -29,7 +39,7 @@
 </template>
 
 <script setup>
-import { defineComponent, h, resolveComponent } from "vue"
+import { computed, defineComponent, h, resolveComponent } from "vue"
 import {
   Bell,
   ChatDotRound,
@@ -44,9 +54,10 @@ import {
   Setting,
   Switch,
   User,
+  UserFilled,
 } from "@element-plus/icons-vue"
 
-defineProps({
+const props = defineProps({
   status: {
     type: String,
     default: "unknown",
@@ -55,9 +66,21 @@ defineProps({
     type: String,
     default: "rules",
   },
+  allowedMenus: {
+    type: Array,
+    default: () => [],
+  },
+  currentUser: {
+    type: Object,
+    default: null,
+  },
+  loggingOut: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const emit = defineEmits(["change-menu"])
+const emit = defineEmits(["change-menu", "logout"])
 
 const menuItems = [
   ["home", "首页", House],
@@ -73,7 +96,24 @@ const menuItems = [
   ["ai-settings", "AI 配置", MagicStick],
   ["settings", "系统设置", Setting],
   ["guide", "使用教程", Guide],
+  ["user-access", "后台管理", UserFilled],
 ]
+const visibleMenuItems = computed(() => menuItems.filter(([key]) => props.allowedMenus.includes(key)))
+const roleLabel = computed(() => props.currentUser?.role === "admin" ? "管理员" : "普通用户")
+const roleTagType = computed(() => props.currentUser?.role === "admin" ? "warning" : "info")
+const accessValidityLabel = computed(() => {
+  if (props.currentUser?.role === "admin") return "全部权限"
+  if (props.currentUser?.access_state === "disabled") return "账号已停用"
+  if (props.currentUser?.access_state === "expired") return "使用期已结束"
+  if (["pending", "waiting"].includes(props.currentUser?.access_state)) return "待管理员授权"
+  if (!props.currentUser?.access_expires_at) return "永久有效"
+  const expiresAt = new Date(props.currentUser.access_expires_at)
+  if (Number.isNaN(expiresAt.getTime())) return "期限未知"
+  const remaining = expiresAt.getTime() - Date.now()
+  if (remaining <= 0) return "使用期已结束"
+  const days = Math.ceil(remaining / (24 * 60 * 60 * 1000))
+  return days <= 1 ? "不足 1 天" : `剩余 ${days} 天`
+})
 const handleSelect = (menu) => {
   emit("change-menu", menu)
 }
@@ -83,6 +123,10 @@ const AppMenu = defineComponent({
     activeMenu: {
       type: String,
       default: "rules",
+    },
+    items: {
+      type: Array,
+      default: () => [],
     },
   },
   emits: ["select"],
@@ -94,7 +138,7 @@ const AppMenu = defineComponent({
       textColor: "#cbd5e1",
       activeTextColor: "#ffffff",
       onSelect: (menu) => componentEmit("select", menu),
-    }, () => menuItems.map(([index, label, icon]) => h(resolveComponent("el-menu-item"), {
+    }, () => props.items.map(([index, label, icon]) => h(resolveComponent("el-menu-item"), {
       index,
       key: index,
     }, () => [
@@ -168,6 +212,43 @@ const AppMenu = defineComponent({
   white-space: nowrap;
 }
 
+.header-actions,
+.current-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.current-user {
+  padding-left: 10px;
+  border-left: 1px solid var(--el-border-color, #e5e7eb);
+}
+
+.current-user__identity {
+  min-width: 0;
+  text-align: right;
+}
+
+.current-user__identity strong,
+.current-user__identity span {
+  display: block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-user__identity strong {
+  color: var(--el-text-color-primary, #303133);
+  font-size: 13px;
+}
+
+.current-user__identity span {
+  margin-top: 1px;
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 11px;
+}
+
 .header-title small {
   margin-top: 2px;
   font-size: 12px;
@@ -210,6 +291,20 @@ const AppMenu = defineComponent({
   .header {
     height: 56px;
     padding: 0 14px;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .current-user {
+    gap: 6px;
+    padding-left: 6px;
+  }
+
+  .current-user__identity,
+  .current-user > .el-tag {
+    display: none;
   }
 
   .mobile-menu {

@@ -292,6 +292,7 @@ async def notify_error(title: str, detail: str = "", task_id=None, target=None):
             "task_id": task_id,
             "target": target,
             "task_type": task_type,
+            "clone_task_id": task_id if task_type == "clone" else None,
             "module": task_type or "系统",
         },
     )
@@ -304,6 +305,7 @@ async def notify_task_event(title: str, task_id=None, task_name="", detail=""):
         level="info",
         context={
             "task_id": task_id,
+            "clone_task_id": task_id,
             "task_name": task_name,
             "task_type": "clone",
             "module": "clone",

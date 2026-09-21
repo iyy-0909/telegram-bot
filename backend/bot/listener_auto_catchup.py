@@ -10,6 +10,7 @@ from bot.listener_catchup import (
 from bot.logger import logger
 from bot.runtime_queue import runtime_queue_state
 from bot.sender import cleanup_prepared, prepare_album, prepare_single_message
+from utils.redaction import redact_sensitive_text
 
 
 _active_catchup_tasks = {}
@@ -79,11 +80,15 @@ async def catchup_latest_listener_message(
     plan = await build_listener_catchup_plan(task, limit=limit or MAX_AUTO_CATCHUP_ITEMS)
 
     if not plan.get("ok"):
+        safe_plan_message = redact_sensitive_text(
+            plan.get("message") or "补齐计划生成失败"
+        )
+        plan["message"] = safe_plan_message
         if queue_item_id:
             runtime_queue_state.finish(
                 queue_item_id,
                 success=False,
-                error=plan.get("message") or "补齐计划生成失败",
+                error=safe_plan_message,
             )
         return plan
 
@@ -186,16 +191,17 @@ async def catchup_latest_listener_message(
 
         except Exception as e:
             failed_count += 1
+            safe_error = redact_sensitive_text(e)
             logger.exception(
                 f"listener catchup failed | task_id={task.id} | "
-                f"source_message_id={source_message_id} | {e}"
+                f"source_message_id={source_message_id} | {safe_error}"
             )
             results.append({
                 "source_message_id": source_message_id,
                 "grouped_id": str(grouped_id) if grouped_id else None,
                 "targets": needed_targets,
                 "ok": False,
-                "message": f"补齐失败：{e}",
+                "message": f"补齐失败：{safe_error}",
             })
 
         finally:
@@ -251,16 +257,17 @@ async def run_listener_catchup_background(task, *, force, limit, queue_item_id):
         runtime_queue_state.cancel(queue_item_id, "补齐任务被取消")
         raise
     except BaseException as exc:
+        safe_error = redact_sensitive_text(exc)
         runtime_queue_state.finish(
             queue_item_id,
             success=False,
-            error=str(exc),
+            error=safe_error,
         )
         logger.exception(
             "监听补齐后台任务异常 | "
-            f"task_id={task.id} | queue_item_id={queue_item_id} | error={exc}"
+            f"task_id={task.id} | queue_item_id={queue_item_id} | error={safe_error}"
         )
         return {
             "ok": False,
-            "message": f"补齐任务异常：{exc}",
+            "message": f"补齐任务异常：{safe_error}",
         }

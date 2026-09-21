@@ -156,9 +156,15 @@ class ManualSubmissionAccountTests(unittest.TestCase):
 
         db = self.session_factory()
         try:
-            db.add(SearchBot(id=1, name="搜索机器人", username="@search_bot"))
+            db.add(SearchBot(
+                id=1,
+                owner_user_id=1,
+                name="搜索机器人",
+                username="@search_bot",
+            ))
             db.add(MyChannel(
                 id=1,
+                owner_user_id=1,
                 title="上海频道",
                 username="@shanghai_channel",
                 group_name="上海",

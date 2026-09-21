@@ -26,12 +26,12 @@ def parse_message_url(value: str):
     match = MESSAGE_ID_PATTERN.search(text)
 
     if not match:
-        raise ValueError(f"invalid Telegram message link: {value}")
+        raise ValueError("invalid Telegram message link")
 
     message_id = int(match.group(1))
 
     if message_id < 1:
-        raise ValueError(f"invalid Telegram message_id: {value}")
+        raise ValueError("invalid Telegram message_id")
 
     return message_id
 

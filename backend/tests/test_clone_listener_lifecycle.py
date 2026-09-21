@@ -13,6 +13,7 @@ from db.models import ListenerSentMessage, ListenerTask
 def make_clone_task(**overrides):
     values = {
         "id": 28,
+        "owner_user_id": 1,
         "name": "测试克隆任务",
         "source_channel": "@source",
         "target_channels": '["@target"]',

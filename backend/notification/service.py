@@ -5,8 +5,11 @@ from time import monotonic
 
 from telethon import events
 
+from auth.runtime_access import RuntimeAccessDecision, get_owner_runtime_access
 from bot.logger import logger
 from db.crud_notification import get_notification_setting
+from db.database import SessionLocal
+from db.models import Account
 from notification.config import NotificationConfig
 from notification.formatter import (
     entity_display_name,
@@ -20,11 +23,51 @@ from notification.mute import is_chat_muted
 from notification.ntfy_client import NtfyClient
 
 
+def load_account_notification_runtime_access(account_id: int):
+    """Load the account owner and evaluate notification access from fresh state."""
+    db = SessionLocal()
+    try:
+        account = (
+            db.query(Account)
+            .filter(Account.id == int(account_id))
+            .first()
+        )
+        if account is None:
+            return RuntimeAccessDecision(
+                False,
+                "account_missing",
+                None,
+                "notifications",
+            )
+        owner_user_id = getattr(account, "owner_user_id", None)
+        if not account.enabled:
+            return RuntimeAccessDecision(
+                False,
+                "account_disabled",
+                int(owner_user_id) if owner_user_id else None,
+                "notifications",
+            )
+        return get_owner_runtime_access(
+            owner_user_id,
+            "notifications",
+            db=db,
+        )
+    finally:
+        db.close()
+
+
 class NotificationService:
-    def __init__(self, config=None, ntfy_client=None, setting_loader=None):
+    def __init__(
+        self,
+        config=None,
+        ntfy_client=None,
+        setting_loader=None,
+        access_loader=None,
+    ):
         self.config = config or NotificationConfig.from_env()
         self.ntfy_client = ntfy_client
         self.setting_loader = setting_loader or get_notification_setting
+        self.access_loader = access_loader or load_account_notification_runtime_access
         self.account_manager = None
         self.registrations = {}
         self.sync_task = None
@@ -85,17 +128,92 @@ class NotificationService:
                 logger.exception(f"ntfy 账号监听同步失败 | error={exc}")
             await asyncio.sleep(self.config.sync_interval)
 
+    def _load_runtime_access(self, account_id: int):
+        try:
+            decision = self.access_loader(int(account_id))
+        except Exception:
+            logger.warning(
+                "ntfy runtime access check failed closed | "
+                f"account_id={account_id} | reason=access_check_error"
+            )
+            return RuntimeAccessDecision(
+                False,
+                "access_check_error",
+                None,
+                "notifications",
+            )
+        if not isinstance(decision, RuntimeAccessDecision) and not hasattr(
+            decision,
+            "allowed",
+        ):
+            logger.warning(
+                "ntfy runtime access check failed closed | "
+                f"account_id={account_id} | reason=invalid_access_decision"
+            )
+            return RuntimeAccessDecision(
+                False,
+                "invalid_access_decision",
+                None,
+                "notifications",
+            )
+        return decision
+
+    async def _load_runtime_access_async(self, account_id: int):
+        return await asyncio.to_thread(self._load_runtime_access, account_id)
+
+    def _remove_registration(self, account_id: int, *, expected_client=None):
+        registration = self.registrations.get(account_id)
+        if registration is None:
+            return False
+        client, handler, builder = registration
+        if expected_client is not None and client is not expected_client:
+            return False
+        with suppress(Exception):
+            client.remove_event_handler(handler, builder)
+        self.registrations.pop(account_id, None)
+        self.account_titles.pop(account_id, None)
+        for cache_key in tuple(self.membership_cache):
+            if cache_key[0] == account_id:
+                self.membership_cache.pop(cache_key, None)
+        return True
+
+    def _deny_runtime_access(self, account_id: int, decision, *, client=None):
+        self._remove_registration(account_id, expected_client=client)
+        logger.info(
+            "ntfy notification blocked by runtime access | "
+            f"account_id={account_id} | reason={decision.reason}"
+        )
+
     def sync_clients(self):
         clients = dict(getattr(self.account_manager, "clients", {}) or {})
+        access_decisions = {
+            account_id: self._load_runtime_access(account_id)
+            for account_id in clients
+        }
 
         for account_id, (old_client, handler, builder) in list(self.registrations.items()):
-            if clients.get(account_id) is old_client:
+            decision = access_decisions.get(account_id)
+            if (
+                clients.get(account_id) is old_client
+                and decision is not None
+                and decision.allowed
+            ):
                 continue
-            with suppress(Exception):
-                old_client.remove_event_handler(handler, builder)
-            self.registrations.pop(account_id, None)
+            self._remove_registration(account_id)
+            if decision is not None and not decision.allowed:
+                logger.info(
+                    "ntfy Telegram listener removed by runtime access | "
+                    f"account_id={account_id} | reason={decision.reason}"
+                )
 
         for account_id, client in clients.items():
+            decision = access_decisions[account_id]
+            if not decision.allowed:
+                logger.info(
+                    "ntfy Telegram listener not registered by runtime access | "
+                    f"account_id={account_id} | reason={decision.reason}"
+                )
+                continue
             registration = self.registrations.get(account_id)
             if registration and registration[0] is client:
                 continue
@@ -164,6 +282,15 @@ class NotificationService:
         return joined
 
     async def handle_event(self, account_id: int, event):
+        runtime_access = await self._load_runtime_access_async(account_id)
+        if not runtime_access.allowed:
+            self._deny_runtime_access(
+                account_id,
+                runtime_access,
+                client=getattr(event, "client", None),
+            )
+            return
+
         message = event.message
         chat_id = getattr(event, "chat_id", None)
         message_id = getattr(message, "id", None)
@@ -243,6 +370,14 @@ class NotificationService:
             )
             priority = notification_priority(event)
             title = await self._notification_title(account_id, event.client)
+            runtime_access = await self._load_runtime_access_async(account_id)
+            if not runtime_access.allowed:
+                self._deny_runtime_access(
+                    account_id,
+                    runtime_access,
+                    client=getattr(event, "client", None),
+                )
+                return
             status = await ntfy_client.publish(
                 title=title,
                 message=body,

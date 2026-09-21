@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from telethon import events
 
+from auth.runtime_access import get_owner_runtime_access
 from bot.logger import logger
 from db.database import SessionLocal
 from db.models import Account, AccountAutoReplyState
@@ -116,6 +117,14 @@ class AccountAutoReplyService:
             if not account or not account.enabled:
                 return
 
+            access = get_owner_runtime_access(
+                getattr(account, "owner_user_id", None),
+                "accounts",
+                db=db,
+            )
+            if not access.allowed:
+                return
+
             greeting_text = (account.greeting_message or "").strip()
             away_text = (account.away_message or "").strip()
             if not (
@@ -141,7 +150,7 @@ class AccountAutoReplyService:
 
             now = datetime.now()
             if account.greeting_enabled and greeting_text and not state.greeting_sent_at:
-                await event.respond(greeting_text)
+                await event.respond(greeting_text, parse_mode="html")
                 state.greeting_sent_at = now
                 db.commit()
                 logger.info(

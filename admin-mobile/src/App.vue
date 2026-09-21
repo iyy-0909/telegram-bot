@@ -1,7 +1,39 @@
 ﻿<template>
-  <AuthPanel v-if="!authenticated" @authenticated="handleAuthSuccess" />
+  <div v-if="!authReady" class="auth-bootstrap" role="status" aria-live="polite">
+    <el-icon class="is-loading"><Loading /></el-icon>
+    <span>正在确认账号权限…</span>
+  </div>
 
-  <MobileLayout v-else :active="activeTab" @change="changeTab" @refresh="loadActive">
+  <section
+    v-else-if="authenticated && !currentUser"
+    class="auth-bootstrap auth-bootstrap--error"
+    aria-live="polite"
+  >
+    <el-alert
+      type="error"
+      show-icon
+      :closable="false"
+      title="暂时无法读取账号权限"
+      :description="authLoadError || '请检查网络后重试。你的登录状态仍已保留。'"
+    />
+    <div class="auth-bootstrap__actions">
+      <el-button type="primary" :loading="permissionRefreshing" @click="retryAuthBootstrap">重新加载</el-button>
+      <el-button @click="logoutCurrentUser">退出登录</el-button>
+    </div>
+  </section>
+
+  <AuthPanel v-else-if="!authenticated" @authenticated="handleAuthSuccess" />
+
+  <MobileLayout
+    v-else
+    :active="activeTab"
+    :nav-keys="mobileNavKeys"
+    :user="currentUser"
+    :refresh-disabled="!canRefreshActive"
+    @change="changeTab"
+    @refresh="loadActive"
+    @logout="logoutCurrentUser"
+  >
     <HomePage
       v-if="activeTab === 'home'"
       :status="status"
@@ -195,6 +227,14 @@
       <MobileSearchBotCollections v-if="channelView === 'collections'" />
     </div>
 
+    <MobileAccessOverview
+      v-else-if="morePage === 'access'"
+      :user="currentUser"
+      :refreshing="permissionRefreshing"
+      @refresh="refreshAccessAndData"
+      @logout="logoutCurrentUser"
+    />
+
     <MobileControlAlerts
       v-else-if="morePage === 'alerts'"
       @back="morePage = 'menu'"
@@ -213,7 +253,9 @@
       :ai-settings="aiSettings"
       :loading="loading"
       :keyword="keyword"
-      @select="morePage = $event"
+      :allowed-features="featureKeys"
+      :is-admin="currentUser?.role === 'admin'"
+      @select="selectMorePage"
       @update-keyword="updateKeyword"
       @edit="openEdit"
       @delete="removeItem"
@@ -296,9 +338,9 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, reactive, ref, resolveComponent } from "vue"
+import { computed, defineComponent, h, onMounted, onUnmounted, reactive, ref, resolveComponent } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
-import { ArrowDownBold, ArrowUpBold } from "@element-plus/icons-vue"
+import { ArrowDownBold, ArrowUpBold, Loading } from "@element-plus/icons-vue"
 import MobileLayout from "./components/MobileLayout.vue"
 import StatusPill from "./components/StatusPill.vue"
 import EmptyState from "./components/EmptyState.vue"
@@ -307,8 +349,18 @@ import MobileSearchBotCollections from "./components/MobileSearchBotCollections.
 import MobileSettingsPage from "./components/MobileSettingsPage.vue"
 import MobileControlAlerts from "./components/MobileControlAlerts.vue"
 import MobileBotProfileEditor from "./components/MobileBotProfileEditor.vue"
+import MobileAccessOverview from "./components/MobileAccessOverview.vue"
 import AuthPanel from "./components/AuthPanel.vue"
-import { getErrorMessage, getToken, setToken } from "./api/client"
+import {
+  getErrorMessage,
+  getSessionGeneration,
+  getToken,
+  isCanceledRequest,
+  isCurrentSession,
+  SESSION_INVALIDATED_EVENT,
+  SESSION_STORAGE_CHANGED_EVENT,
+  setToken,
+} from "./api/client"
 import {
   catchupListenerTask,
   checkListenerCatchup,
@@ -331,12 +383,15 @@ import {
   deleteListenerTask,
   deleteMyChannel,
   deleteSupportBot,
+  getAccountOptions,
   getAccounts,
   getBots,
+  getBotOptions,
   getCloneTasks,
   getCloneSendEvents,
   getContentTemplates,
   getContentTemplateRules,
+  getCurrentUser,
   getListenerTasks,
   getListenerSendEvents,
   getMyChannels,
@@ -345,6 +400,7 @@ import {
   getSendSettings,
   getStatus,
   getSupportBots,
+  logoutUser,
   pauseCloneTask,
   resumeCloneTask,
   startCloneTask,
@@ -375,13 +431,40 @@ import {
   sourceTypeLabel,
 } from "./utils/format"
 import { matchesSearch } from "./utils/search"
+import { hasAnyFeature, hasFeature, userFeatureKeys } from "./utils/access"
 
 const authenticated = ref(Boolean(getToken()))
+const authReady = ref(false)
+const authLoadError = ref("")
+const currentUser = ref(null)
+const permissionRefreshing = ref(false)
+const featureKeys = computed(() => userFeatureKeys(currentUser.value))
+const mobileNavKeys = computed(() => {
+  const items = []
+  if (hasFeature(currentUser.value, "dashboard")) items.push("home")
+  if (hasFeature(currentUser.value, "listener_tasks")) items.push("listeners")
+  if (hasFeature(currentUser.value, "clone_tasks")) items.push("clones")
+  if (hasFeature(currentUser.value, "channels")) items.push("channels")
+  items.push("more")
+  return items
+})
+
+const MORE_PAGE_FEATURES = {
+  alerts: ["alerts"],
+  bots: ["bots"],
+  support: ["support"],
+  settings: ["system_settings", "ai_settings"],
+  accounts: ["accounts"],
+}
 const activeTab = ref(window.localStorage.getItem("mobile_active_tab") || "home")
 const channelView = ref("channels")
 const listenerView = ref("tasks")
 const cloneView = ref("tasks")
 const morePage = ref("menu")
+const canRefreshActive = computed(() => {
+  if (activeTab.value !== "more") return true
+  return ["access", "bots", "support", "settings", "accounts"].includes(morePage.value)
+})
 const editVisible = ref(false)
 const detailVisible = ref(false)
 const detailText = ref("")
@@ -427,6 +510,8 @@ const loading = reactive({
   settings: false,
   accounts: false,
 })
+const loadingOwners = new Map()
+let permissionRefreshOwner = null
 
 const keyword = reactive({
   listeners: "",
@@ -467,7 +552,7 @@ const templateGroups = computed(() => templates.value
   }))
   .sort((a, b) => (b.id || 0) - (a.id || 0)))
 const filteredTemplates = computed(() => filterItems(templateGroups.value, keyword.templates, ["name", "type", "content", "remark", "items"]))
-const filteredAccounts = computed(() => filterItems(accounts.value, keyword.accounts, ["name", "username", "phone", "remark"]))
+const filteredAccounts = computed(() => filterItems(accounts.value, keyword.accounts, ["name", "username", "phone_masked", "remark"]))
 const filteredLogItems = computed(() => filterLogItems(logItems.value, logKeyword.value))
 
 function pickList(data) {
@@ -535,30 +620,170 @@ function updateKeyword(key, value) {
 }
 
 async function handleAuthSuccess(token, mode) {
+  clearAuthorizedData()
   setToken(token)
-  authenticated.value = true
+  const authGeneration = getSessionGeneration()
+  authReady.value = false
+  authLoadError.value = ""
+  const ready = await refreshCurrentUser({ silent: true })
+  if (!isCurrentSession(authGeneration)) return
+  if (!ready) {
+    ElMessage.error("登录成功，但账号权限读取失败，请重新登录。")
+    return
+  }
   ElMessage.success(mode === "register" ? "注册成功" : "登录成功")
   await loadInitial()
+  if (!isCurrentSession(authGeneration)) return
+  if (mode === "register" && ["pending", "waiting"].includes(currentUser.value?.access_state)) {
+    ElMessage.info("账号已创建，请等待管理员分配功能和使用时间。")
+  }
 }
 
 function changeTab(tab) {
+  if (!mobileNavKeys.value.includes(tab)) {
+    ElMessage.warning("当前账号尚未开通该功能")
+    ensureAccessibleRoute()
+    return
+  }
   activeTab.value = tab
+  if (tab === "more") morePage.value = "menu"
   window.localStorage.setItem("mobile_active_tab", tab)
   loadActive()
 }
 
+function canOpenMorePage(page) {
+  if (["menu", "access"].includes(page)) return true
+  const required = MORE_PAGE_FEATURES[page]
+  return Array.isArray(required) && hasAnyFeature(currentUser.value, required)
+}
+
+function ensureAccessibleRoute() {
+  if (!mobileNavKeys.value.includes(activeTab.value)) {
+    activeTab.value = "more"
+    window.localStorage.setItem("mobile_active_tab", "more")
+  }
+  if (activeTab.value === "more" && !canOpenMorePage(morePage.value)) {
+    morePage.value = "access"
+  }
+  if (
+    activeTab.value === "more"
+    && currentUser.value?.role !== "admin"
+    && (currentUser.value?.available === false || featureKeys.value.length === 0)
+  ) {
+    morePage.value = "access"
+  }
+}
+
+async function refreshCurrentUser(options = {}) {
+  const generation = getSessionGeneration()
+  const refreshOwner = Symbol("permission-refresh")
+  permissionRefreshOwner = refreshOwner
+  permissionRefreshing.value = true
+  authLoadError.value = ""
+  try {
+    const response = await getCurrentUser()
+    if (!isCurrentSession(generation)) return false
+    currentUser.value = response.data?.user || null
+    if (!currentUser.value) throw new Error("未返回账号信息")
+    authenticated.value = true
+    ensureAccessibleRoute()
+    return true
+  } catch (error) {
+    if (isCanceledRequest(error) || !isCurrentSession(generation)) return false
+    const message = getErrorMessage(error, "账号权限读取失败，请检查网络后重试")
+    if (error?.response?.status === 401) {
+      clearAuthorizedData()
+      setToken("")
+      currentUser.value = null
+      authenticated.value = false
+      permissionRefreshOwner = null
+      permissionRefreshing.value = false
+      authReady.value = true
+    } else {
+      authenticated.value = Boolean(getToken())
+      authLoadError.value = message
+    }
+    if (!options.silent) ElMessage.error(message)
+    return false
+  } finally {
+    if (permissionRefreshOwner === refreshOwner && isCurrentSession(generation)) {
+      permissionRefreshOwner = null
+      permissionRefreshing.value = false
+      authReady.value = true
+    }
+  }
+}
+
+async function retryAuthBootstrap() {
+  const ready = await refreshCurrentUser()
+  if (ready) await loadInitial()
+}
+
+async function logoutCurrentUser() {
+  const generation = getSessionGeneration()
+  try {
+    if (getToken()) await logoutUser()
+  } catch (error) {
+    if (isCanceledRequest(error) || !isCurrentSession(generation)) return
+    // 本地退出不应被网络错误阻塞。
+  }
+  if (!isCurrentSession(generation)) return
+  clearAuthorizedData()
+  setToken("")
+  currentUser.value = null
+  authenticated.value = false
+  authLoadError.value = ""
+  activeTab.value = "more"
+  morePage.value = "access"
+  ElMessage.success("已退出登录")
+}
+
+async function refreshAccessAndData() {
+  const ready = await refreshCurrentUser()
+  if (!ready) return
+  await loadInitial()
+  ElMessage.success("授权状态已刷新")
+}
+
+async function selectMorePage(page) {
+  if (!canOpenMorePage(page)) {
+    ElMessage.warning("当前账号尚未开通该功能")
+    morePage.value = "access"
+    return
+  }
+  morePage.value = page
+  await loadActive()
+}
+
 async function loadInitial() {
-  const results = await Promise.allSettled([
-    loadHome({ silent: true }),
-    loadListeners({ silent: true }),
-    loadClones({ silent: true }),
-    loadChannels({ silent: true }),
-    loadBots({ silent: true }),
-    loadAccounts({ silent: true }),
-    loadSendSettings({ silent: true }),
-    loadTemplates({ silent: true }),
-    loadSupportBots({ silent: true }),
-  ])
+  const generation = getSessionGeneration()
+  const loaders = new Map()
+  const addLoader = (key, loader) => loaders.set(key, loader)
+  const silent = { silent: true }
+
+  if (hasFeature(currentUser.value, "dashboard")) addLoader("home", () => loadHome(silent))
+  if (hasFeature(currentUser.value, "listener_tasks")) addLoader("listeners", () => loadListeners(silent))
+  if (hasFeature(currentUser.value, "clone_tasks")) addLoader("clones", () => loadClones(silent))
+  if (hasFeature(currentUser.value, "channels")) addLoader("channels", () => loadChannels(silent))
+  if (hasFeature(currentUser.value, "support")) addLoader("support", () => loadSupportBots(silent))
+  if (hasFeature(currentUser.value, "system_settings")) addLoader("send-settings", () => loadSendSettings(silent))
+
+  if (hasAnyFeature(currentUser.value, ["bots", "listener_tasks", "clone_tasks", "channels", "support"])) {
+    addLoader("bots", () => loadBots(silent))
+  }
+  if (hasAnyFeature(currentUser.value, ["accounts", "listener_tasks", "clone_tasks", "channels"])) {
+    addLoader("accounts", () => loadAccounts(silent))
+  }
+  const contentProcessingEnabled = currentUser.value?.role === "admin" || currentUser.value?.plan_tier === "paid"
+  if (contentProcessingEnabled && hasAnyFeature(currentUser.value, ["system_settings", "listener_tasks", "clone_tasks"])) {
+    addLoader("templates", () => loadTemplates(silent))
+  }
+  if (contentProcessingEnabled && hasAnyFeature(currentUser.value, ["ai_settings", "listener_tasks", "clone_tasks"])) {
+    addLoader("ai-settings", () => loadAiSettings(silent))
+  }
+
+  const results = await Promise.allSettled(Array.from(loaders.values(), (loader) => loader()))
+  if (!isCurrentSession(generation)) return
   const failedCount = results.filter((item) => item.status === "fulfilled" && item.value === false).length
   if (failedCount) {
     ElMessage.warning(`部分数据加载失败（${failedCount} 项），请稍后刷新重试。`)
@@ -573,6 +798,11 @@ async function openTaskFromAlert({ alert, taskType }) {
   }
 
   const isListener = taskType === "listener"
+  const requiredFeature = isListener ? "listener_tasks" : "clone_tasks"
+  if (!hasFeature(currentUser.value, requiredFeature)) {
+    ElMessage.warning("当前账号没有查看该任务的权限")
+    return
+  }
   activeTab.value = isListener ? "listeners" : "clones"
   window.localStorage.setItem("mobile_active_tab", activeTab.value)
   if (isListener) listenerView.value = "tasks"
@@ -590,91 +820,119 @@ async function openTaskFromAlert({ alert, taskType }) {
 }
 
 async function loadActive() {
-  if (activeTab.value === "home") return loadHome()
-  if (activeTab.value === "listeners") return loadListeners()
-  if (activeTab.value === "clones") return loadClones()
-  if (activeTab.value === "channels") return loadChannels()
-  if (morePage.value === "bots") return loadBots()
-  if (morePage.value === "support") return loadSupportBots()
-  if (morePage.value === "settings") return Promise.allSettled([loadSendSettings(), loadAiSettings(), loadTemplates()])
-  if (morePage.value === "accounts") return loadAccounts()
-  return Promise.allSettled([loadBots(), loadSupportBots(), loadTemplates(), loadAccounts()])
+  ensureAccessibleRoute()
+  if (activeTab.value === "home" && hasFeature(currentUser.value, "dashboard")) return loadHome()
+  if (activeTab.value === "listeners" && hasFeature(currentUser.value, "listener_tasks")) return loadListeners()
+  if (activeTab.value === "clones" && hasFeature(currentUser.value, "clone_tasks")) return loadClones()
+  if (activeTab.value === "channels" && hasFeature(currentUser.value, "channels")) return loadChannels()
+  if (activeTab.value !== "more") return
+  if (morePage.value === "access") return refreshAccessAndData()
+  if (morePage.value === "bots" && hasFeature(currentUser.value, "bots")) return loadBots()
+  if (morePage.value === "support" && hasFeature(currentUser.value, "support")) return loadSupportBots()
+  if (morePage.value === "settings") {
+    const jobs = []
+    if (hasFeature(currentUser.value, "system_settings")) jobs.push(loadSendSettings(), loadTemplates())
+    if (hasFeature(currentUser.value, "ai_settings")) jobs.push(loadAiSettings())
+    return Promise.allSettled(jobs)
+  }
+  if (morePage.value === "accounts" && hasFeature(currentUser.value, "accounts")) return loadAccounts()
 }
 
 async function withLoading(key, fn, options = {}) {
+  const generation = getSessionGeneration()
+  const owner = Symbol(`loading-${key}`)
+  const isActive = () => isCurrentSession(generation)
+  loadingOwners.set(key, owner)
   loading[key] = true
   try {
-    await fn()
+    await fn(isActive)
+    if (!isActive()) return false
     return true
   } catch (error) {
+    if (isCanceledRequest(error) || !isCurrentSession(generation)) return false
     if (!options.silent) {
       ElMessage.error(getErrorMessage(error))
     }
     return false
   } finally {
-    loading[key] = false
+    if (loadingOwners.get(key) === owner && isCurrentSession(generation)) {
+      loadingOwners.delete(key)
+      loading[key] = false
+    }
   }
 }
 
 function loadHome(options) {
-  return withLoading("home", async () => {
+  return withLoading("home", async (isActive) => {
     const [statusRes, dashboardRes] = await Promise.all([getStatus(), getRuntimeDashboard()])
+    if (!isActive()) return
     status.value = statusRes.data || {}
     dashboard.value = dashboardRes.data || {}
   }, options)
 }
 
 function loadListeners(options) {
-  return withLoading("listeners", async () => {
-    listeners.value = pickList((await getListenerTasks()).data)
+  return withLoading("listeners", async (isActive) => {
+    const response = await getListenerTasks()
+    if (isActive()) listeners.value = pickList(response.data)
   }, options)
 }
 
 function loadClones(options) {
-  return withLoading("clones", async () => {
-    clones.value = pickList((await getCloneTasks()).data)
+  return withLoading("clones", async (isActive) => {
+    const response = await getCloneTasks()
+    if (isActive()) clones.value = pickList(response.data)
   }, options)
 }
 
 function loadChannels(options) {
-  return withLoading("channels", async () => {
-    channels.value = pickList((await getMyChannels()).data)
+  return withLoading("channels", async (isActive) => {
+    const response = await getMyChannels()
+    if (isActive()) channels.value = pickList(response.data)
   }, options)
 }
 
 function loadBots(options) {
-  return withLoading("bots", async () => {
-    bots.value = pickList((await getBots()).data)
+  return withLoading("bots", async (isActive) => {
+    const request = hasFeature(currentUser.value, "bots") ? getBots() : getBotOptions()
+    const response = await request
+    if (isActive()) bots.value = pickList(response.data)
   }, options)
 }
 
 function loadSupportBots(options) {
-  return withLoading("support", async () => {
-    supportBots.value = pickList((await getSupportBots()).data)
+  return withLoading("support", async (isActive) => {
+    const response = await getSupportBots()
+    if (isActive()) supportBots.value = pickList(response.data)
   }, options)
 }
 
 function loadTemplates(options) {
-  return withLoading("templates", async () => {
-    templates.value = pickList((await getContentTemplates()).data)
+  return withLoading("templates", async (isActive) => {
+    const response = await getContentTemplates()
+    if (isActive()) templates.value = pickList(response.data)
   }, options)
 }
 
 function loadSendSettings(options) {
-  return withLoading("settings", async () => {
-    sendSettings.value = (await getSendSettings()).data || sendSettings.value
+  return withLoading("settings", async (isActive) => {
+    const response = await getSendSettings()
+    if (isActive()) sendSettings.value = response.data || sendSettings.value
   }, options)
 }
 
 function loadAiSettings(options) {
-  return withLoading("settings", async () => {
-    aiSettings.value = (await getAiSettings()).data || aiSettings.value
+  return withLoading("settings", async (isActive) => {
+    const response = await getAiSettings()
+    if (isActive()) aiSettings.value = response.data || aiSettings.value
   }, options)
 }
 
 function loadAccounts(options) {
-  return withLoading("accounts", async () => {
-    accounts.value = pickList((await getAccounts()).data)
+  return withLoading("accounts", async (isActive) => {
+    const request = hasFeature(currentUser.value, "accounts") ? getAccounts() : getAccountOptions()
+    const response = await request
+    if (isActive()) accounts.value = pickList(response.data)
   }, options)
 }
 
@@ -682,6 +940,17 @@ function openEdit(type, row) {
   editType.value = type
   Object.keys(editForm).forEach((key) => delete editForm[key])
   Object.assign(editForm, JSON.parse(JSON.stringify(row || {})))
+  if (type === "bot") {
+    editForm.token = ""
+  }
+  if (type === "support") {
+    editForm.bot_token = ""
+  }
+  if (type === "account") {
+    editForm.session_path = ""
+    editForm.proxy = ""
+    editForm.clear_proxy = false
+  }
   if (type === "channel" && !editForm.username && editForm.chat_id) {
     editForm.username = String(editForm.chat_id)
   }
@@ -701,6 +970,16 @@ function openEdit(type, row) {
 }
 
 function openCreate(type, templateType = "") {
+  if (["listener", "clone"].includes(type)) {
+    const hasAccount = accounts.value.some((account) => account.enabled !== false)
+    const hasBot = bots.value.some((bot) => bot.enabled !== false)
+    if (!hasAccount || !hasBot) {
+      const taskName = type === "listener" ? "监听" : "克隆"
+      const missing = [!hasAccount ? "可用 Telegram 账号" : "", !hasBot ? "已启用 Bot" : ""].filter(Boolean)
+      ElMessage.warning(`新增${taskName}任务前，请先配置：${missing.join("、")}`)
+      return
+    }
+  }
   editType.value = type
   Object.keys(editForm).forEach((key) => delete editForm[key])
   Object.assign(editForm, defaultForm(type))
@@ -850,9 +1129,39 @@ function payloadFor(type) {
     data.target_channels = normalizeJsonList(data.target_channels)
     data.blocked_keywords = normalizeJsonList(data.blocked_keywords)
     data.replace_words = normalizeJsonObject(data.replace_words)
+    if (currentUser.value?.role !== "admin" && currentUser.value?.plan_tier !== "paid") {
+      Object.assign(data, {
+        blocked_keywords: "[]",
+        replace_words: "{}",
+        footer: "",
+        remove_contact_lines: false,
+        filter_qr_code: false,
+        ai_rewrite_enabled: false,
+        ai_rewrite_model: "",
+        ai_rewrite_prompt: "",
+        ai_prompt_template_id: null,
+        ai_rewrite_ratio: 0,
+        use_random_head: false,
+        use_random_body: false,
+        use_random_footer: false,
+        footer_leading_blank_line: false,
+        selected_head_template_group_id: null,
+        selected_body_template_group_id: null,
+        selected_footer_template_group_id: null,
+        selected_filter_template_group_id: null,
+        selected_link_template_group_id: null,
+        selected_contact_template_group_id: null,
+        selected_head_template_id: null,
+        selected_body_template_id: null,
+        selected_footer_template_id: null,
+      })
+    }
   }
   if (type === "listener") {
     data.listen_required_keywords = normalizeJsonList(data.listen_required_keywords)
+    if (currentUser.value?.role !== "admin" && currentUser.value?.plan_tier !== "paid") {
+      data.listen_required_keywords = "[]"
+    }
   }
   if (type === "template") {
     if (data.type === "link") {
@@ -912,6 +1221,15 @@ function payloadFor(type) {
   }
   if (type === "support" && !String(data.bot_token || "").trim()) {
     delete data.bot_token
+  }
+  if (type === "account") {
+    for (const key of ["phone", "phone_masked", "has_phone", "has_session_path", "has_proxy"]) {
+      delete data[key]
+    }
+    if (data.id) {
+      if (!String(data.session_path || "").trim()) delete data.session_path
+      if (!String(data.proxy || "").trim()) delete data.proxy
+    }
   }
   return data
 }
@@ -986,8 +1304,8 @@ async function saveEdit() {
   try {
     const payload = payloadFor(editType.value)
     if (editType.value === "account") {
-      if (!String(payload.name || "").trim() || !String(payload.session_path || "").trim()) {
-        throw new Error("账号名称和 Session 路径不能为空")
+      if (!String(payload.name || "").trim() || (!editForm.id && !String(payload.session_path || "").trim())) {
+        throw new Error(editForm.id ? "账号名称不能为空" : "账号名称和 Session 路径不能为空")
       }
       if (payload.greeting_enabled && !String(payload.greeting_message || "").trim()) {
         throw new Error("启用问候消息后必须填写问候内容")
@@ -1056,12 +1374,17 @@ async function reloadType(type) {
 }
 
 async function runAction(fn, successText, refreshFn) {
+  const generation = getSessionGeneration()
   try {
     await fn()
+    if (!isCurrentSession(generation)) return false
     ElMessage.success(successText)
     if (refreshFn) await refreshFn()
+    return isCurrentSession(generation)
   } catch (error) {
+    if (isCanceledRequest(error) || !isCurrentSession(generation)) return false
     ElMessage.error(getErrorMessage(error))
+    return false
   }
 }
 
@@ -1088,8 +1411,9 @@ async function catchupListener(item) {
     })
     const limit = Math.min(Math.max(Number(value || 1), 1), Math.max(count, 1))
     await catchupListenerTask(item.id, { background: true, limit })
-    ElMessage.success("补齐任务已加入首页排队列表")
-    await loadHome()
+    const canViewDashboard = hasFeature(currentUser.value, "dashboard")
+    ElMessage.success(canViewDashboard ? "补齐任务已加入首页排队列表" : "补齐任务已加入队列")
+    if (canViewDashboard) await loadHome()
   } catch (error) {
     if (error === "cancel") return
     ElMessage.error(getErrorMessage(error, "补齐失败"))
@@ -1251,7 +1575,28 @@ function testSupportAction(item) {
 }
 
 function toggleAccount(item) {
-  return runAction(() => updateAccount(item.id, { ...item, enabled: !item.enabled }), item.enabled ? "已停用账号" : "已启用账号", loadAccounts)
+  return runAction(
+    () => updateAccount(item.id, accountUpdatePayload(item, { enabled: !item.enabled })),
+    item.enabled ? "已停用账号" : "已启用账号",
+    loadAccounts,
+  )
+}
+
+function accountUpdatePayload(item, overrides = {}) {
+  return {
+    name: item.name || "",
+    username: item.username || "",
+    enabled: item.enabled !== false,
+    remark: item.remark || "",
+    greeting_enabled: Boolean(item.greeting_enabled),
+    greeting_message: item.greeting_message || "",
+    away_enabled: Boolean(item.away_enabled),
+    away_message: item.away_message || "",
+    business_start_time: item.business_start_time || "09:00",
+    business_end_time: item.business_end_time || "18:00",
+    away_repeat_hours: Number(item.away_repeat_hours || 12),
+    ...overrides,
+  }
 }
 
 async function setDefaultAccount(item) {
@@ -1273,8 +1618,7 @@ async function setDefaultAccount(item) {
   defaultAccountSettingId.value = item.id
   try {
     await updateAccount(item.id, {
-      ...item,
-      enabled: true,
+      ...accountUpdatePayload(item, { enabled: true }),
       is_default: true,
     })
     ElMessage.success("全局默认账号已更新")
@@ -1287,12 +1631,12 @@ async function setDefaultAccount(item) {
 }
 
 function toggleBot(item) {
-  return runAction(() => updateBot(item.id, { ...item, enabled: !item.enabled }), item.enabled ? "已停用 Bot" : "已启用 Bot", loadBots)
+  return runAction(() => updateBot(item.id, { enabled: !item.enabled }), item.enabled ? "已停用 Bot" : "已启用 Bot", loadBots)
 }
 
 function toggleSupportBot(item) {
   const next = !item.polling_enabled
-  return runAction(() => updateSupportBot(item.id, { ...item, polling_enabled: next }), next ? "已启用客服机器人" : "已停用客服机器人", loadSupportBots)
+  return runAction(() => updateSupportBot(item.id, { polling_enabled: next }), next ? "已启用客服机器人" : "已停用客服机器人", loadSupportBots)
 }
 
 function toggleTemplate(item) {
@@ -1300,6 +1644,9 @@ function toggleTemplate(item) {
 }
 
 async function saveMobileSendSettings(payload) {
+  const generation = getSessionGeneration()
+  const owner = Symbol("loading-settings-save")
+  loadingOwners.set("settings", owner)
   loading.settings = true
   try {
     await runAction(
@@ -1315,18 +1662,27 @@ async function saveMobileSendSettings(payload) {
       loadSendSettings,
     )
   } finally {
-    loading.settings = false
+    if (loadingOwners.get("settings") === owner && isCurrentSession(generation)) {
+      loadingOwners.delete("settings")
+      loading.settings = false
+    }
   }
 }
 
 async function saveMobileAiSettings(payload) {
+  const generation = getSessionGeneration()
+  const owner = Symbol("loading-settings-save")
+  loadingOwners.set("settings", owner)
   loading.settings = true
   try {
     await runAction(async () => {
       aiSettings.value = (await updateAiSettings(payload)).data || aiSettings.value
     }, "AI 配置已保存", loadAiSettings)
   } finally {
-    loading.settings = false
+    if (loadingOwners.get("settings") === owner && isCurrentSession(generation)) {
+      loadingOwners.delete("settings")
+      loading.settings = false
+    }
   }
 }
 
@@ -1353,10 +1709,112 @@ function normalizeJsonObject(value) {
   }
 }
 
-onMounted(() => {
-  if (authenticated.value) {
-    loadInitial()
+let handlingAccessRestriction = false
+
+function closeRestrictedOverlays() {
+  editVisible.value = false
+  detailVisible.value = false
+  accountLoginVisible.value = false
+  botProfileVisible.value = false
+  detailText.value = ""
+  accountLoginTarget.value = null
+  botProfileTarget.value = null
+  editType.value = ""
+  Object.keys(editForm).forEach((key) => delete editForm[key])
+}
+
+function clearAuthorizedData() {
+  closeRestrictedOverlays()
+  loadingOwners.clear()
+  status.value = {}
+  dashboard.value = {}
+  listeners.value = []
+  clones.value = []
+  bots.value = []
+  channels.value = []
+  supportBots.value = []
+  templates.value = []
+  accounts.value = []
+  logItems.value = []
+  logKeyword.value = ""
+  sendSettings.value = {
+    global_send_delay: 3,
+    send_retry_count: 2,
+    send_retry_delay: 5,
   }
+  aiSettings.value = { providers: {} }
+  defaultAccountSettingId.value = null
+  Object.keys(loading).forEach((key) => { loading[key] = false })
+  Object.keys(keyword).forEach((key) => { keyword[key] = "" })
+}
+
+function handleSessionChanged(event) {
+  clearAuthorizedData()
+  ElMessage.closeAll()
+  currentUser.value = null
+  authLoadError.value = ""
+  permissionRefreshOwner = null
+  permissionRefreshing.value = false
+  authenticated.value = Boolean(event?.detail?.authenticated)
+  authReady.value = !authenticated.value
+  handlingAccessRestriction = false
+}
+
+async function handleAccessRestricted(event) {
+  if (!authenticated.value || handlingAccessRestriction) return
+  const code = event?.detail?.code
+  if (!["ACCESS_PENDING", "ACCESS_EXPIRED", "FEATURE_FORBIDDEN"].includes(code)) return
+  clearAuthorizedData()
+
+  if (["ACCESS_PENDING", "ACCESS_EXPIRED"].includes(code)) {
+    handlingAccessRestriction = true
+    try {
+      const ready = await refreshCurrentUser({ silent: true })
+      if (!ready && currentUser.value) {
+        currentUser.value = {
+          ...currentUser.value,
+          access_state: code === "ACCESS_EXPIRED" ? "expired" : "pending",
+          available: false,
+        }
+      }
+      activeTab.value = "more"
+      morePage.value = "access"
+      window.localStorage.setItem("mobile_active_tab", "more")
+    } finally {
+      handlingAccessRestriction = false
+    }
+    return
+  }
+  handlingAccessRestriction = true
+  try {
+    const ready = await refreshCurrentUser({ silent: true })
+    if (ready) {
+      ensureAccessibleRoute()
+      await loadInitial()
+    }
+  } finally {
+    handlingAccessRestriction = false
+  }
+}
+
+onMounted(async () => {
+  window.addEventListener("mobile-access-restricted", handleAccessRestricted)
+  window.addEventListener(SESSION_STORAGE_CHANGED_EVENT, handleSessionChanged)
+  window.addEventListener(SESSION_INVALIDATED_EVENT, handleSessionChanged)
+  if (!getToken()) {
+    authenticated.value = false
+    authReady.value = true
+    return
+  }
+
+  const ready = await refreshCurrentUser({ silent: true })
+  if (ready) await loadInitial()
+})
+
+onUnmounted(() => {
+  window.removeEventListener("mobile-access-restricted", handleAccessRestricted)
+  window.removeEventListener(SESSION_STORAGE_CHANGED_EVENT, handleSessionChanged)
+  window.removeEventListener(SESSION_INVALIDATED_EVENT, handleSessionChanged)
 })
 
 const HomePage = defineComponent({
@@ -1616,6 +2074,8 @@ const MorePage = defineComponent({
     aiSettings: Object,
     loading: Object,
     keyword: Object,
+    allowedFeatures: { type: Array, default: () => [] },
+    isAdmin: Boolean,
   },
   emits: [
     "select",
@@ -1636,17 +2096,32 @@ const MorePage = defineComponent({
     "login-account",
   ],
   setup(props, { emit }) {
-    const entries = [
-      ["alerts", "系统告警", "查看错误、警告并在系统内确认"],
-      ["bots", "Bot 管理", "测试、启用和维护分发 Bot"],
-      ["support", "客服机器人", "查看状态、测试和调整欢迎语"],
-      ["settings", "系统设置", "发送设置、联系方式和内容规则模板"],
-      ["accounts", "账号管理", "查看采集账号和 session 状态"],
-    ]
     return () => {
       if (props.page === "menu") {
-        return h("div", { class: "page card-list" }, entries.map(([key, title, text]) =>
-          h("article", { class: "data-card", onClick: () => emit("select", key) }, [
+        const allowed = new Set(props.allowedFeatures || [])
+        const hasSystem = props.isAdmin || allowed.has("system_settings")
+        const hasAi = props.isAdmin || allowed.has("ai_settings")
+        const settingsTitle = hasSystem && hasAi ? "系统与 AI 设置" : hasAi ? "AI 配置" : "系统设置"
+        const settingsText = hasSystem && hasAi
+          ? "维护发送设置、AI 配置和内容规则"
+          : hasAi
+            ? "维护 AI 服务和内容改写配置"
+            : "维护发送设置和内容规则"
+        const entries = [
+          ["access", "授权信息", "查看账号状态、已开通功能和使用期限", null],
+          ["alerts", "系统告警", "查看错误、警告并在系统内确认", "alerts"],
+          ["bots", "Bot 管理", "测试、启用和维护分发 Bot", "bots"],
+          ["support", "客服机器人", "查看状态、测试和调整欢迎语", "support"],
+          ["settings", settingsTitle, settingsText, ["system_settings", "ai_settings"]],
+          ["accounts", "Telegram 账号", "查看采集账号和 session 状态", "accounts"],
+        ]
+        const visibleEntries = entries.filter(([, , , feature]) => {
+          if (!feature || props.isAdmin) return true
+          const required = Array.isArray(feature) ? feature : [feature]
+          return required.some((key) => allowed.has(key))
+        })
+        return h("div", { class: "page card-list" }, visibleEntries.map(([key, title, text]) =>
+          h("button", { type: "button", class: "data-card more-entry", onClick: () => emit("select", key) }, [
             h("div", { class: "card-title" }, title),
             h("div", { class: "card-subtitle" }, text),
           ]),
@@ -1663,6 +2138,8 @@ const MorePage = defineComponent({
               aiSettings: props.aiSettings,
               templates: props.templates,
               saving: props.loading?.settings,
+              showSystem: props.isAdmin || props.allowedFeatures?.includes("system_settings"),
+              showAi: props.isAdmin || props.allowedFeatures?.includes("ai_settings"),
               onSaveSettings: (payload) => emit("save-settings", payload),
               onSaveAiSettings: (payload) => emit("save-ai-settings", payload),
               onCreateTemplate: (type) => emit("create", "template", type),
@@ -1679,6 +2156,15 @@ const MorePage = defineComponent({
         settings: ["系统设置", "搜索模板名称 / 类型", "templates", props.templates, props.loading?.templates || props.loading?.settings],
         accounts: ["账号管理", "搜索账号 / username / 手机号", "accounts", props.accounts, props.loading?.accounts],
       }[props.page]
+      if (!config) {
+        return h("div", { class: "page" }, [
+          h(EmptyState, {
+            title: "当前页面不可用",
+            text: "请返回功能菜单，或刷新账号授权后重试。",
+          }),
+          h(resolve("el-button"), { type: "primary", onClick: () => emit("select", "menu") }, () => "返回功能菜单"),
+        ])
+      }
       return h("div", [
         h("div", { class: "search-bar" }, [
           h(resolve("el-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
@@ -1784,19 +2270,19 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
   }
   return h(TaskCard, {
     title: item.name || item.username || `账号 #${item.id}`,
-    subtitle: item.username || item.phone || "-",
+    subtitle: item.username || item.phone_masked || "-",
     status: item.enabled ? "enabled" : "disabled",
     enabled: item.enabled,
     meta: [
       ["ID", item.id],
       ["username", item.username],
-      ["手机号", item.phone],
+      ["手机号", item.phone_masked || (item.has_phone ? "已配置" : "-")],
       ["启用状态", enabledLabel(item.enabled)],
       ["默认账号", item.is_default ? "全局默认" : "否"],
       ["问候消息", item.greeting_enabled ? "已开启" : "未开启"],
       ["离线消息", item.away_enabled ? "已开启" : "未开启"],
-      ["Session", item.session_path],
-      ["代理", item.proxy],
+      ["Session", item.has_session_path ? "已配置" : "未配置"],
+      ["代理", item.has_proxy ? "已配置" : "未配置"],
       ["备注", item.remark],
       ["最后错误", item.last_error],
     ],
@@ -1940,6 +2426,7 @@ function mobileStepTitle(section) {
     confirm: "确认",
     basic: "基础",
     delivery: "分发",
+    "plan-notice": "原文",
     advanced: "高级",
   }
   return labels[section?.key] || section?.title || ""
@@ -1969,8 +2456,8 @@ const AccountLoginForm = defineComponent({
     })
 
     async function start() {
-      if (!form.name || !form.phone) {
-        ElMessage.warning("账号名称和手机号不能为空")
+      if (!form.name || (!form.account_id && !form.phone)) {
+        ElMessage.warning(form.account_id ? "账号名称不能为空" : "账号名称和手机号不能为空")
         return
       }
       const data = await emitAsync(emit, "start", { ...form })
@@ -2009,8 +2496,22 @@ const AccountLoginForm = defineComponent({
     return () => h("div", [
       step.value === 0 ? h(resolve("el-form"), { labelPosition: "top" }, [
         loginInput(form, "name", "账号名称"),
-        loginInput(form, "phone", "手机号"),
-        loginInput(form, "proxy", "代理"),
+        loginInput(
+          form,
+          "phone",
+          "手机号",
+          "text",
+          props.account?.has_phone
+            ? `已配置 ${props.account.phone_masked || ""}，留空继续使用`
+            : undefined,
+        ),
+        loginInput(
+          form,
+          "proxy",
+          "代理",
+          "password",
+          props.account?.has_proxy ? "代理已配置，留空继续使用" : undefined,
+        ),
         loginInput(form, "remark", "备注", "textarea"),
       ]) : null,
       step.value === 1 ? h(resolve("el-form"), { labelPosition: "top" }, [
@@ -2035,12 +2536,12 @@ const AccountLoginForm = defineComponent({
   },
 })
 
-function loginInput(target, key, label, type = "text") {
+function loginInput(target, key, label, type = "text", placeholderOverride = "") {
   return h(resolve("el-form-item"), { label }, () => h(resolve("el-input"), {
     modelValue: target[key],
     type: type === "password" ? "password" : type === "textarea" ? "textarea" : "text",
     rows: type === "textarea" ? 3 : undefined,
-    placeholder: loginPlaceholder(key),
+    placeholder: placeholderOverride || loginPlaceholder(key),
     showPassword: type === "password",
     "onUpdate:modelValue": (value) => { target[key] = value },
   }))
@@ -2091,7 +2592,6 @@ function validateWizardStep(type, section, form) {
     bot: {
       basic: [
         ["name", "请填写 Bot 名称"],
-        ["token", "请填写 Bot Token"],
       ],
     },
     support: {
@@ -2118,7 +2618,17 @@ function validateWizardStep(type, section, form) {
       return false
     }
   }
-  if (type === "support" && section?.key === "basic" && !form.bot_id && !String(form.bot_token || "").trim()) {
+  if (type === "bot" && section?.key === "basic" && !form.id && !String(form.token || "").trim()) {
+    ElMessage.warning("请填写 Bot Token")
+    return false
+  }
+  if (
+    type === "support"
+    && section?.key === "basic"
+    && !form.bot_id
+    && !form.has_bot_token
+    && !String(form.bot_token || "").trim()
+  ) {
     ElMessage.warning("请选择已有 Bot 或填写独立 Token")
     return false
   }
@@ -2234,6 +2744,13 @@ function templateTypeLabel(type) {
 
 function formSections(type, isCreate, form) {
   const enabled = { key: "enabled", label: "启用", input: "switch" }
+  const contentProcessingEnabled = currentUser.value?.role === "admin" || currentUser.value?.plan_tier === "paid"
+  const freePlanNotice = {
+    key: "plan-notice",
+    title: "原文克隆",
+    tip: "免费版不能配置内容处理、AI 改写和内容模板，系统将一比一直接克隆原内容。",
+    fields: [],
+  }
   const randomTemplateFields = [
     { key: "use_random_head", label: "随机头部", input: "switch" },
     { key: "selected_head_template_group_id", label: "头部模板", input: "template-head" },
@@ -2279,16 +2796,20 @@ function formSections(type, isCreate, form) {
         { key: "bot_id", label: "分发 Bot", input: "bot" },
       ],
     },
-    { key: "content", title: "内容处理", fields: contentFields },
-    { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用 Grok。需要在服务端配置 XAI_API_KEY。", fields: aiRewriteFields },
+    ...(contentProcessingEnabled
+      ? [
+          { key: "content", title: "内容处理", fields: contentFields },
+          { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用所选模型。", fields: aiRewriteFields },
+        ]
+      : [freePlanNotice]),
     {
       key: "advanced",
       title: "高级设置",
       tip: "一般不用修改，只有需要随机模板、替换词或相册等待时再打开。",
       fields: [
-        { key: "replace_words", label: "替换词", input: "json" },
+        ...(contentProcessingEnabled ? [{ key: "replace_words", label: "替换词", input: "json" }] : []),
         { key: "album_wait_seconds", label: "相册等待秒", input: "number" },
-        ...randomTemplateFields,
+        ...(contentProcessingEnabled ? randomTemplateFields : []),
         enabled,
       ],
     },
@@ -2330,15 +2851,19 @@ function formSections(type, isCreate, form) {
         { key: "enable_listener", label: "完成后进入监听", input: "switch" },
       ],
     },
-    { key: "content", title: "内容处理", fields: contentFields },
-    { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用 Grok。需要在服务端配置 XAI_API_KEY。", fields: aiRewriteFields },
+    ...(contentProcessingEnabled
+      ? [
+          { key: "content", title: "内容处理", fields: contentFields },
+          { key: "ai-rewrite", title: "AI 改写", tip: "先清洗内容，再调用所选模型。", fields: aiRewriteFields },
+        ]
+      : [freePlanNotice]),
     {
       key: "advanced",
       title: "高级设置",
       fields: [
-        { key: "replace_words", label: "替换词", input: "json" },
+        ...(contentProcessingEnabled ? [{ key: "replace_words", label: "替换词", input: "json" }] : []),
         { key: "album_delay", label: "相册等待秒", input: "number" },
-        ...randomTemplateFields,
+        ...(contentProcessingEnabled ? randomTemplateFields : []),
         enabled,
       ],
     },
@@ -2421,12 +2946,26 @@ function formSections(type, isCreate, form) {
     {
       key: "basic",
       title: "账号信息",
-      tip: "新增账号请使用“登录账号”流程；这里主要用于编辑已有账号。",
+      tip: form?.id
+        ? "手机号、Session 路径和代理凭据不会回显；敏感字段留空会保持原配置。"
+        : "新增账号请使用“登录账号”流程；这里主要用于编辑已有账号。",
       fields: [
         { key: "name", label: "账号名称" },
         { key: "username", label: "username" },
-        { key: "session_path", label: "Session 路径" },
-        { key: "proxy", label: "代理" },
+        {
+          key: "session_path",
+          label: "Session 路径",
+          placeholder: form?.id && form?.has_session_path ? "已配置，留空保持不变" : "填写 Session 路径",
+        },
+        {
+          key: "proxy",
+          label: "代理",
+          input: "password",
+          placeholder: form?.id && form?.has_proxy ? "代理已配置，留空保持不变" : "可留空，例如 socks5://host:port",
+        },
+        ...(form?.id && form?.has_proxy
+          ? [{ key: "clear_proxy", label: "清除当前代理", input: "switch" }]
+          : []),
         { key: "remark", label: "备注", input: "textarea" },
         enabled,
       ],
@@ -2606,8 +3145,9 @@ function legacyFieldRender(props, emit, field) {
   }
   return h(resolve("el-input"), {
     modelValue: displayEditValue(form[field.key], field.input),
-    type: field.input === "textarea" ? "textarea" : "text",
+    type: field.input === "textarea" ? "textarea" : field.input === "password" ? "password" : "text",
     rows: field.input === "textarea" ? 4 : undefined,
+    showPassword: field.input === "password",
     clearable: field.input !== "textarea",
     "onUpdate:modelValue": (value) => { form[field.key] = value },
   })
@@ -2761,9 +3301,10 @@ function fieldRender(props, emit, field) {
   }
   return h(resolve("el-input"), {
     modelValue: displayEditValue(form[field.key], field.input),
-    type: field.input === "textarea" ? "textarea" : "text",
+    type: field.input === "textarea" ? "textarea" : field.input === "password" ? "password" : "text",
     rows: field.input === "textarea" ? 4 : undefined,
     placeholder,
+    showPassword: field.input === "password",
     clearable: field.input !== "textarea",
     "onUpdate:modelValue": (value) => { form[field.key] = value },
   })

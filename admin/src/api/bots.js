@@ -10,6 +10,10 @@ export function getBots() {
   return axios.get(`${API}/api/bots`)
 }
 
+export function getBotOptions() {
+  return axios.get(`${API}/api/options/bots`)
+}
+
 export function createBot(data) {
   return axios.post(`${API}/api/bots`, data)
 }

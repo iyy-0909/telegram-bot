@@ -1,7 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 
 from db.database import SessionLocal
-from db.models import SentMessage
+from db.models import CloneTask, SentMessage
 
 
 def is_message_sent(task_id: int, source_message_id: int):
@@ -50,7 +50,11 @@ def mark_message_sent(task_id: int, source_message_id: int, grouped_id=None):
     db = SessionLocal()
 
     try:
+        owner_user_id = db.query(CloneTask.owner_user_id).filter(
+            CloneTask.id == task_id
+        ).scalar()
         record = SentMessage(
+            owner_user_id=owner_user_id,
             task_id=task_id,
             source_message_id=source_message_id,
             grouped_id=str(grouped_id) if grouped_id else None,

@@ -650,7 +650,8 @@ def should_suppress_source_link_restore(item, task, contact_rule_config=None):
     from bot.content_processor import should_remove_line
 
     contact_rule_config = contact_rule_config or get_contact_rule_config(
-        getattr(task, "selected_contact_template_group_id", None)
+        getattr(task, "selected_contact_template_group_id", None),
+        owner_user_id=getattr(task, "owner_user_id", None),
     )
     line_text = str(item.get("line_text") or "")
 
@@ -862,7 +863,8 @@ def restore_source_links_as_html(source, processed_html: str, task=None, target=
     )
     contact_rule_config = (
         get_contact_rule_config(
-            getattr(task, "selected_contact_template_group_id", None)
+            getattr(task, "selected_contact_template_group_id", None),
+            owner_user_id=getattr(task, "owner_user_id", None),
         )
         if remove_source_contacts
         else None

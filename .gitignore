@@ -15,6 +15,10 @@ admin/dist/
 dist/
 
 # Local runtime data
+.codex-run/
+.codex-temp/
+.codex-backups/
+.codex-screenshots/
 data/
 logs/
 /accounts/

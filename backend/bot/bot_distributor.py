@@ -8,6 +8,7 @@ from bot.bot_sender import bot_send_prepared
 from bot.logger import logger
 from bot.message_links import build_message_urls, extract_message_ids
 from bot.notifier import notify_error
+from utils.redaction import redact_sensitive_text
 
 
 def is_network_error(error: str) -> bool:
@@ -41,7 +42,7 @@ def build_error_detail(
     error,
     error_type,
 ):
-    return (
+    return redact_sensitive_text(
         f"Bot ID：{bot.id}\n"
         f"Bot 名称：{bot.name}\n"
         f"原始目标频道：{raw_target_channel}\n"
@@ -152,9 +153,10 @@ async def send_prepared_by_bot(target_channel: str, prepared: dict, bot_id=None)
         }
 
     except Exception as e:
-        error = str(e)
-        network_error = is_network_error(error)
-        permission_error = is_permission_error(error)
+        raw_error = str(e)
+        network_error = is_network_error(raw_error)
+        permission_error = is_permission_error(raw_error)
+        safe_error = redact_sensitive_text(raw_error)
         error_type = (
             "网络异常"
             if network_error
@@ -163,27 +165,27 @@ async def send_prepared_by_bot(target_channel: str, prepared: dict, bot_id=None)
             else "发送异常"
         )
 
-        prepared["_last_error"] = error
+        prepared["_last_error"] = safe_error
         prepared["_last_error_target"] = target_channel
-        update_bot_error(bot.id, error)
+        update_bot_error(bot.id, safe_error)
 
         if permission_error:
             logger.error(
                 f"Bot 分发权限失败 | bot_id={bot.id} | bot_name={bot.name} | "
                 f"raw_target={raw_target_channel} | target={target_channel} | "
-                f"error={error}"
+                f"error={safe_error}"
             )
         elif network_error:
             logger.warning(
                 f"Bot API 网络异常，发送失败但任务继续 | bot_id={bot.id} | "
                 f"bot_name={bot.name} | raw_target={raw_target_channel} | "
-                f"target={target_channel} | error={error}"
+                f"target={target_channel} | error={safe_error}"
             )
         else:
             logger.exception(
                 f"Bot 分发异常 | bot_id={bot.id} | bot_name={bot.name} | "
                 f"raw_target={raw_target_channel} | target={target_channel} | "
-                f"{error}"
+                f"{safe_error}"
             )
 
         await notify_error(
@@ -192,7 +194,7 @@ async def send_prepared_by_bot(target_channel: str, prepared: dict, bot_id=None)
                 bot=bot,
                 raw_target_channel=raw_target_channel,
                 target_channel=target_channel,
-                error=error,
+                error=safe_error,
                 error_type=error_type,
             ),
             target=target_channel,

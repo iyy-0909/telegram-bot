@@ -69,6 +69,10 @@ const props = defineProps({
     type: String,
     default: "target",
   },
+  loadOptions: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 defineEmits(["update:modelValue"])
@@ -115,12 +119,20 @@ const groupedChannels = computed(() => {
 
 watch(
   () => props.botId,
-  () => loadChannels(),
+  () => {
+    if (props.loadOptions) loadChannels()
+  },
 )
 
-onMounted(loadChannels)
+onMounted(() => {
+  if (props.loadOptions) loadChannels()
+})
 
 async function loadChannels() {
+  if (!props.loadOptions) {
+    channels.value = []
+    return
+  }
   const res = await getMyChannels({
     bot_id: props.botId || undefined,
   })

@@ -1,6 +1,35 @@
 <template>
+  <main v-if="authChecking" class="auth-resolving" aria-live="polite">
+    <el-card class="auth-resolving__card">
+      <el-icon class="auth-resolving__icon"><Loading /></el-icon>
+      <strong>正在确认登录信息</strong>
+      <span>请稍候，系统正在加载账号权限和使用期限。</span>
+    </el-card>
+  </main>
+
+  <main
+    v-else-if="isAuthenticated && !currentUser"
+    class="auth-resolving auth-resolving--error"
+    aria-live="polite"
+  >
+    <el-card class="auth-resolving__card">
+      <el-alert
+        type="error"
+        show-icon
+        :closable="false"
+        title="暂时无法读取账号权限"
+        :description="authError || '请检查网络后重试。你的登录状态仍已保留。'"
+      />
+      <div class="auth-resolving__actions">
+        <el-button type="primary" @click="retryCurrentUser">重新加载</el-button>
+        <el-button :loading="loggingOut" @click="handleLogout">退出登录</el-button>
+      </div>
+    </el-card>
+  </main>
+
   <LoginPanel
-    v-if="!isAuthenticated"
+    v-else-if="!isAuthenticated"
+    :initial-error="authError"
     @login="handleLogin"
   />
 
@@ -8,8 +37,28 @@
     <MainLayout
       :status="status.status"
       :active-menu="activeMenu"
+      :allowed-menus="availableMenus"
+      :current-user="currentUser"
+      :logging-out="loggingOut"
       @change-menu="handleMenuChange"
+      @logout="handleLogout"
     >
+    <el-alert
+      v-if="menuLoadError"
+      type="error"
+      show-icon
+      :closable="false"
+      title="当前页面加载失败"
+      class="menu-load-error"
+    >
+      <div class="menu-load-error__content">
+        <span>{{ menuLoadError }}</span>
+        <el-button link type="primary" :loading="menuRetrying" @click="retryActiveMenu">
+          重新加载
+        </el-button>
+      </div>
+    </el-alert>
+
     <div v-if="activeMenu === 'home'">
       <RuntimeDashboard
         :dashboard="runtimeDashboard"
@@ -55,6 +104,7 @@
       <AiConfigWorkspace
         :settings="aiSettings"
         :settings-saving="aiSettingsSaving"
+        :settings-loading="pageLoading.aiSettings"
         :prompts="aiPrompts"
         :loading="pageLoading.aiPrompts"
         :deleting-id="aiPromptDeletingId"
@@ -69,7 +119,19 @@
     </div>
 
     <div v-if="activeMenu === 'guide'">
+      <el-alert
+        v-if="accessNotice"
+        type="warning"
+        show-icon
+        :closable="false"
+        :title="accessNotice"
+        class="access-notice"
+      />
       <UserGuide @navigate="handleMenuChange" />
+    </div>
+
+    <div v-if="activeMenu === 'user-access'">
+      <UserAccessManagement />
     </div>
 
     <div v-if="activeMenu === 'accounts'">
@@ -77,7 +139,6 @@
         :accounts="accounts"
         :loading="pageLoading.accounts"
         :default-setting-id="defaultAccountSettingId"
-        @add="openAddAccountDialog"
         @login="openAccountLoginDialog"
         @relogin="openAccountReloginDialog"
         @edit="openEditAccountDialog"
@@ -163,6 +224,8 @@
       :bots="bots"
       :templates="contentTemplates"
       :ai-prompts="aiPrompts"
+      :content-processing-enabled="contentProcessingEnabled"
+      :channel-options-enabled="hasFeature('channels')"
       @update:visible="listenerTaskDialogVisible = $event"
       @submit="submitListenerTask"
     />
@@ -218,6 +281,8 @@
       :accounts="accounts"
       :templates="contentTemplates"
       :ai-prompts="aiPrompts"
+      :content-processing-enabled="contentProcessingEnabled"
+      :channel-options-enabled="hasFeature('channels')"
       @update:visible="cloneTaskDialogVisible = $event"
       @submit="submitCloneTask"
     />
@@ -235,7 +300,8 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from "element-plus"
-import { ref, reactive, onMounted, onUnmounted } from "vue"
+import { Loading } from "@element-plus/icons-vue"
+import { computed, ref, reactive, onMounted, onUnmounted } from "vue"
 
 import MainLayout from "./layouts/MainLayout.vue"
 import StatusCards from "./components/StatusCards.vue"
@@ -246,8 +312,18 @@ import AiPromptDialog from "./components/AiPromptDialog.vue"
 import SystemSettingsWorkspace from "./components/SystemSettingsWorkspace.vue"
 import UserGuide from "./components/UserGuide.vue"
 import LoginPanel from "./components/LoginPanel.vue"
+import UserAccessManagement from "./components/UserAccessManagement.vue"
 import ContentTemplateDialog from "./components/ContentTemplateDialog.vue"
 import { knownContentRuleTypes } from "./config/contentRuleSections"
+import {
+  ACCESS_RESTRICTED_EVENT,
+  AUTH_SESSION_CHANGED_EVENT,
+  getAuthGeneration,
+  getAuthToken,
+  isAuthGenerationCurrent,
+  isCanceledAuthRequest,
+  replaceAuthToken,
+} from "./authSession"
 
 import AccountTable from "./components/AccountTable.vue"
 import AccountDialog from "./components/AccountDialog.vue"
@@ -290,13 +366,19 @@ import {
 
 import {
   getAccounts,
-  createAccount,
+  getAccountOptions,
   updateAccount,
   removeAccount,
 } from "./api/accounts"
 
 import {
+  getCurrentUser,
+  logoutUser,
+} from "./api/auth"
+
+import {
   getBots,
+  getBotOptions,
   createBot,
   updateBot,
   deleteBot,
@@ -349,8 +431,13 @@ import {
 
 
 
+const initialToken = getAuthToken()
 const status = ref({})
-const isAuthenticated = ref(Boolean(localStorage.getItem("admin_token")))
+const isAuthenticated = ref(Boolean(initialToken))
+const authChecking = ref(Boolean(initialToken))
+const authError = ref("")
+const currentUser = ref(null)
+const loggingOut = ref(false)
 const rules = ref([])
 const listenerTasks = ref([])
 const listenerTaskLogs = ref([])
@@ -367,7 +454,9 @@ const sendSettings = ref({
   send_retry_count: 2,
   send_retry_delay: 5,
 })
-const aiSettings = ref({ providers: {} })
+const aiSettings = ref({ providers: {}, default_provider: "grok" })
+const menuLoadError = ref("")
+const menuRetrying = ref(false)
 const pageLoading = reactive({
   listenerTasks: false,
   listenerLogs: false,
@@ -376,9 +465,12 @@ const pageLoading = reactive({
   cloneTasks: false,
   cloneLogs: false,
   templates: false,
+  aiSettings: false,
   aiPrompts: false,
   runtime: false,
 })
+const pageLoadingOwners = new Map()
+let authCheckOwner = null
 const defaultAccountSettingId = ref(null)
 
 const MENU_STORAGE_KEY = "clonebot_active_menu"
@@ -390,8 +482,133 @@ const LISTENER_TASK_LOG_LIMIT = 50
 const AUTO_REFRESH_INTERVAL = 30 * 60 * 1000
 const SEND_LOG_REFRESH_INTERVAL = 10 * 1000
 const SECONDS_PER_MINUTE = 60
-const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "alerts", "ai-settings", "settings", "guide"]
+
+function purgeLegacyTaskLogCache() {
+  window.localStorage.removeItem(CLONE_TASK_LOG_STORAGE_KEY)
+  window.localStorage.removeItem(LISTENER_TASK_LOG_STORAGE_KEY)
+}
+
+function clearSessionData() {
+  menuLoadSequence += 1
+  pageLoadingOwners.clear()
+  authCheckOwner = null
+  status.value = {}
+  rules.value = []
+  listenerTasks.value = []
+  listenerTaskLogs.value = []
+  accounts.value = []
+  bots.value = []
+  botBindings.value = []
+  cloneTasks.value = []
+  cloneTaskLogs.value = []
+  contentTemplates.value = []
+  aiPrompts.value = []
+  runtimeDashboard.value = {}
+  sendSettings.value = {
+    global_send_delay: 3,
+    send_retry_count: 2,
+    send_retry_delay: 5,
+  }
+  aiSettings.value = { providers: {}, default_provider: "grok" }
+  menuLoadError.value = ""
+  menuRetryOwner = null
+  menuRetrying.value = false
+  Object.keys(pageLoading).forEach((key) => { pageLoading[key] = false })
+  defaultAccountSettingId.value = null
+  accountSaving.value = false
+  botSaving.value = false
+  settingsSaving.value = false
+  aiSettingsSaving.value = false
+  aiPromptSaving.value = false
+  aiPromptDeletingId.value = null
+  aiPromptDefaultingId.value = null
+  templateTogglingId.value = null
+
+  dialogVisible.value = false
+  listenerTaskDialogVisible.value = false
+  accountDialogVisible.value = false
+  accountLoginDialogVisible.value = false
+  loginAccountTarget.value = null
+  botDialogVisible.value = false
+  botBindingDialogVisible.value = false
+  cloneTaskDialogVisible.value = false
+  contentTemplateDialogVisible.value = false
+  aiPromptDialogVisible.value = false
+
+  resetCurrentRule()
+  resetCurrentListenerTask()
+  resetCurrentAccount()
+  resetCurrentBot()
+  resetCurrentBotBinding()
+  resetCurrentCloneTask()
+  resetCurrentContentTemplate()
+  resetCurrentAiPrompt()
+  purgeLegacyTaskLogCache()
+}
+
+purgeLegacyTaskLogCache()
+
+const MENU_FEATURES = {
+  home: "dashboard",
+  rules: "listener_tasks",
+  clone: "clone_tasks",
+  bots: "bots",
+  "my-channels": "channels",
+  "bulk-replace": "bulk_replace",
+  support: "support",
+  accounts: "accounts",
+  notifications: "notifications",
+  alerts: "alerts",
+  "ai-settings": "ai_settings",
+  settings: "system_settings",
+  guide: "guide",
+  "user-access": "user_management",
+}
+const FEATURE_DEPENDENCIES = {
+  listener_tasks: ["accounts", "bots"],
+  clone_tasks: ["accounts", "bots"],
+  notifications: ["accounts"],
+}
+const VALID_MENUS = ["home", "rules", "clone", "bots", "my-channels", "bulk-replace", "support", "accounts", "notifications", "alerts", "ai-settings", "settings", "guide", "user-access"]
 const VALID_CHANNEL_TABS = ["targets", "sources", "collections", "search-bots"]
+
+function hasUsableAccess(user = currentUser.value) {
+  if (user?.role === "admin") return true
+  if (user?.available === false) return false
+  return !["disabled", "expired", "inactive", "pending", "waiting"].includes(String(user?.access_state || "active").toLowerCase())
+}
+
+function hasFeature(featureKey) {
+  if (featureKey === "guide") return true
+  if (featureKey === "user_management") return currentUser.value?.role === "admin"
+  if (currentUser.value?.role === "admin") return true
+  if (!hasUsableAccess()) return false
+  const granted = new Set(Array.isArray(currentUser.value?.feature_keys) ? currentUser.value.feature_keys : [])
+  if (!granted.has(featureKey)) return false
+  return (FEATURE_DEPENDENCIES[featureKey] || []).every((dependencyKey) => granted.has(dependencyKey))
+}
+
+function canOpenMenu(menu) {
+  return VALID_MENUS.includes(menu) && hasFeature(MENU_FEATURES[menu])
+}
+
+const availableMenus = computed(() => VALID_MENUS.filter(canOpenMenu))
+const contentProcessingEnabled = computed(() => (
+  currentUser.value?.role === "admin" || currentUser.value?.plan_tier === "paid"
+))
+const defaultAiProvider = computed(() => (
+  aiSettings.value?.default_provider === "deepseek" ? "deepseek" : "grok"
+))
+const availableBusinessMenus = computed(() => availableMenus.value.filter((menu) => !["guide", "user-access"].includes(menu)))
+const accessNotice = computed(() => {
+  if (currentUser.value?.role === "admin") return ""
+  const state = String(currentUser.value?.access_state || "active").toLowerCase()
+  if (state === "disabled") return "当前账号已停用，仅可查看使用教程，请联系管理员恢复使用。"
+  if (state === "expired") return "当前账号已超过使用期限，仅可查看使用教程，请联系管理员延长使用时间。"
+  if (["pending", "waiting"].includes(state)) return "当前账号尚待管理员授权，仅可查看使用教程，请联系管理员分配功能和使用期限。"
+  if (!availableBusinessMenus.value.length) return "当前账号尚未开通业务功能，仅可查看使用教程，请联系管理员分配功能和使用期限。"
+  return ""
+})
 
 function getSavedActiveMenu() {
   const queryMenu = new URLSearchParams(window.location.search).get("menu")
@@ -512,7 +729,10 @@ const currentAccount = reactive({
   name: "",
   username: "",
   session_path: "",
+  has_session_path: false,
   proxy: "",
+  has_proxy: false,
+  clear_proxy: false,
   enabled: true,
   is_default: false,
   remark: "",
@@ -610,162 +830,168 @@ const currentAiPrompt = reactive({
 
 
 async function loadStatus() {
+  const generation = getAuthGeneration()
   const res = await getStatus()
+  if (!isAuthGenerationCurrent(generation)) return false
   status.value = res.data
+  return true
+}
+
+function beginPageLoad(key) {
+  const load = {
+    generation: getAuthGeneration(),
+    owner: Symbol(`page-loading-${key}`),
+  }
+  pageLoadingOwners.set(key, load.owner)
+  pageLoading[key] = true
+  return load
+}
+
+function isPageLoadCurrent(load) {
+  return isAuthGenerationCurrent(load.generation)
+}
+
+function finishPageLoad(key, load) {
+  if (pageLoadingOwners.get(key) !== load.owner || !isPageLoadCurrent(load)) return
+  pageLoadingOwners.delete(key)
+  pageLoading[key] = false
 }
 
 
 async function loadRules() {
+  const generation = getAuthGeneration()
   const res = await getRules()
+  if (!isAuthGenerationCurrent(generation)) return false
   rules.value = res.data
+  return true
 }
 
 async function loadListenerTasks() {
-  pageLoading.listenerTasks = true
+  const load = beginPageLoad("listenerTasks")
   try {
     const res = await getListenerTasks()
+    if (!isPageLoadCurrent(load)) return false
     listenerTasks.value = res.data || []
+    return true
   } finally {
-    pageLoading.listenerTasks = false
+    finishPageLoad("listenerTasks", load)
   }
 }
 
 
 async function loadListenerTaskLogs() {
-  pageLoading.listenerLogs = true
+  const load = beginPageLoad("listenerLogs")
   try {
     const res = await getListenerSendEvents(LISTENER_TASK_LOG_LIMIT)
+    if (!isPageLoadCurrent(load)) return false
     listenerTaskLogs.value = res.data.events || []
-    saveListenerTaskLogs()
+    return true
   } catch (e) {
-    listenerTaskLogs.value = getCachedListenerTaskLogs()
-    console.error("加载监听发送缓存失败", e)
+    if (isCanceledAuthRequest(e) || !isPageLoadCurrent(load)) return false
+    listenerTaskLogs.value = []
+    return false
   } finally {
-    pageLoading.listenerLogs = false
+    finishPageLoad("listenerLogs", load)
   }
-}
-
-
-function getCachedListenerTaskLogs() {
-  try {
-    const saved = JSON.parse(
-      window.localStorage.getItem(LISTENER_TASK_LOG_STORAGE_KEY) || "[]",
-    )
-
-    return Array.isArray(saved)
-      ? saved.slice(0, LISTENER_TASK_LOG_LIMIT)
-      : []
-  } catch {
-    return []
-  }
-}
-
-
-function saveListenerTaskLogs() {
-  window.localStorage.setItem(
-    LISTENER_TASK_LOG_STORAGE_KEY,
-    JSON.stringify(listenerTaskLogs.value.slice(0, LISTENER_TASK_LOG_LIMIT)),
-  )
 }
 
 
 async function loadAccounts() {
-  pageLoading.accounts = true
+  const load = beginPageLoad("accounts")
   try {
-    const res = await getAccounts()
-    accounts.value = res.data
+    const res = hasFeature("accounts")
+      ? await getAccounts()
+      : await getAccountOptions()
+    if (!isPageLoadCurrent(load)) return false
+    const data = res.data
+    accounts.value = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.items)
+        ? data.items
+        : []
+    return true
   } finally {
-    pageLoading.accounts = false
+    finishPageLoad("accounts", load)
   }
 }
 
 
 async function loadBots() {
-  pageLoading.bots = true
+  const load = beginPageLoad("bots")
   try {
-    const res = await getBots()
+    const res = hasFeature("bots")
+      ? await getBots()
+      : await getBotOptions()
+    if (!isPageLoadCurrent(load)) return false
     bots.value = res.data
+    return true
   } finally {
-    pageLoading.bots = false
+    finishPageLoad("bots", load)
   }
 }
 
 
 async function loadBotBindings() {
+  const generation = getAuthGeneration()
   const res = await getBotBindings()
+  if (!isAuthGenerationCurrent(generation)) return false
   botBindings.value = res.data
+  return true
 }
 
 
 async function loadBotPage() {
-  await loadBots()
-  await loadBotBindings()
+  const generation = getAuthGeneration()
+  const botsLoaded = await loadBots()
+  if (botsLoaded === false || !isAuthGenerationCurrent(generation)) return false
+  return loadBotBindings()
 }
 
 
 async function loadCloneTasks() {
-  pageLoading.cloneTasks = true
+  const load = beginPageLoad("cloneTasks")
   try {
     const res = await getCloneTasks()
+    if (!isPageLoadCurrent(load)) return false
     const tasks = res.data || []
 
     cloneTasks.value = tasks
+    return true
   } finally {
-    pageLoading.cloneTasks = false
+    finishPageLoad("cloneTasks", load)
   }
 }
 
 
 function scheduleCloneTaskRefresh() {
+  const generation = getAuthGeneration()
   ;[1000, 3000, 6000].forEach((delay) => {
     window.setTimeout(async () => {
+      if (!isAuthGenerationCurrent(generation)) return
       try {
         await loadCloneTasks()
-      } catch (e) {
-        console.error("刷新克隆任务状态失败", e)
-      }
+      } catch {}
     }, delay)
   })
 }
 
 
 async function loadCloneTaskLogs() {
-  pageLoading.cloneLogs = true
+  const load = beginPageLoad("cloneLogs")
   try {
     const res = await getCloneSendEvents(CLONE_TASK_LOG_LIMIT)
+    if (!isPageLoadCurrent(load)) return false
     const events = (res.data.events || []).map(mapCloneSendEvent)
 
     cloneTaskLogs.value = events
-    saveCloneTaskLogs()
+    return true
   } catch (e) {
-    cloneTaskLogs.value = getCachedCloneTaskLogs()
-    console.error("加载克隆任务缓存失败", e)
+    if (isCanceledAuthRequest(e) || !isPageLoadCurrent(load)) return false
+    cloneTaskLogs.value = []
+    return false
   } finally {
-    pageLoading.cloneLogs = false
+    finishPageLoad("cloneLogs", load)
   }
-}
-
-
-function getCachedCloneTaskLogs() {
-  try {
-    const saved = JSON.parse(
-      window.localStorage.getItem(CLONE_TASK_LOG_STORAGE_KEY) || "[]",
-    )
-
-    return Array.isArray(saved)
-      ? saved.slice(-CLONE_TASK_LOG_LIMIT)
-      : []
-  } catch {
-    return []
-  }
-}
-
-
-function saveCloneTaskLogs() {
-  window.localStorage.setItem(
-    CLONE_TASK_LOG_STORAGE_KEY,
-    JSON.stringify(cloneTaskLogs.value.slice(0, CLONE_TASK_LOG_LIMIT)),
-  )
 }
 
 
@@ -796,71 +1022,99 @@ function mapCloneSendEvent(event) {
 
 
 async function loadSendSettings() {
+  const generation = getAuthGeneration()
   const res = await getSendSettings()
+  if (!isAuthGenerationCurrent(generation)) return false
   sendSettings.value = res.data
+  return true
 }
 
 async function loadAiSettings() {
-  const res = await getAiSettings()
-  aiSettings.value = res.data || { providers: {} }
+  const load = beginPageLoad("aiSettings")
+  try {
+    const res = await getAiSettings()
+    if (!isPageLoadCurrent(load)) return false
+    aiSettings.value = res.data || { providers: {}, default_provider: "grok" }
+    return true
+  } finally {
+    finishPageLoad("aiSettings", load)
+  }
 }
 
 async function loadAiPrompts() {
-  pageLoading.aiPrompts = true
+  const load = beginPageLoad("aiPrompts")
   try {
     const res = await getAiPrompts()
+    if (!isPageLoadCurrent(load)) return false
     aiPrompts.value = res.data || []
+    return true
   } finally {
-    pageLoading.aiPrompts = false
+    finishPageLoad("aiPrompts", load)
   }
 }
 
 async function refreshAiConfig() {
+  const generation = getAuthGeneration()
   await Promise.all([loadAiSettings(), loadAiPrompts()])
+  return isAuthGenerationCurrent(generation)
 }
 
 
 async function loadContentTemplates() {
-  pageLoading.templates = true
+  const load = beginPageLoad("templates")
   try {
     const res = await getContentTemplates()
+    if (!isPageLoadCurrent(load)) return false
     contentTemplates.value = res.data || []
+    return true
   } finally {
-    pageLoading.templates = false
+    finishPageLoad("templates", load)
   }
 }
 
 
 async function loadRuntimeDashboard() {
-  pageLoading.runtime = true
+  const load = beginPageLoad("runtime")
   try {
     const res = await getRuntimeDashboard()
+    if (!isPageLoadCurrent(load)) return false
     runtimeDashboard.value = res.data || {}
+    return true
   } finally {
-    pageLoading.runtime = false
+    finishPageLoad("runtime", load)
   }
 }
 
 
-async function handleMenuChange(menu) {
-  if (!VALID_MENUS.includes(menu)) {
-    menu = "home"
-  }
+let menuLoadSequence = 0
+let menuRetryOwner = null
 
-  activeMenu.value = menu
-  window.localStorage.setItem(MENU_STORAGE_KEY, menu)
+async function loadMenuData(menu, generation) {
+  const isCurrent = () => isAuthGenerationCurrent(generation)
+  if (!isCurrent()) return false
 
   if (menu === "home") {
-    await loadRuntimeDashboard()
+    await Promise.all([loadStatus(), loadRuntimeDashboard()])
+    return isCurrent()
   }
 
+  const statusLoad = hasFeature("dashboard")
+    ? loadStatus().then(() => null).catch((error) => error)
+    : Promise.resolve(null)
+
   if (menu === "rules") {
-    await loadStatus()
     await loadAccounts()
+    if (!isCurrent()) return false
     await loadBots()
-    await loadContentTemplates()
-    await loadAiPrompts()
+    if (!isCurrent()) return false
+    if (contentProcessingEnabled.value) {
+      await loadContentTemplates()
+      if (!isCurrent()) return false
+      await loadAiPrompts()
+      if (!isCurrent()) return false
+    }
     await loadListenerTasks()
+    if (!isCurrent()) return false
     await loadListenerTaskLogs()
   }
 
@@ -881,20 +1135,82 @@ async function handleMenuChange(menu) {
   }
 
   if (menu === "clone") {
-    await loadBots()
+    await Promise.all([loadBots(), loadAccounts()])
+    if (!isCurrent()) return false
     await loadCloneTasks()
+    if (!isCurrent()) return false
     await loadCloneTaskLogs()
-    await loadContentTemplates()
-    await loadAiPrompts()
+    if (!isCurrent()) return false
+    if (contentProcessingEnabled.value) {
+      await loadContentTemplates()
+      if (!isCurrent()) return false
+      await loadAiPrompts()
+    }
   }
 
   if (menu === "settings") {
     await loadSendSettings()
+    if (!isCurrent()) return false
     await loadContentTemplates()
   }
 
   if (menu === "ai-settings") {
     await refreshAiConfig()
+  }
+
+  const statusError = await statusLoad
+  if (!isCurrent()) return false
+  if (statusError) throw statusError
+  return true
+}
+
+async function handleMenuChange(menu, options = {}) {
+  const generation = getAuthGeneration()
+  if (!canOpenMenu(menu)) {
+    if (!options.silent && currentUser.value && VALID_MENUS.includes(menu)) {
+      ElMessage.warning("当前账号未开通该功能，请联系管理员授权")
+    }
+    menu = availableMenus.value.includes("home")
+      ? "home"
+      : availableBusinessMenus.value[0] || "guide"
+  }
+
+  activeMenu.value = menu
+  window.localStorage.setItem(MENU_STORAGE_KEY, menu)
+  const requestId = ++menuLoadSequence
+  if (!options.preserveError) menuLoadError.value = ""
+
+  try {
+    const loaded = await loadMenuData(menu, generation)
+    if (!loaded || !isAuthGenerationCurrent(generation)) return false
+    if (requestId === menuLoadSequence && activeMenu.value === menu) {
+      menuLoadError.value = ""
+    }
+    return true
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return false
+    const code = error?.response?.data?.code
+    const accessEventWillRecover = ["ACCESS_PENDING", "ACCESS_EXPIRED", "FEATURE_FORBIDDEN"].includes(code)
+    if (requestId === menuLoadSequence && activeMenu.value === menu && !accessEventWillRecover) {
+      menuLoadError.value = authErrorText(error, "当前页面加载失败，请检查网络后重试")
+    }
+    return false
+  }
+}
+
+async function retryActiveMenu() {
+  if (menuRetrying.value) return
+  const generation = getAuthGeneration()
+  const owner = Symbol("menu-retry")
+  menuRetryOwner = owner
+  menuRetrying.value = true
+  try {
+    await handleMenuChange(activeMenu.value, { silent: true, preserveError: true })
+  } finally {
+    if (menuRetryOwner === owner && isAuthGenerationCurrent(generation)) {
+      menuRetryOwner = null
+      menuRetrying.value = false
+    }
   }
 }
 
@@ -906,9 +1222,12 @@ async function handleMenuChange(menu) {
 function resetCurrentContentTemplate() {
   Object.assign(currentContentTemplate, {
     id: null,
+    parent_id: null,
     name: "",
     type: "footer",
+    content: "",
     enabled: true,
+    weight: 1,
     items: [
       {
         id: null,
@@ -932,6 +1251,12 @@ async function openTaskFromAlert({ alert, taskType }) {
   const taskId = Number(alert?.task_id)
   if (!taskId || !["listener", "clone"].includes(taskType)) {
     ElMessage.warning("该告警没有可打开的任务")
+    return
+  }
+
+  const requiredFeature = taskType === "listener" ? "listener_tasks" : "clone_tasks"
+  if (!hasFeature(requiredFeature)) {
+    ElMessage.warning("当前账号未开通对应任务功能")
     return
   }
 
@@ -1014,16 +1339,23 @@ async function submitContentTemplate(formData) {
 
 
 async function toggleContentTemplateHandler(row, value) {
+  const generation = getAuthGeneration()
   templateTogglingId.value = row.id
   try {
     await updateContentTemplateRule(row.id, {
       enabled: value,
     })
+    if (!isAuthGenerationCurrent(generation)) return
 
     ElMessage.success(value ? "配置已启用" : "配置已停用")
     await loadContentTemplates()
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    throw error
   } finally {
-    templateTogglingId.value = null
+    if (isAuthGenerationCurrent(generation) && templateTogglingId.value === row.id) {
+      templateTogglingId.value = null
+    }
   }
 }
 
@@ -1079,7 +1411,7 @@ function resetCurrentListenerTask() {
     selected_contact_template_group_id: null,
     album_wait_seconds: 3,
     ai_rewrite_enabled: false,
-    ai_rewrite_provider: "grok",
+    ai_rewrite_provider: defaultAiProvider.value,
     ai_rewrite_model: "",
     ai_rewrite_prompt: "",
     ai_prompt_template_id: null,
@@ -1093,9 +1425,17 @@ function resetCurrentListenerTask() {
 async function openAddListenerTaskDialog() {
   await loadBots()
   await loadAccounts()
+  const hasAccount = accounts.value.some((account) => account.enabled !== false)
+  const hasBot = bots.value.some((bot) => bot.enabled !== false)
+  if (!hasAccount || !hasBot) {
+    const missing = [!hasAccount ? "可用 Telegram 账号" : "", !hasBot ? "已启用 Bot" : ""].filter(Boolean)
+    ElMessage.warning(`新增监听任务前，请先配置：${missing.join("、")}`)
+    return
+  }
   await loadListenerTasks()
-  await loadContentTemplates()
-  await loadAiPrompts()
+  if (contentProcessingEnabled.value) {
+    await Promise.all([loadContentTemplates(), loadAiPrompts(), loadAiSettings()])
+  }
   resetCurrentListenerTask()
   isListenerTaskEdit.value = false
   listenerTaskDialogVisible.value = true
@@ -1104,8 +1444,10 @@ async function openAddListenerTaskDialog() {
 
 async function openEditListenerTaskDialog(row) {
   await loadBots()
-  await loadContentTemplates()
-  await loadAiPrompts()
+  if (contentProcessingEnabled.value) {
+    await loadContentTemplates()
+    await loadAiPrompts()
+  }
   Object.assign(currentListenerTask, {
     id: row.id,
     name: row.name || "",
@@ -1442,7 +1784,7 @@ async function submitListenerTask(formData) {
   }
 
   listenerTaskDialogVisible.value = false
-  await loadStatus()
+  if (hasFeature("dashboard")) await loadStatus()
   await loadListenerTasks()
 }
 
@@ -1464,7 +1806,7 @@ async function deleteListenerTaskHandler(id) {
   }
 
   ElMessage.success("监听任务已删除")
-  await loadStatus()
+  if (hasFeature("dashboard")) await loadStatus()
   await loadListenerTasks()
 }
 
@@ -1635,7 +1977,7 @@ async function checkListenerCatchupHandlerV2(id) {
 
   await loadListenerTaskLogs()
   await loadListenerTasks()
-  await loadRuntimeDashboard()
+  if (hasFeature("dashboard")) await loadRuntimeDashboard()
 }
 
 function resetCurrentRule() {
@@ -1716,7 +2058,7 @@ async function submitRule(formData) {
 
   dialogVisible.value = false
 
-  await loadStatus()
+  if (hasFeature("dashboard")) await loadStatus()
   await loadRules()
 }
 
@@ -1734,7 +2076,7 @@ async function saveRule(row) {
 
   ElMessage.success("规则状态已更新")
 
-  await loadStatus()
+  if (hasFeature("dashboard")) await loadStatus()
   await loadRules()
 }
 
@@ -1752,7 +2094,7 @@ async function deleteRule(id) {
 
   ElMessage.success("删除成功")
 
-  await loadStatus()
+  if (hasFeature("dashboard")) await loadStatus()
   await loadRules()
 }
 
@@ -1772,7 +2114,10 @@ function resetCurrentAccount() {
   currentAccount.name = ""
   currentAccount.username = ""
   currentAccount.session_path = ""
+  currentAccount.has_session_path = false
   currentAccount.proxy = ""
+  currentAccount.has_proxy = false
+  currentAccount.clear_proxy = false
   currentAccount.enabled = true
   currentAccount.is_default = false
   currentAccount.remark = ""
@@ -1783,13 +2128,6 @@ function resetCurrentAccount() {
   currentAccount.business_start_time = "09:00"
   currentAccount.business_end_time = "18:00"
   currentAccount.away_repeat_hours = 12
-}
-
-
-function openAddAccountDialog() {
-  resetCurrentAccount()
-  isAccountEdit.value = false
-  accountDialogVisible.value = true
 }
 
 
@@ -1813,10 +2151,11 @@ function openEditAccountDialog(row) {
 
 
 async function submitAccount(formData) {
+  const generation = getAuthGeneration()
   Object.assign(currentAccount, formData)
 
-  if (!currentAccount.name || !currentAccount.session_path) {
-    ElMessage.error("账号名称和 Session 路径不能为空")
+  if (!currentAccount.id || !currentAccount.name) {
+    ElMessage.error("账号名称不能为空")
     return
   }
 
@@ -1832,35 +2171,26 @@ async function submitAccount(formData) {
 
   accountSaving.value = true
   try {
-    if (isAccountEdit.value) {
-      await updateAccount(currentAccount.id, {
-        name: currentAccount.name,
-        username: currentAccount.username,
-        session_path: currentAccount.session_path,
-        proxy: currentAccount.proxy,
-        enabled: currentAccount.enabled,
-        remark: currentAccount.remark,
-        ...autoReplyPayload,
-      })
+    await updateAccount(currentAccount.id, {
+      name: currentAccount.name,
+      username: currentAccount.username,
+      proxy: currentAccount.proxy,
+      clear_proxy: currentAccount.clear_proxy,
+      enabled: currentAccount.enabled,
+      remark: currentAccount.remark,
+      ...autoReplyPayload,
+    })
+    if (!isAuthGenerationCurrent(generation)) return
 
-      ElMessage.success("账号保存成功")
-    } else {
-      await createAccount({
-        name: currentAccount.name,
-        username: currentAccount.username,
-        session_path: currentAccount.session_path,
-        proxy: currentAccount.proxy,
-        remark: currentAccount.remark,
-        ...autoReplyPayload,
-      })
-
-      ElMessage.success("账号添加成功")
-    }
+    ElMessage.success("账号保存成功")
 
     accountDialogVisible.value = false
     await loadAccounts()
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    throw error
   } finally {
-    accountSaving.value = false
+    if (isAuthGenerationCurrent(generation)) accountSaving.value = false
   }
 }
 
@@ -1874,8 +2204,6 @@ async function saveAccount(row) {
   await updateAccount(row.id, {
     name: row.name,
     username: row.username,
-    session_path: row.session_path,
-    proxy: row.proxy,
     enabled: row.enabled,
     remark: row.remark,
     greeting_enabled: row.greeting_enabled,
@@ -1891,6 +2219,7 @@ async function saveAccount(row) {
 }
 
 async function setDefaultAccount(row) {
+  const generation = getAuthGeneration()
   try {
     await ElMessageBox.confirm(
       `确定将“${row.name || `账号 #${row.id}`}”设为全局默认采集账号？以后新建克隆任务留空时会使用该账号。`,
@@ -1905,24 +2234,27 @@ async function setDefaultAccount(row) {
     if (error === "cancel" || error === "close") return
     throw error
   }
+  if (!isAuthGenerationCurrent(generation)) return
 
   defaultAccountSettingId.value = row.id
   try {
     await updateAccount(row.id, {
       name: row.name,
       username: row.username,
-      session_path: row.session_path,
-      proxy: row.proxy,
       enabled: true,
       remark: row.remark,
       is_default: true,
     })
+    if (!isAuthGenerationCurrent(generation)) return
     ElMessage.success("全局默认账号已更新")
     await loadAccounts()
   } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
     ElMessage.error(error?.response?.data?.detail || error?.message || "设置默认账号失败")
   } finally {
-    defaultAccountSettingId.value = null
+    if (isAuthGenerationCurrent(generation) && defaultAccountSettingId.value === row.id) {
+      defaultAccountSettingId.value = null
+    }
   }
 }
 
@@ -1981,6 +2313,7 @@ function openEditBotDialog(row) {
 
 
 async function submitBot(formData) {
+  const generation = getAuthGeneration()
   Object.assign(currentBot, formData)
 
   if (!currentBot.name || (!isBotEdit.value && !currentBot.token)) {
@@ -2002,18 +2335,19 @@ async function submitBot(formData) {
   try {
     if (isBotEdit.value) {
       await updateBot(currentBot.id, payload)
-      ElMessage.success("Bot 保存成功")
     } else {
       await createBot(payload)
-      ElMessage.success("Bot 添加成功")
     }
+    if (!isAuthGenerationCurrent(generation)) return
+    ElMessage.success(isBotEdit.value ? "Bot 保存成功" : "Bot 添加成功")
 
     botDialogVisible.value = false
     await loadBots()
   } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
     ElMessage.error(error?.response?.data?.detail || error?.response?.data?.message || "Bot 保存失败")
   } finally {
-    botSaving.value = false
+    if (isAuthGenerationCurrent(generation)) botSaving.value = false
   }
 }
 
@@ -2038,7 +2372,7 @@ async function testBotHandler(row) {
       ElMessage.error(res.data.message || "Bot 测试失败")
     }
   } catch (e) {
-    console.error(e)
+    if (isCanceledAuthRequest(e)) return
     ElMessage.error("Bot 测试失败")
   }
 }
@@ -2200,7 +2534,7 @@ function resetCurrentCloneTask() {
     status: "idle",
     last_message_id: 0,
     ai_rewrite_enabled: false,
-    ai_rewrite_provider: "grok",
+    ai_rewrite_provider: defaultAiProvider.value,
     ai_rewrite_model: "",
     ai_rewrite_prompt: "",
     ai_prompt_template_id: null,
@@ -2214,8 +2548,16 @@ function resetCurrentCloneTask() {
 async function openAddCloneTaskDialog() {
   await loadBots()
   await loadAccounts()
-  await loadContentTemplates()
-  await loadAiPrompts()
+  const hasAccount = accounts.value.some((account) => account.enabled !== false)
+  const hasBot = bots.value.some((bot) => bot.enabled !== false)
+  if (!hasAccount || !hasBot) {
+    const missing = [!hasAccount ? "可用 Telegram 账号" : "", !hasBot ? "已启用 Bot" : ""].filter(Boolean)
+    ElMessage.warning(`新增克隆任务前，请先配置：${missing.join("、")}`)
+    return
+  }
+  if (contentProcessingEnabled.value) {
+    await Promise.all([loadContentTemplates(), loadAiPrompts(), loadAiSettings()])
+  }
   resetCurrentCloneTask()
   isCloneTaskEdit.value = false
   cloneTaskDialogVisible.value = true
@@ -2225,8 +2567,10 @@ async function openAddCloneTaskDialog() {
 async function openEditCloneTaskDialog(row) {
   await loadBots()
   await loadAccounts()
-  await loadContentTemplates()
-  await loadAiPrompts()
+  if (contentProcessingEnabled.value) {
+    await loadContentTemplates()
+    await loadAiPrompts()
+  }
   Object.assign(currentCloneTask, {
     id: row.id,
     name: row.name || "",
@@ -2419,8 +2763,8 @@ async function submitCloneTask(formData) {
   cloneTaskDialogVisible.value = false
 
   await loadCloneTasks()
-  await loadListenerTasks()
-  await loadStatus()
+  if (hasFeature("listener_tasks")) await loadListenerTasks()
+  if (hasFeature("dashboard")) await loadStatus()
 }
 
 
@@ -2446,8 +2790,8 @@ async function removeCloneTaskHandler(id) {
   ElMessage.success("克隆任务已删除")
 
   await loadCloneTasks()
-  await loadListenerTasks()
-  await loadStatus()
+  if (hasFeature("listener_tasks")) await loadListenerTasks()
+  if (hasFeature("dashboard")) await loadStatus()
 }
 
 
@@ -2492,6 +2836,7 @@ async function handleStopCloneTask(id) {
 
 
 async function saveSendSettings(formData) {
+  const generation = getAuthGeneration()
   settingsSaving.value = true
   try {
     const payload = {
@@ -2501,21 +2846,30 @@ async function saveSendSettings(formData) {
     }
 
     const res = await updateSendSettings(payload)
+    if (!isAuthGenerationCurrent(generation)) return
     sendSettings.value = res.data
     ElMessage.success("发送设置已保存")
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    throw error
   } finally {
-    settingsSaving.value = false
+    if (isAuthGenerationCurrent(generation)) settingsSaving.value = false
   }
 }
 
 async function saveAiSettings(formData) {
+  const generation = getAuthGeneration()
   aiSettingsSaving.value = true
   try {
     const res = await updateAiSettings(formData)
+    if (!isAuthGenerationCurrent(generation)) return
     aiSettings.value = res.data || aiSettings.value
     ElMessage.success("AI 配置已保存")
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    ElMessage.error(getApiErrorMessage(error, "AI 配置保存失败，请检查后重试"))
   } finally {
-    aiSettingsSaving.value = false
+    if (isAuthGenerationCurrent(generation)) aiSettingsSaving.value = false
   }
 }
 
@@ -2524,6 +2878,7 @@ function resetCurrentAiPrompt() {
     id: null,
     name: "",
     content: "",
+    content_type: "",
     enabled: true,
     is_default: false,
   })
@@ -2540,6 +2895,7 @@ function openEditAiPromptDialog(prompt) {
     id: prompt.id,
     name: prompt.name || "",
     content: prompt.content || "",
+    content_type: prompt.content_type || "",
     enabled: prompt.enabled ?? true,
     is_default: prompt.is_default ?? false,
   })
@@ -2548,51 +2904,64 @@ function openEditAiPromptDialog(prompt) {
 }
 
 async function submitAiPrompt(formData) {
+  const generation = getAuthGeneration()
   aiPromptSaving.value = true
   try {
     if (isAiPromptEdit.value) {
       await updateAiPrompt(currentAiPrompt.id, formData)
-      ElMessage.success("提示词已保存")
     } else {
       await createAiPrompt(formData)
-      ElMessage.success("提示词已创建")
     }
+    if (!isAuthGenerationCurrent(generation)) return
+    ElMessage.success(isAiPromptEdit.value ? "提示词已保存" : "提示词已创建")
     aiPromptDialogVisible.value = false
     await loadAiPrompts()
   } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
     ElMessage.error(getApiErrorMessage(error, "提示词保存失败"))
   } finally {
-    aiPromptSaving.value = false
+    if (isAuthGenerationCurrent(generation)) aiPromptSaving.value = false
   }
 }
 
 async function setDefaultAiPromptHandler(prompt) {
+  const generation = getAuthGeneration()
   aiPromptDefaultingId.value = prompt.id
   try {
     await setDefaultAiPrompt(prompt.id)
+    if (!isAuthGenerationCurrent(generation)) return
     ElMessage.success(`“${prompt.name}”已设为系统默认提示词`)
     await loadAiPrompts()
   } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
     ElMessage.error(getApiErrorMessage(error, "设置默认提示词失败"))
   } finally {
-    aiPromptDefaultingId.value = null
+    if (isAuthGenerationCurrent(generation) && aiPromptDefaultingId.value === prompt.id) {
+      aiPromptDefaultingId.value = null
+    }
   }
 }
 
 async function deleteAiPromptHandler(prompt) {
+  const generation = getAuthGeneration()
   aiPromptDeletingId.value = prompt.id
   try {
     await deleteAiPrompt(prompt.id)
+    if (!isAuthGenerationCurrent(generation)) return
     ElMessage.success("提示词已删除")
     await loadAiPrompts()
   } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
     ElMessage.error(getApiErrorMessage(error, "删除提示词失败"))
   } finally {
-    aiPromptDeletingId.value = null
+    if (isAuthGenerationCurrent(generation) && aiPromptDeletingId.value === prompt.id) {
+      aiPromptDeletingId.value = null
+    }
   }
 }
 
 function getApiErrorMessage(error, fallback) {
+  if (isCanceledAuthRequest(error)) return ""
   return error?.response?.data?.detail || error?.message || fallback
 }
 
@@ -2606,10 +2975,10 @@ const handleToggleCloneListener = async (row, value) => {
     ElMessage.success(value ? "已开启实时监听" : "已关闭实时监听")
 
     await loadCloneTasks()
-    await loadListenerTasks()
-    await loadStatus()
+    if (hasFeature("listener_tasks")) await loadListenerTasks()
+    if (hasFeature("dashboard")) await loadStatus()
   } catch (e) {
-    console.error(e)
+    if (isCanceledAuthRequest(e)) return
     ElMessage.error("切换实时监听失败")
     await loadCloneTasks()
   }
@@ -2670,66 +3039,290 @@ function toNonNegativeNumber(value, fallback) {
 // =========================
 
 async function handleLogin(token, mode) {
-  localStorage.setItem("admin_token", token)
+  stopRefreshTimers()
+  clearSessionData()
+  replaceAuthToken(token)
+  const generation = getAuthGeneration()
   isAuthenticated.value = true
+  authChecking.value = true
+  authError.value = ""
+  const ready = await resolveCurrentUser()
+  if (!ready || !isAuthGenerationCurrent(generation)) return
   ElMessage.success(mode === "register" ? "注册成功" : "登录成功")
-  window.location.reload()
+  await initializeAuthorizedApp(generation)
 }
 
+function authErrorText(error, fallback) {
+  if (isCanceledAuthRequest(error)) return ""
+  return error?.response?.data?.detail || error?.response?.data?.message || error?.message || fallback
+}
 
-onMounted(async () => {
-  if (!isAuthenticated.value) {
-    return
+async function resolveCurrentUser() {
+  const generation = getAuthGeneration()
+  const owner = Symbol("auth-check")
+  authCheckOwner = owner
+  authChecking.value = true
+  authError.value = ""
+  try {
+    const response = await getCurrentUser()
+    if (!isAuthGenerationCurrent(generation)) return false
+    const user = response.data?.user
+    if (!user?.username || !user?.role) {
+      throw new Error("当前用户信息不完整，请重新登录")
+    }
+    currentUser.value = user
+    isAuthenticated.value = true
+    return true
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return false
+    const message = authErrorText(error, "账号权限读取失败，请检查网络后重试")
+    if (error?.response?.status === 401) {
+      stopRefreshTimers()
+      clearSessionData()
+      replaceAuthToken("")
+      currentUser.value = null
+      isAuthenticated.value = false
+      authCheckOwner = null
+      authChecking.value = false
+    } else {
+      isAuthenticated.value = Boolean(getAuthToken())
+    }
+    authError.value = message
+    return false
+  } finally {
+    if (authCheckOwner === owner && isAuthGenerationCurrent(generation)) {
+      authCheckOwner = null
+      authChecking.value = false
+    }
   }
+}
 
-  loadCloneTaskLogs()
-  loadListenerTaskLogs()
-  await handleMenuChange(activeMenu.value)
-  await loadCloneTasks()
-  await loadListenerTasks()
-  await loadSendSettings()
-  await loadContentTemplates()
+async function retryCurrentUser() {
+  const generation = getAuthGeneration()
+  const ready = await resolveCurrentUser()
+  if (ready && isAuthGenerationCurrent(generation)) await initializeAuthorizedApp(generation)
+}
 
-  cloneRefreshTimer = setInterval(async () => {
-    try {
-      await loadCloneTasks()
-    } catch (e) {
-      console.error("自动刷新克隆任务失败", e)
-    }
-  }, AUTO_REFRESH_INTERVAL)
-
-  cloneLogRefreshTimer = setInterval(async () => {
-    try {
-      if (activeMenu.value === "clone") {
-        await loadCloneTaskLogs()
-      }
-
-      if (activeMenu.value === "rules") {
-        await loadListenerTaskLogs()
-      }
-    } catch (e) {
-      console.error("自动刷新发送缓存失败", e)
-    }
-  }, SEND_LOG_REFRESH_INTERVAL)
-
-})
-
-
-onUnmounted(() => {
+function stopRefreshTimers() {
   if (cloneRefreshTimer) {
     clearInterval(cloneRefreshTimer)
     cloneRefreshTimer = null
   }
-
   if (cloneLogRefreshTimer) {
     clearInterval(cloneLogRefreshTimer)
     cloneLogRefreshTimer = null
   }
+}
+
+function startRefreshTimers() {
+  stopRefreshTimers()
+  const generation = getAuthGeneration()
+
+  if (hasFeature("clone_tasks")) {
+    cloneRefreshTimer = setInterval(async () => {
+      if (!isAuthGenerationCurrent(generation)) return
+      try {
+        await loadCloneTasks()
+      } catch {}
+    }, AUTO_REFRESH_INTERVAL)
+  }
+
+  if (hasFeature("clone_tasks") || hasFeature("listener_tasks")) {
+    cloneLogRefreshTimer = setInterval(async () => {
+      if (!isAuthGenerationCurrent(generation)) return
+      try {
+        if (activeMenu.value === "clone" && hasFeature("clone_tasks")) {
+          await loadCloneTaskLogs()
+        }
+        if (activeMenu.value === "rules" && hasFeature("listener_tasks")) {
+          await loadListenerTaskLogs()
+        }
+      } catch {}
+    }, SEND_LOG_REFRESH_INTERVAL)
+  }
+}
+
+async function initializeAuthorizedApp(generation = getAuthGeneration()) {
+  const loaded = await handleMenuChange(activeMenu.value, { silent: true })
+  if (!loaded || !isAuthGenerationCurrent(generation)) return false
+  startRefreshTimers()
+  return true
+}
+
+async function handleLogout() {
+  if (loggingOut.value) return
+  const generation = getAuthGeneration()
+  loggingOut.value = true
+  try {
+    await logoutUser()
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    ElMessage.warning(authErrorText(error, "服务器退出失败，已清除本地登录状态"))
+  }
+  if (!isAuthGenerationCurrent(generation)) return
+  stopRefreshTimers()
+  clearSessionData()
+  replaceAuthToken("")
+  currentUser.value = null
+  isAuthenticated.value = false
+  authChecking.value = false
+  authError.value = ""
+  activeMenu.value = "home"
+  loggingOut.value = false
+}
+
+let refreshingAccessContext = false
+async function handleAccessRestricted(event) {
+  if (!isAuthenticated.value || refreshingAccessContext) return
+  const generation = getAuthGeneration()
+  const code = event?.detail?.code
+  const message = event?.detail?.message || "当前账号没有此功能权限"
+
+  if (["ACCESS_PENDING", "ACCESS_EXPIRED"].includes(code)) {
+    currentUser.value = {
+      ...currentUser.value,
+      access_state: code === "ACCESS_EXPIRED" ? "expired" : "pending",
+      available: false,
+    }
+    stopRefreshTimers()
+    clearSessionData()
+    await handleMenuChange("guide", { silent: true })
+    if (!isAuthGenerationCurrent(generation)) return
+    ElMessage.warning(message)
+    return
+  }
+
+  if (code !== "FEATURE_FORBIDDEN") return
+  refreshingAccessContext = true
+  try {
+    const response = await getCurrentUser()
+    if (!isAuthGenerationCurrent(generation)) return
+    if (response.data?.user) currentUser.value = response.data.user
+    clearSessionData()
+    await handleMenuChange(activeMenu.value, { silent: true })
+    if (!isAuthGenerationCurrent(generation)) return
+    startRefreshTimers()
+    ElMessage.warning(message)
+  } catch (error) {
+    if (isCanceledAuthRequest(error) || !isAuthGenerationCurrent(generation)) return
+    ElMessage.error(authErrorText(error, "刷新账号权限失败，请重新登录"))
+  } finally {
+    if (isAuthGenerationCurrent(generation)) refreshingAccessContext = false
+  }
+}
+
+function handleAuthSessionChanged(event) {
+  stopRefreshTimers()
+  clearSessionData()
+  ElMessage.closeAll()
+  currentUser.value = null
+  authError.value = ""
+  loggingOut.value = false
+  refreshingAccessContext = false
+  isAuthenticated.value = Boolean(event?.detail?.authenticated)
+  authChecking.value = isAuthenticated.value
+}
+
+onMounted(async () => {
+  window.addEventListener(ACCESS_RESTRICTED_EVENT, handleAccessRestricted)
+  window.addEventListener(AUTH_SESSION_CHANGED_EVENT, handleAuthSessionChanged)
+  if (!getAuthToken()) {
+    authChecking.value = false
+    return
+  }
+
+  const generation = getAuthGeneration()
+  const ready = await resolveCurrentUser()
+  if (ready && isAuthGenerationCurrent(generation)) await initializeAuthorizedApp(generation)
+})
+
+
+onUnmounted(() => {
+  window.removeEventListener(ACCESS_RESTRICTED_EVENT, handleAccessRestricted)
+  window.removeEventListener(AUTH_SESSION_CHANGED_EVENT, handleAuthSessionChanged)
+  stopRefreshTimers()
 
 })
 </script>
 
 <style>
+.auth-resolving {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--app-bg, #f3f4f6);
+}
+
+.auth-resolving__card {
+  width: min(400px, 100%);
+  text-align: center;
+}
+
+.auth-resolving__card .el-card__body {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px;
+}
+
+.auth-resolving__card span {
+  color: var(--el-text-color-secondary, #6b7280);
+  font-size: 13px;
+}
+
+.auth-resolving__icon {
+  color: var(--el-color-primary, #409eff);
+  font-size: 26px;
+  animation: auth-resolving-rotate 0.9s linear infinite;
+}
+
+.auth-resolving--error .auth-resolving__card .el-card__body {
+  align-items: stretch;
+}
+
+.auth-resolving__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.auth-resolving__actions .el-button {
+  min-height: 40px;
+  margin-left: 0;
+}
+
+.access-notice {
+  margin-bottom: 14px;
+}
+
+.menu-load-error {
+  margin-bottom: 14px;
+}
+
+.menu-load-error__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.menu-load-error__content .el-button {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+@keyframes auth-resolving-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-resolving__icon {
+    animation: none;
+  }
+}
+
 body {
   margin: 0;
   background: #f3f4f6;

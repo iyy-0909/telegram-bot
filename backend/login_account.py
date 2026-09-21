@@ -8,10 +8,16 @@ from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError, SessionPasswordNeededError
 from telethon.network import ConnectionTcpFull
 
+from accounts.session_storage import (
+    generate_owner_session_path,
+    normalize_session_path,
+    resolve_owner_session_path,
+    session_file_path,
+)
 from config import API_ID, API_HASH
 from db.database import DATABASE_URL, SessionLocal
 from db.crud import ensure_default_account_in_session
-from db.models import Account
+from db.models import Account, UserAccount
 from init_db import init_db
 from utils.proxy_utils import normalize_proxy_for_runtime
 
@@ -37,17 +43,6 @@ def sqlite_db_path():
     return str(Path(unquote(db_path)).resolve())
 
 
-def normalize_session_path(value):
-    return str(value or "").strip().replace("\\", "/").removesuffix(".session")
-
-
-def session_file_path(session_path):
-    path = Path(session_path)
-    if path.suffix != ".session":
-        path = path.with_suffix(".session")
-    return path
-
-
 def print_accounts(accounts):
     print("\n已有采集账号：")
     if not accounts:
@@ -66,27 +61,30 @@ def print_accounts(accounts):
         )
 
 
-def load_accounts(db):
-    return db.query(Account).order_by(Account.id.asc()).all()
+def load_accounts(db, owner_user_id=None):
+    query = db.query(Account)
+    if owner_user_id is not None:
+        query = query.filter(Account.owner_user_id == int(owner_user_id))
+    return query.order_by(Account.id.asc()).all()
 
 
 def find_account_by_id(db, account_id):
     return db.query(Account).filter(Account.id == account_id).first()
 
 
-def find_account_by_session_path(db, session_path):
+def find_account_by_session_path(db, owner_user_id, session_path):
     normalized = normalize_session_path(session_path)
-    for account in load_accounts(db):
+    for account in load_accounts(db, owner_user_id):
         if normalize_session_path(account.session_path) == normalized:
             return account
     return None
 
 
-def find_account_by_identity(db, username, phone):
+def find_account_by_identity(db, owner_user_id, username, phone):
     username = str(username or "").strip().lstrip("@").lower()
     phone = str(phone or "").strip()
 
-    for account in load_accounts(db):
+    for account in load_accounts(db, owner_user_id):
         account_username = str(getattr(account, "username", "") or "").strip().lstrip("@").lower()
         account_phone = str(getattr(account, "phone", "") or "").strip()
 
@@ -106,10 +104,11 @@ def yes_no(prompt, default=False):
     return value in {"y", "yes", "是", "1", "true"}
 
 
-def next_session_path(accounts):
-    existing_ids = [account.id for account in accounts]
-    next_number = (max(existing_ids) + 1) if existing_ids else 1
-    return f"data/sessions/collector_{next_number}"
+def next_session_path(owner_user_id, accounts):
+    return generate_owner_session_path(
+        owner_user_id,
+        occupied_paths=[account.session_path for account in accounts],
+    )
 
 
 def backup_invalid_session(session_path):
@@ -125,6 +124,7 @@ def backup_invalid_session(session_path):
 
 
 def update_account_record(db, account, *, name, session_path, me):
+    resolve_owner_session_path(account.owner_user_id, session_path)
     account.name = name or account.name or f"账号{account.id}"
     account.session_path = normalize_session_path(session_path)
     account.username = me.username or ""
@@ -133,14 +133,16 @@ def update_account_record(db, account, *, name, session_path, me):
     if hasattr(account, "updated_at"):
         account.updated_at = datetime.utcnow()
     db.flush()
-    ensure_default_account_in_session(db)
+    ensure_default_account_in_session(db, account.owner_user_id)
     db.commit()
     db.refresh(account)
     return account
 
 
-def create_account_record(db, *, name, session_path, me):
+def create_account_record(db, *, owner_user_id, name, session_path, me):
+    resolve_owner_session_path(owner_user_id, session_path)
     account = Account(
+        owner_user_id=int(owner_user_id),
         name=name or me.username or me.phone or "采集账号",
         username=me.username or "",
         phone=me.phone or "",
@@ -151,19 +153,23 @@ def create_account_record(db, *, name, session_path, me):
     )
     db.add(account)
     db.flush()
-    ensure_default_account_in_session(db)
+    ensure_default_account_in_session(db, owner_user_id)
     db.commit()
     db.refresh(account)
     return account
 
 
-async def login_telegram(session_path):
-    Path(session_path).parent.mkdir(parents=True, exist_ok=True)
+async def login_telegram(owner_user_id, session_path):
+    resolved_session_path = resolve_owner_session_path(
+        owner_user_id,
+        session_path,
+        create_parent=True,
+    )
     runtime_proxy = normalize_proxy_for_runtime(PROXY)
 
     for attempt in range(2):
         client = TelegramClient(
-            session_path,
+            str(resolved_session_path),
             API_ID,
             API_HASH,
             connection=ConnectionTcpFull,
@@ -200,7 +206,7 @@ async def login_telegram(session_path):
         except AuthKeyDuplicatedError:
             if attempt > 0:
                 raise
-            backup_path = backup_invalid_session(session_path)
+            backup_path = backup_invalid_session(resolved_session_path)
             print(f"旧 session 授权已失效，已备份：{backup_path}")
             print("将使用相同 session_path 重新登录。")
             continue
@@ -214,33 +220,41 @@ def select_existing_account(db):
     raw_id = input("请输入要重新登录的 account_id：").strip()
     if not raw_id.isdigit():
         print("account_id 必须是数字")
-        return None, None, None
+        return None, None, None, None
 
     account = find_account_by_id(db, int(raw_id))
     if not account:
         print("未找到该账号")
-        return None, None, None
+        return None, None, None, None
 
-    default_path = normalize_session_path(account.session_path)
-    session_path = input(f"Session 路径 [{default_path}]：").strip() or default_path
+    session_path = normalize_session_path(account.session_path)
+    resolve_owner_session_path(account.owner_user_id, session_path)
     name = input(f"账号名称 [{account.name}]：").strip() or account.name
-    return account, name, normalize_session_path(session_path)
+    return account, account.owner_user_id, name, session_path
 
 
-def input_new_account(db, accounts):
-    default_path = next_session_path(accounts)
+def input_new_account(db):
+    raw_owner_id = input("请输入账号归属用户 ID：").strip()
+    if not raw_owner_id.isdigit():
+        print("归属用户 ID 必须是数字")
+        return None, None, None, None
+    owner_user_id = int(raw_owner_id)
+    owner = db.query(UserAccount).filter(UserAccount.id == owner_user_id).first()
+    if owner is None:
+        print("未找到归属用户")
+        return None, None, None, None
+    accounts = load_accounts(db, owner_user_id)
+    session_path = next_session_path(owner_user_id, accounts)
     name = input("请输入账号名称：").strip() or "采集账号"
-    session_path = input(f"请输入 session 路径 [{default_path}]：").strip() or default_path
-    session_path = normalize_session_path(session_path)
 
-    existing = find_account_by_session_path(db, session_path)
+    existing = find_account_by_session_path(db, owner_user_id, session_path)
     if existing:
         print(f"该 session_path 已存在：account_id={existing.id} name={existing.name}")
         if yes_no("是否更新这个已有账号", default=True):
-            return existing, existing.name or name, session_path
-        return None, None, None
+            return existing, owner_user_id, existing.name or name, session_path
+        return None, None, None, None
 
-    return None, name, session_path
+    return None, owner_user_id, name, session_path
 
 
 async def main():
@@ -263,10 +277,10 @@ async def main():
         choice = input("请输入选项 [1/2/3]：").strip()
 
         if choice == "1":
-            account, name, session_path = select_existing_account(db)
+            account, owner_user_id, name, session_path = select_existing_account(db)
             updated_existing = True
         elif choice == "2":
-            account, name, session_path = input_new_account(db, accounts)
+            account, owner_user_id, name, session_path = input_new_account(db)
             updated_existing = bool(account)
         else:
             print("已退出")
@@ -276,9 +290,14 @@ async def main():
             print("session 路径不能为空")
             return
 
-        me = await login_telegram(session_path)
+        me = await login_telegram(owner_user_id, session_path)
 
-        identity_account = find_account_by_identity(db, me.username, me.phone)
+        identity_account = find_account_by_identity(
+            db,
+            owner_user_id,
+            me.username,
+            me.phone,
+        )
         if identity_account and (not account or identity_account.id != account.id):
             print(
                 "手机号或 username 已存在："
@@ -303,6 +322,7 @@ async def main():
         else:
             saved = create_account_record(
                 db,
+                owner_user_id=owner_user_id,
                 name=name,
                 session_path=session_path,
                 me=me,

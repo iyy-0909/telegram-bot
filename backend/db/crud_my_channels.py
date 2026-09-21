@@ -4,8 +4,10 @@ from sqlalchemy import or_
 
 from db.crud_bot import normalize_target_channel
 from db.database import SessionLocal
+from db.channel_activity import activity_fields
 from db.models import BotAccount, MyChannel, SearchBotChannelSubmission
 from db.search_utils import build_channel_search_terms
+from utils.redaction import redact_sensitive_text
 
 
 def normalize_username(value):
@@ -106,7 +108,8 @@ def my_channel_to_dict(channel, collection_status_override=None):
         "creator_name": getattr(channel, "creator_name", "") or "",
         "can_view_creator": bool(getattr(channel, "can_view_creator", False)),
         "last_check_at": str(channel.last_check_at) if channel.last_check_at else "",
-        "last_error": channel.last_error or "",
+        **activity_fields(getattr(channel, "last_content_at", None)),
+        "last_error": redact_sensitive_text(channel.last_error),
         "created_at": str(channel.created_at) if channel.created_at else "",
         "updated_at": str(channel.updated_at) if channel.updated_at else "",
         "target_value": channel_to_target(channel),
@@ -304,6 +307,8 @@ def set_my_channel_check_result(
                 continue
             if key == "status" and preserve_disabled_status and current_value == "disabled":
                 continue
+            if key == "last_error":
+                value = redact_sensitive_text(value)
 
             setattr(channel, key, value)
 
@@ -316,7 +321,12 @@ def set_my_channel_check_result(
         db.close()
 
 
-def update_my_channel_clone_status(targets, source_channel, status_text=None):
+def update_my_channel_clone_status(
+    targets,
+    source_channel,
+    status_text=None,
+    owner_user_id=None,
+):
     normalized_targets = []
 
     for target in targets or []:
@@ -347,9 +357,11 @@ def update_my_channel_clone_status(targets, source_channel, status_text=None):
             if not filters:
                 continue
 
+            query = db.query(MyChannel).filter(or_(*filters))
+            if owner_user_id not in (None, ""):
+                query = query.filter(MyChannel.owner_user_id == int(owner_user_id))
             updated = (
-                db.query(MyChannel)
-                .filter(or_(*filters))
+                query
                 .update(
                     {
                         MyChannel.clone_status: clone_status,

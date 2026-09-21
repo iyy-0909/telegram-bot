@@ -620,6 +620,213 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.token = "123456:very-secret-token"
         self.bot = SimpleNamespace(id=9, token=self.token)
+        self.visible_clients_patcher = patch(
+            "api.server.visible_account_clients",
+            return_value=server.account_manager.clients,
+        )
+        self.visible_clients_patcher.start()
+        self.addCleanup(self.visible_clients_patcher.stop)
+
+    async def test_bot_update_ignores_display_token_placeholder(self):
+        stored_bot = SimpleNamespace(
+            id=9,
+            name="updated",
+            token=self.token,
+            enabled=True,
+            remark="",
+            last_error="",
+            created_at=None,
+            updated_at=None,
+        )
+        with (
+            patch("api.server.get_bot", return_value=stored_bot),
+            patch("api.server.update_bot", return_value=stored_bot) as update,
+            patch(
+                "api.server.refresh_bot_profile",
+                new=AsyncMock(return_value=stored_bot),
+            ) as refresh,
+        ):
+            response = await server.api_update_bot(
+                9,
+                server.BotUpdate(name="updated", token="******"),
+            )
+
+        update.assert_called_once_with(9, {"name": "updated"})
+        refresh.assert_not_awaited()
+        self.assertEqual(response["token"], "******")
+        self.assertTrue(response["has_token"])
+
+    async def test_bot_create_rejects_display_token_placeholder(self):
+        with self.assertRaises(HTTPException) as caught:
+            await server.api_create_bot(
+                server.BotCreate(name="invalid", token="******")
+            )
+
+        self.assertEqual(caught.exception.status_code, 422)
+
+    async def test_invalid_token_create_does_not_write(self):
+        invalid_token = "999999:revoked-secret-token"
+        error = bot_sender.BotApiError(
+            f"failed at /bot{invalid_token}/getMe",
+            error_code=401,
+            description="Unauthorized",
+        )
+        with (
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(side_effect=error),
+            ),
+            patch("api.server.create_bot") as create,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await server.api_create_bot(
+                    server.BotCreate(name="invalid", token=invalid_token)
+                )
+
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("BotFather", caught.exception.detail)
+        self.assertNotIn(invalid_token, caught.exception.detail)
+        create.assert_not_called()
+
+    async def test_invalid_token_update_does_not_write_or_replace_old_token(self):
+        invalid_token = "999999:revoked-secret-token"
+        stored_bot = SimpleNamespace(id=9, token=self.token)
+        error = bot_sender.BotApiError(
+            "Unauthorized",
+            error_code=401,
+            description="Unauthorized",
+        )
+        with (
+            patch("api.server.get_bot", return_value=stored_bot),
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(side_effect=error),
+            ),
+            patch("api.server.update_bot") as update,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await server.api_update_bot(
+                    9,
+                    server.BotUpdate(name="must-not-write", token=invalid_token),
+                )
+
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(stored_bot.token, self.token)
+        update.assert_not_called()
+
+    async def test_valid_token_create_saves_profile_metadata_once(self):
+        valid_token = "777777:new-valid-secret"
+
+        def persist(data):
+            return SimpleNamespace(
+                id=10,
+                created_at=None,
+                updated_at=None,
+                **data,
+            )
+
+        with (
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(
+                    return_value={
+                        "ok": True,
+                        "result": {"id": 77, "username": "verified_bot"},
+                    }
+                ),
+            ),
+            patch("api.server.create_bot", side_effect=persist) as create,
+        ):
+            response = await server.api_create_bot(
+                server.BotCreate(name="verified", token=valid_token)
+            )
+
+        saved = create.call_args.args[0]
+        self.assertEqual(saved["token"], valid_token)
+        self.assertEqual(saved["username"], "verified_bot")
+        self.assertEqual(saved["bot_link"], "https://t.me/verified_bot")
+        self.assertEqual(saved["last_error"], "")
+        self.assertEqual(response["username"], "verified_bot")
+        self.assertEqual(response["token"], "******")
+
+    async def test_valid_token_update_saves_token_and_metadata_in_one_write(self):
+        valid_token = "777777:new-valid-secret"
+        existing = SimpleNamespace(id=9, token=self.token)
+        updated = SimpleNamespace(
+            id=9,
+            name="updated",
+            token=valid_token,
+            username="verified_bot",
+            bot_link="https://t.me/verified_bot",
+            enabled=True,
+            remark="",
+            last_error="",
+            created_at=None,
+            updated_at=None,
+        )
+        with (
+            patch("api.server.get_bot", return_value=existing),
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(
+                    return_value={
+                        "ok": True,
+                        "result": {"id": 77, "username": "verified_bot"},
+                    }
+                ),
+            ),
+            patch("api.server.update_bot", return_value=updated) as update,
+        ):
+            response = await server.api_update_bot(
+                9,
+                server.BotUpdate(name="updated", token=valid_token),
+            )
+
+        update.assert_called_once_with(
+            9,
+            {
+                "name": "updated",
+                "token": valid_token,
+                "username": "verified_bot",
+                "bot_link": "https://t.me/verified_bot",
+                "last_error": "",
+            },
+        )
+        self.assertEqual(response["username"], "verified_bot")
+
+    async def test_token_validation_network_failure_returns_502_without_write(self):
+        with (
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(
+                    side_effect=bot_sender.BotApiNetworkError(
+                        f"proxy failed token={self.token}"
+                    )
+                ),
+            ),
+            patch("api.server.create_bot") as create,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await server.api_create_bot(
+                    server.BotCreate(name="network", token=self.token)
+                )
+
+        self.assertEqual(caught.exception.status_code, 502)
+        self.assertNotIn(self.token, caught.exception.detail)
+        create.assert_not_called()
+
+    async def test_support_bot_update_ignores_display_token_placeholder(self):
+        with patch(
+            "api.server.update_support_bot",
+            return_value={"id": 3, "name": "support"},
+        ) as update:
+            response = server.api_update_support_bot(
+                3,
+                server.SupportBotUpdate(name="support", bot_token="******"),
+            )
+
+        update.assert_called_once_with(3, {"name": "support"})
+        self.assertEqual(response["id"], 3)
 
     async def test_get_profile_returns_wrapped_profile_without_token(self):
         telegram_profile = {
@@ -633,6 +840,7 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("api.server.get_bot", return_value=self.bot),
+            patch("api.server.update_bot_error"),
             patch(
                 "api.server.bot_get_public_profile",
                 new=AsyncMock(return_value=telegram_profile),
@@ -661,6 +869,7 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_api_redacts_raw_token_from_errors(self):
         with (
             patch("api.server.get_bot", return_value=self.bot),
+            patch("api.server.update_bot_error"),
             patch(
                 "api.server.bot_get_public_profile",
                 new=AsyncMock(
@@ -675,6 +884,76 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.status_code, 502)
         self.assertNotIn(self.token, caught.exception.detail)
+
+    async def test_profile_401_is_actionable_422_and_records_safe_error(self):
+        error = bot_sender.BotApiError(
+            f"failed at /bot{self.token}/getMe",
+            error_code=401,
+            description="Unauthorized",
+        )
+        with (
+            patch("api.server.get_bot", return_value=self.bot),
+            patch(
+                "api.server.get_enriched_bot_profile",
+                new=AsyncMock(side_effect=error),
+            ),
+            patch("api.server.update_bot_error") as update_error,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await server.api_get_bot_profile(9)
+
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("BotFather", caught.exception.detail)
+        self.assertNotIn(self.token, caught.exception.detail)
+        update_error.assert_called_once_with(9, server.BOT_TOKEN_INVALID_DETAIL)
+
+    async def test_bot_test_failure_records_safe_error(self):
+        error = bot_sender.BotApiError(
+            f"token={self.token}",
+            error_code=401,
+            description="Unauthorized",
+        )
+        with (
+            patch("api.server.get_bot", return_value=self.bot),
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(side_effect=error),
+            ),
+            patch("api.server.update_bot_error") as update_error,
+        ):
+            response = await server.api_test_bot(9)
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["message"], server.BOT_TOKEN_INVALID_DETAIL)
+        self.assertNotIn(self.token, json.dumps(response, ensure_ascii=False))
+        update_error.assert_called_once_with(9, server.BOT_TOKEN_INVALID_DETAIL)
+
+    async def test_bot_test_success_clears_previous_error(self):
+        stored_bot = SimpleNamespace(id=9, token=self.token, last_error="old error")
+        with (
+            patch("api.server.get_bot", return_value=stored_bot),
+            patch(
+                "api.server.bot_get_me",
+                new=AsyncMock(
+                    return_value={
+                        "ok": True,
+                        "result": {"id": 9, "username": "healthy_bot"},
+                    }
+                ),
+            ),
+            patch("api.server.update_bot", return_value=stored_bot) as update,
+        ):
+            response = await server.api_test_bot(9)
+
+        self.assertTrue(response["ok"])
+        update.assert_called_once_with(
+            9,
+            {
+                "username": "healthy_bot",
+                "bot_link": "https://t.me/healthy_bot",
+                "last_error": "",
+            },
+        )
 
     async def test_upload_photo_normalizes_then_sends_jpeg(self):
         upload = UploadFile(filename="avatar.png", file=BytesIO(b"png-source"))
@@ -806,6 +1085,7 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
         base = {"username": "demo_bot", "commands": []}
         with (
             patch("api.server.get_bot", return_value=self.bot),
+            patch("api.server.update_bot_error"),
             patch(
                 "api.server.bot_get_public_profile",
                 new=AsyncMock(return_value=base),
@@ -910,7 +1190,18 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
             read_next.assert_not_awaited()
 
         admin_next = AsyncMock(return_value=server.Response(status_code=204))
-        with patch.object(server, "ADMIN_TOKEN", "explicit-admin-token"):
+        with (
+            patch.object(server, "ADMIN_TOKEN", "explicit-admin-token"),
+            patch(
+                "api.server.get_bound_legacy_admin",
+                return_value={
+                    "id": 1,
+                    "username": "db-admin",
+                    "role": "admin",
+                    "status": "active",
+                },
+            ),
+        ):
             response = await server.require_admin_auth(
                 build_request(
                     "PUT",
@@ -943,6 +1234,15 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "ADMIN_PASSWORD", "configured-password"),
             patch.object(server, "ADMIN_TOKEN", "configured-token"),
             patch("api.server._apply_auth_rate_limit"),
+            patch(
+                "api.server.get_bound_legacy_admin",
+                return_value={
+                    "id": 7,
+                    "username": "database-admin",
+                    "role": "admin",
+                    "status": "active",
+                },
+            ),
         ):
             response = await server.api_auth_login(
                 server.LoginRequest(
@@ -954,6 +1254,26 @@ class BotProfileApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(response["ok"])
         self.assertEqual(response["token"], "configured-token")
+        self.assertEqual(response["user"]["id"], 7)
+
+    async def test_legacy_admin_rejects_missing_database_binding(self):
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        with (
+            patch.object(server, "ADMIN_PASSWORD", "configured-password"),
+            patch.object(server, "ADMIN_TOKEN", "configured-token"),
+            patch("api.server._apply_auth_rate_limit"),
+            patch("api.server.get_bound_legacy_admin", return_value=None),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await server.api_auth_login(
+                    server.LoginRequest(
+                        username="",
+                        password="configured-password",
+                    ),
+                    request,
+                )
+
+        self.assertEqual(caught.exception.status_code, 403)
 
     async def test_database_admin_session_still_passes_profile_middleware(self):
         request = Request({

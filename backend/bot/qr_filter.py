@@ -12,8 +12,13 @@ def should_scan_file(file_path) -> bool:
 
 def default_image_reader(file_path):
     import cv2
+    import numpy as np
 
-    return cv2.imread(str(file_path))
+    # imread cannot reliably open non-ASCII paths on Windows.
+    image_bytes = Path(file_path).read_bytes()
+    if not image_bytes:
+        return None
+    return cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
 def default_detector_factory():
@@ -34,16 +39,73 @@ def detector_result_has_text(result) -> bool:
     return bool(str(first or "").strip())
 
 
-def detector_decodes_image(detector, image) -> bool:
-    if hasattr(detector, "detectAndDecode"):
-        if detector_result_has_text(detector.detectAndDecode(image)):
-            return True
+def has_valid_qr_points(points, image) -> bool:
+    """Accept QR detector locations, excluding empty/degenerate polygons."""
+    if points is None:
+        return False
 
-    if hasattr(detector, "detectAndDecodeMulti"):
-        result = detector.detectAndDecodeMulti(image)
-        if isinstance(result, tuple) and len(result) >= 2:
-            decoded = result[1]
-            return detector_result_has_text(decoded)
+    import cv2
+    import numpy as np
+
+    try:
+        candidates = np.asarray(points, dtype=np.float32)
+        if candidates.size == 0 or candidates.shape[-2:] != (4, 2):
+            return False
+        candidates = candidates.reshape(-1, 4, 2)
+    except (TypeError, ValueError):
+        return False
+
+    shape = getattr(image, "shape", None)
+    for corners in candidates:
+        if not np.isfinite(corners).all():
+            continue
+        edges = np.linalg.norm(corners - np.roll(corners, 1, axis=0), axis=1)
+        if edges.min() < 2 or cv2.contourArea(corners) < 16:
+            continue
+        if not cv2.isContourConvex(corners):
+            continue
+        if shape is not None and len(shape) >= 2:
+            height, width = shape[:2]
+            if (corners[:, 0] < -width * 0.1).any() or (corners[:, 0] > width * 1.1).any():
+                continue
+            if (corners[:, 1] < -height * 0.1).any() or (corners[:, 1] > height * 1.1).any():
+                continue
+        return True
+    return False
+
+
+def detector_decodes_image(detector, image) -> bool:
+    # Filtering needs to recognise a QR code, even when a logo/compression makes
+    # its payload unreadable. OpenCV's QR-specific locator is sufficient evidence.
+    for method_name in ("detectAndDecode", "detectAndDecodeMulti", "detect", "detectMulti"):
+        method = getattr(detector, method_name, None)
+        if method is None:
+            continue
+        try:
+            result = method(image)
+            if method_name == "detectAndDecode":
+                if detector_result_has_text(result):
+                    return True
+                points = result[1] if isinstance(result, tuple) and len(result) >= 2 else None
+            elif method_name == "detectAndDecodeMulti":
+                if not isinstance(result, tuple) or len(result) < 3:
+                    continue
+                decoded = result[1]
+                if isinstance(decoded, (list, tuple)):
+                    if any(str(item or "").strip() for item in decoded):
+                        return True
+                elif detector_result_has_text(decoded):
+                    return True
+                points = result[2]
+            else:
+                if not isinstance(result, tuple) or len(result) < 2 or not result[0]:
+                    continue
+                points = result[1]
+            if has_valid_qr_points(points, image):
+                return True
+        except Exception as error:
+            # One unsupported decoder must not disable the remaining locators.
+            logger.debug(f"二维码检测方法失败，尝试其他方法 | method={method_name} | {error}")
 
     return False
 

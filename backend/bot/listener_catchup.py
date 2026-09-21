@@ -8,6 +8,7 @@ from db.crud_bot import normalize_target_channel
 from db.crud_listener import parse_target_channels
 from db.database import SessionLocal
 from db.models import ListenerSendEvent
+from utils.redaction import redact_sensitive_text
 
 
 MAX_AUTO_CATCHUP_ITEMS = 500
@@ -274,13 +275,14 @@ async def build_listener_catchup_plan(task, limit=MAX_AUTO_CATCHUP_ITEMS):
                 limit=limit,
             )
     except Exception as e:
+        safe_error = redact_sensitive_text(e)
         logger.warning(
             f"监听一键补齐计划失败：读取源频道异常 | "
-            f"task_id={task.id} | source={task.source_channel} | {e}"
+            f"task_id={task.id} | source={task.source_channel} | {safe_error}"
         )
         return {
             "ok": False,
-            "message": f"读取源频道失败：{e}",
+            "message": f"读取源频道失败：{safe_error}",
             "targets": target_states,
             "items": [],
         }
@@ -370,14 +372,15 @@ async def check_latest_content_consistency(task):
     try:
         source_message = await get_latest_message(client, task.source_channel)
     except Exception as e:
+        safe_error = redact_sensitive_text(e)
         logger.warning(
             f"监听补齐检测失败：读取源频道异常 | "
-            f"task_id={task.id} | source={task.source_channel} | {e}"
+            f"task_id={task.id} | source={task.source_channel} | {safe_error}"
         )
         return {
             "ok": False,
             "consistent": False,
-            "message": f"读取源频道失败：{e}",
+            "message": f"读取源频道失败：{safe_error}",
             "targets": [],
         }
 
@@ -401,14 +404,15 @@ async def check_latest_content_consistency(task):
         try:
             target_message = await get_latest_message(client, target)
         except Exception as e:
+            safe_error = redact_sensitive_text(e)
             logger.warning(
                 f"监听补齐检测失败：读取目标频道异常 | "
-                f"task_id={task.id} | target={target} | {e}"
+                f"task_id={task.id} | target={target} | {safe_error}"
             )
             target_results.append({
                 "target": target,
                 "consistent": False,
-                "message": f"读取目标频道失败：{e}",
+                "message": f"读取目标频道失败：{safe_error}",
                 "source_message_id": source_message.id,
                 "target_message_id": None,
             })
@@ -487,13 +491,14 @@ async def catchup_latest_listener_message_legacy(task, force=True, limit=1):
             limit=limit,
         )
     except Exception as e:
+        safe_error = redact_sensitive_text(e)
         logger.warning(
             f"监听补齐失败：读取源频道异常 | "
-            f"task_id={task.id} | source={task.source_channel} | {e}"
+            f"task_id={task.id} | source={task.source_channel} | {safe_error}"
         )
         return {
             "ok": False,
-            "message": f"读取源频道失败：{e}",
+            "message": f"读取源频道失败：{safe_error}",
         }
 
     if not content_items:
@@ -566,15 +571,16 @@ async def catchup_latest_listener_message_legacy(task, force=True, limit=1):
 
         except Exception as e:
             failed_count += 1
+            safe_error = redact_sensitive_text(e)
             logger.exception(
                 f"listener catchup failed | task_id={task.id} | "
-                f"source_message_id={source_message_id} | {e}"
+                f"source_message_id={source_message_id} | {safe_error}"
             )
             results.append({
                 "source_message_id": source_message_id,
                 "grouped_id": str(grouped_id) if grouped_id else None,
                 "ok": False,
-                "message": f"补齐失败：{e}",
+                "message": f"补齐失败：{safe_error}",
             })
 
         finally:

@@ -469,7 +469,7 @@ def apply_content_templates(text: str, task) -> str:
         return text or ""
 
 
-def apply_content_templates_with_format(text: str, task, text_is_html: bool = False):
+def apply_content_templates_with_format(text: str, task, text_is_html: bool = False, *, trim_output: bool = True):
     try:
         head = get_template_part(task, "head")
         body = get_template_part(task, "body")
@@ -491,7 +491,8 @@ def apply_content_templates_with_format(text: str, task, text_is_html: bool = Fa
                 footer_html,
                 footer_leading_blank_line,
             )
-            html_text = trim_to_telegram_limit(html_text)
+            if trim_output:
+                html_text = trim_to_telegram_limit(html_text)
 
             return {
                 "text": html_text,
@@ -599,7 +600,8 @@ def process_content(raw_text: str, task, apply_templates: bool = True):
     if remove_contact_content:
         before_contact_cleanup = text
         contact_rule_config = get_contact_rule_config(
-            getattr(task, "selected_contact_template_group_id", None)
+            getattr(task, "selected_contact_template_group_id", None),
+            owner_user_id=getattr(task, "owner_user_id", None),
         )
         text = remove_contact_lines(text, contact_rule_config)
         contact_cleanup_changed = text != before_contact_cleanup
@@ -690,6 +692,30 @@ async def process_content_async(raw_text: str, task):
         return result
 
     from bot.grok_rewriter import is_rewrite_enabled, rewrite_text
+
+    if is_rewrite_enabled(task) and getattr(task, "ai_prompt_mode", "fixed") == "auto":
+        source = result.get("text") or ""
+        if not has_meaningful_rewrite_input(strip_html_tags(source)):
+            return {"blocked": True, "text": "", "reason": "empty_after_process",
+                    "filter_detail": "源正文没有可分析的内容"}
+        rewritten, error = await rewrite_text(task, source)
+        if error and getattr(task, "ai_rewrite_failure_mode", "fallback") == "skip":
+            return {"blocked": True, "text": source, "reason": "ai_rewrite_failed", "filter_detail": error}
+        if not error and not rewritten.strip():
+            return {"blocked": True, "text": "", "reason": "empty_after_process",
+                    "filter_detail": "AI 未返回可发布正文"}
+        # Attached templates must never influence source classification.
+        rendered = apply_content_templates_with_format(source if error else rewritten, task, text_is_html=not error, trim_output=False)
+        if not error and len(rendered.get("text") or "") > CAPTION_SAFE_LIMIT:
+            error = "追加模板后超过 Telegram 安全长度，自动模式未截断正文"
+            if getattr(task, "ai_rewrite_failure_mode", "fallback") == "skip":
+                return {"blocked": True, "text": source, "reason": "ai_rewrite_failed", "filter_detail": error}
+            rendered = apply_content_templates_with_format(source, task)
+        result.update(rendered)
+        result["ai_rewritten"] = not bool(error)
+        if error:
+            result["ai_rewrite_error"] = error
+        return result
 
     # 第二阶段先追加模板，让 AI 能对完整的最终文案结构进行改写。
     template_result = apply_content_templates_with_format(

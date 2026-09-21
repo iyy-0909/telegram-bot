@@ -3,11 +3,14 @@ from typing import Dict
 
 from bot.cloner import clone_task
 from bot.logger import logger
+from auth.runtime_access import get_owner_runtime_access
+from auth.tenant import bind_tenant, reset_tenant
 from db.crud_clone import (
     get_all_clone_tasks,
     get_clone_task,
     update_clone_task,
 )
+from utils.redaction import redact_sensitive_text
 
 
 class CloneWorkerManager:
@@ -34,6 +37,23 @@ class CloneWorkerManager:
             return {
                 "ok": False,
                 "message": "clone task not found",
+                "task_id": task_id,
+            }
+
+        access = get_owner_runtime_access(
+            getattr(task, "owner_user_id", None),
+            "clone_tasks",
+        )
+        if not access.allowed:
+            update_clone_task(task_id, {"status": "stopped"})
+            logger.warning(
+                "clone worker blocked by runtime access | "
+                f"task_id={task_id} | reason={access.reason}"
+            )
+            return {
+                "ok": False,
+                "message": access.message,
+                "reason": access.reason,
                 "task_id": task_id,
             }
 
@@ -95,13 +115,14 @@ class CloneWorkerManager:
             try:
                 result = await self.start(task.id)
             except Exception as exc:
+                safe_error = redact_sensitive_text(exc)
                 logger.exception(
                     "clone worker restore failed | "
-                    f"task_id={task.id} | error={exc}"
+                    f"task_id={task.id} | error={safe_error}"
                 )
                 failed.append({
                     "task_id": task.id,
-                    "message": str(exc),
+                    "message": safe_error,
                 })
                 continue
 
@@ -125,6 +146,7 @@ class CloneWorkerManager:
         return summary
 
     async def _run(self, task_id: int, stop_event: asyncio.Event):
+        tenant_tokens = None
         try:
             task = get_clone_task(task_id)
 
@@ -132,6 +154,10 @@ class CloneWorkerManager:
                 logger.error(f"clone worker task not found | task_id={task_id}")
                 return
 
+            tenant_tokens = bind_tenant(
+                getattr(task, "owner_user_id", None),
+                is_admin=False,
+            )
             await clone_task(task, stop_event=stop_event)
 
         except asyncio.CancelledError:
@@ -145,7 +171,10 @@ class CloneWorkerManager:
             raise
 
         except Exception as e:
-            logger.exception(f"clone worker error | task_id={task_id} | {e}")
+            safe_error = redact_sensitive_text(e)
+            logger.exception(
+                f"clone worker error | task_id={task_id} | {safe_error}"
+            )
             update_clone_task(task_id, {"status": "error"})
 
         finally:
@@ -154,6 +183,9 @@ class CloneWorkerManager:
 
             self.workers.pop(task_id, None)
             self.stop_events.pop(task_id, None)
+
+            if tenant_tokens is not None:
+                reset_tenant(tenant_tokens)
 
             logger.info(f"clone worker cleared | task_id={task_id}")
 
@@ -186,6 +218,22 @@ class CloneWorkerManager:
             return {
                 "ok": False,
                 "message": "clone task not found",
+                "task_id": task_id,
+            }
+
+        access = get_owner_runtime_access(
+            getattr(task, "owner_user_id", None),
+            "clone_tasks",
+        )
+        if not access.allowed:
+            stop_event = self.stop_events.get(task_id)
+            if stop_event:
+                stop_event.set()
+            update_clone_task(task_id, {"status": "stopped"})
+            return {
+                "ok": False,
+                "message": access.message,
+                "reason": access.reason,
                 "task_id": task_id,
             }
 

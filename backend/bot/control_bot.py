@@ -26,7 +26,9 @@ from db.crud_listener import (
     update_listener_task,
 )
 from db.database import SessionLocal
+from db.crud_users import get_single_active_admin
 from db.models import ControlCommandLog
+from utils.redaction import redact_sensitive_data, redact_sensitive_text
 
 
 _polling_task = None
@@ -97,36 +99,46 @@ def command_args(text):
 def audit_log(update, command, status="received", result="", error="", parsed_args=None):
     message = get_text_message(update)
     user = update_user(update)
+    admin = get_single_active_admin()
+    if not admin:
+        logger.warning("写入云台命令审计失败 | 未找到唯一启用的管理员")
+        return
     db = SessionLocal()
 
     try:
         item = ControlCommandLog(
+            owner_user_id=int(admin["id"]),
             chat_id=update_chat_id(update),
             message_id=message.get("message_id"),
             user_id=str(user.get("id") or ""),
             username=user.get("username") or "",
             command=command or "",
-            raw_text=update_text(update),
-            parsed_args=json.dumps(parsed_args or {}, ensure_ascii=False),
+            raw_text=redact_sensitive_text(update_text(update)),
+            parsed_args=json.dumps(
+                redact_sensitive_data(parsed_args or {}),
+                ensure_ascii=False,
+            ),
             status=status,
-            result_message=result or "",
-            error_message=error or "",
+            result_message=redact_sensitive_text(result),
+            error_message=redact_sensitive_text(error),
             created_at=datetime.utcnow(),
         )
         db.add(item)
         db.commit()
     except Exception as e:
         db.rollback()
-        logger.warning(f"写入云台命令审计失败 | {e}")
+        safe_error = redact_sensitive_text(e)
+        logger.warning(f"写入云台命令审计失败 | {safe_error}")
     finally:
         db.close()
 
 
 async def send_control_text(text, thread_id=""):
     config = control_config()
+    safe_text = redact_sensitive_text(text)
     data = {
         "chat_id": config["chat_id"],
-        "text": text[:3900],
+        "text": safe_text[:3900],
         "disable_web_page_preview": True,
     }
     target_thread_id = thread_id or config.get("command_thread_id") or ""
@@ -141,7 +153,7 @@ async def answer_callback_query(callback_query_id, text="", show_alert=False):
         return None
     data = {
         "callback_query_id": callback_query_id,
-        "text": text[:180],
+        "text": redact_sensitive_text(text)[:180],
         "show_alert": "true" if show_alert else "false",
     }
     return await asyncio.to_thread(request_post, config["token"], "answerCallbackQuery", data, None)
@@ -248,7 +260,7 @@ def get_recent_errors(limit=10):
         for line in lines
         if "ERROR" in line or "WARNING" in line or "异常" in line or "失败" in line
     ]
-    return errors[-limit:]
+    return [redact_sensitive_text(line) for line in errors[-limit:]]
 
 
 def cleanup_drafts():
@@ -428,7 +440,7 @@ def handle_task_detail(args):
             f"目标：{short_targets(task.target_channels, 500)}",
             f"启用：{bool(task.enabled)}",
             f"状态：{task.status}",
-            f"错误：{task.last_error or '-'}",
+            f"错误：{redact_sensitive_text(task.last_error) or '-'}",
         ])
 
     if task_type == "clone":
@@ -675,14 +687,15 @@ async def handle_command(update):
         else:
             result = "未知命令，发送 /help 查看帮助。"
 
-        audit_log(update, cmd, "success", result)
-        return result
+        safe_result = redact_sensitive_text(result)
+        audit_log(update, cmd, "success", safe_result)
+        return safe_result
 
     except Exception as e:
-        error = str(e)
-        audit_log(update, cmd, "failed", error=error)
-        logger.exception(f"云台命令执行失败 | command={cmd} | {e}")
-        return f"命令执行失败：{error}"
+        safe_error = redact_sensitive_text(e)
+        audit_log(update, cmd, "failed", error=safe_error)
+        logger.exception(f"云台命令执行失败 | command={cmd} | {safe_error}")
+        return f"命令执行失败：{safe_error}"
 
 
 async def process_update(update):
@@ -741,7 +754,10 @@ async def process_callback_query(update):
     try:
         await edit_message_reply_markup(chat.get("id"), message.get("message_id"))
     except Exception as e:
-        logger.warning(f"移除已读按钮失败，已忽略 | alert_id={alert_id} | {e}")
+        safe_error = redact_sensitive_text(e)
+        logger.warning(
+            f"移除已读按钮失败，已忽略 | alert_id={alert_id} | {safe_error}"
+        )
 
     await answer_callback_query(callback.get("id"), "已读，停止重复提醒")
     await send_control_text(
@@ -794,7 +810,10 @@ async def control_polling_worker():
             now = datetime.utcnow().timestamp()
             if now - _last_error_log_at > 60:
                 _last_error_log_at = now
-                logger.warning(f"Control Bot polling error, retry later | {e}")
+                safe_error = redact_sensitive_text(e)
+                logger.warning(
+                    f"Control Bot polling error, retry later | {safe_error}"
+                )
             await asyncio.sleep(10)
 
 

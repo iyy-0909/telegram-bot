@@ -1,5 +1,5 @@
 from db.database import SessionLocal
-from db.models import CloneSendEvent
+from db.models import CloneSendEvent, CloneTask
 from bot.logger import logger
 from utils.time_utils import format_app_time
 
@@ -127,6 +127,9 @@ def add_clone_send_event(
     db = SessionLocal()
 
     try:
+        owner_user_id = db.query(CloneTask.owner_user_id).filter(
+            CloneTask.id == task_id
+        ).scalar()
         event = find_existing_event(
             db,
             task_id=task_id,
@@ -136,8 +139,13 @@ def add_clone_send_event(
         )
 
         if event is None:
-            event = CloneSendEvent(task_id=task_id)
+            event = CloneSendEvent(
+                task_id=task_id,
+                owner_user_id=owner_user_id,
+            )
             db.add(event)
+        elif event.owner_user_id is None:
+            event.owner_user_id = owner_user_id
 
         apply_event_fields(
             event,

@@ -83,6 +83,9 @@ def normalize_numeric_fields(data: dict):
 
         normalized[key] = value if value and value > 0 else None
 
+    if "ai_prompt_mode" in normalized and normalized["ai_prompt_mode"] not in ("fixed", "auto"):
+        normalized["ai_prompt_mode"] = "fixed"
+
     if "ai_rewrite_ratio" in normalized:
         try:
             ratio = int(normalized.get("ai_rewrite_ratio"))

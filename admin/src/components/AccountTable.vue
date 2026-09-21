@@ -5,9 +5,6 @@
         <span>账号管理</span>
 
         <div class="header-actions">
-          <el-button @click="$emit('add')">
-            手动新增
-          </el-button>
           <el-button type="primary" @click="$emit('login')">
             登录账号
           </el-button>
@@ -20,7 +17,7 @@
       v-loading="loading"
       border
       height="492"
-      empty-text="暂无采集账号，请运行 login_account.py 登录或点击新增账号。"
+      empty-text="暂无采集账号，请点击“登录账号”完成 Telegram 授权。"
     >
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="name" label="账号名称" width="110" show-overflow-tooltip />
@@ -37,8 +34,15 @@
         </template>
       </el-table-column>
 
-      <el-table-column prop="phone" label="手机号" width="110" show-overflow-tooltip />
-      <el-table-column prop="session_path" label="Session" width="160" show-overflow-tooltip />
+      <el-table-column prop="phone_masked" label="手机号" width="120" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.phone_masked || (row.has_phone ? "已配置" : "-") }}</template>
+      </el-table-column>
+      <el-table-column label="Session" width="110">
+        <template #default="{ row }">
+          <el-tag v-if="row.has_session_path" type="info" size="small">已配置</el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
 
       <el-table-column label="默认账号" width="100" align="center">
         <template #default="{ row }">
@@ -134,7 +138,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-  "add",
   "login",
   "relogin",
   "edit",

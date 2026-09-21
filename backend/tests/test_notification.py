@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from auth.runtime_access import evaluate_user_runtime_access
 from notification.config import NotificationConfig
 from notification.formatter import (
     format_notification_body,
@@ -191,14 +192,152 @@ class NtfyClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NotificationServiceTests(unittest.IsolatedAsyncioTestCase):
-    def make_service(self, config, ntfy):
+    def make_service(self, config, ntfy, *, access_loader=None):
         service = NotificationService(
             config,
             ntfy,
             setting_loader=lambda _account_id: None,
+            access_loader=access_loader
+            or (
+                lambda _account_id: SimpleNamespace(
+                    allowed=True,
+                    reason="allowed",
+                )
+            ),
         )
         service.resolve_ntfy_client = AsyncMock(return_value=(ntfy, ""))
         return service
+
+    @staticmethod
+    def runtime_user(**overrides):
+        values = {
+            "id": 1,
+            "role": "user",
+            "status": "active",
+            "plan_tier": "free",
+            "feature_keys_json": "[]",
+            "access_expires_at": None,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    async def test_sync_registers_admin_but_denies_free_paid_disabled_and_expired(self):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        denied_users = {
+            "free": self.runtime_user(plan_tier="free"),
+            "paid": self.runtime_user(plan_tier="paid"),
+            "disabled": self.runtime_user(role="admin", status="disabled"),
+            "expired": self.runtime_user(
+                plan_tier="free",
+                access_expires_at=now - timedelta(seconds=1),
+            ),
+        }
+
+        for label, user in denied_users.items():
+            with self.subTest(label=label):
+                client = SimpleNamespace(
+                    add_event_handler=Mock(),
+                    remove_event_handler=Mock(),
+                )
+                service = NotificationService(
+                    make_config(),
+                    setting_loader=lambda _account_id: {
+                        "has_setting": True,
+                        "enabled": True,
+                    },
+                    access_loader=lambda _account_id, current_user=user: (
+                        evaluate_user_runtime_access(
+                            current_user,
+                            "notifications",
+                            now=now,
+                        )
+                    ),
+                )
+                service.account_manager = SimpleNamespace(clients={3: client})
+
+                service.sync_clients()
+
+                client.add_event_handler.assert_not_called()
+                self.assertNotIn(3, service.registrations)
+
+        admin_client = SimpleNamespace(
+            add_event_handler=Mock(),
+            remove_event_handler=Mock(),
+        )
+        admin = self.runtime_user(role="admin", plan_tier="paid")
+        service = NotificationService(
+            make_config(),
+            access_loader=lambda _account_id: evaluate_user_runtime_access(
+                admin,
+                "notifications",
+                now=now,
+            ),
+        )
+        service.account_manager = SimpleNamespace(clients={3: admin_client})
+
+        service.sync_clients()
+
+        admin_client.add_event_handler.assert_called_once()
+        self.assertIn(3, service.registrations)
+
+    async def test_revoked_access_removes_registered_handler_and_blocks_event(self):
+        ntfy = SimpleNamespace(publish=AsyncMock())
+        current = {
+            "user": self.runtime_user(role="admin", plan_tier="paid"),
+        }
+        service = self.make_service(
+            make_config(),
+            ntfy,
+            access_loader=lambda _account_id: evaluate_user_runtime_access(
+                current["user"],
+                "notifications",
+            ),
+        )
+        client = SimpleNamespace(
+            add_event_handler=Mock(),
+            remove_event_handler=Mock(),
+        )
+        service.account_manager = SimpleNamespace(clients={3: client})
+        service.sync_clients()
+        handler = service.registrations[3][1]
+        current["user"] = self.runtime_user(plan_tier="paid")
+        event = FakeEvent(private=True)
+        event.client = client
+
+        await handler(event)
+
+        ntfy.publish.assert_not_awaited()
+        client.remove_event_handler.assert_called_once()
+        self.assertNotIn(3, service.registrations)
+
+    async def test_access_is_rechecked_immediately_before_publish(self):
+        ntfy = SimpleNamespace(publish=AsyncMock())
+        allowed = evaluate_user_runtime_access(
+            self.runtime_user(role="admin"),
+            "notifications",
+        )
+        denied = evaluate_user_runtime_access(
+            self.runtime_user(plan_tier="free"),
+            "notifications",
+        )
+        access_loader = Mock(side_effect=[allowed, denied])
+        service = self.make_service(
+            make_config(only_unmuted=False),
+            ntfy,
+            access_loader=access_loader,
+        )
+        event = FakeEvent(private=True)
+        event.client.remove_event_handler = Mock()
+        handler = AsyncMock()
+        builder = object()
+        service.registrations[3] = (event.client, handler, builder)
+
+        await service.handle_event(3, event)
+
+        self.assertEqual(access_loader.call_count, 2)
+        ntfy.publish.assert_not_awaited()
+        event.client.remove_event_handler.assert_called_once_with(handler, builder)
+        self.assertNotIn(3, service.registrations)
 
     async def test_muted_chat_is_not_published(self):
         ntfy = SimpleNamespace(publish=AsyncMock())

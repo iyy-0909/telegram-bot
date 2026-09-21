@@ -6,7 +6,8 @@ import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -27,14 +28,42 @@ from auth import (
     validate_username,
     verify_password,
 )
+from auth.access import (
+    DEFAULT_ADVERTISEMENT_SEND_TIME,
+    DEFAULT_FREE_ADVERTISEMENT_TEXT,
+    FEATURE_DEFINITIONS,
+    FEATURE_ORDER,
+    PLAN_DEFINITIONS,
+    PLAN_FREE,
+    PLAN_PAID,
+    apply_plan_task_constraints,
+    dump_feature_keys_json,
+    normalize_plan_tier,
+    normalize_utc_datetime,
+    plan_feature_keys,
+    user_has_feature,
+)
 from auth.rate_limit import RateLimitExceeded, auth_rate_limiter
+from auth.tenant import bind_tenant, current_tenant_user_id, reset_tenant
+from utils.redaction import (
+    is_masked_secret,
+    mask_phone,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
 
-from bot.handlers import get_registered_listener_snapshot, reload_handlers
+from bot.handlers import (
+    get_registered_listener_snapshot,
+    reload_handlers,
+    request_reload_handlers,
+)
 from bot.clone_manager import clone_manager
 
 from db import crud_users as user_store
 from db.crud_bot import get_bot
 from bot.bot_sender import (
+    BotApiError,
+    BotApiNetworkError,
     bot_download_profile_photo,
     bot_get_me,
     bot_get_public_profile,
@@ -89,15 +118,20 @@ from db.crud_control_alerts import (
 from db.crud_users import (
     UsernameAlreadyExists,
     create_user_session,
+    get_single_active_admin,
+    get_user_by_id,
     get_user_by_session_token,
     get_user_by_username,
+    list_users,
     record_login_failure,
     record_login_success,
     revoke_user_session,
+    update_user_access,
     user_to_dict,
 )
-from db.models import UserAccount
+from db.models import Account, AiPromptTemplate, BotAccount, ContentTemplate, UserAccount
 from accounts.manager import account_manager
+from init_db import ensure_defaults_for_owner
 from bot.channel_utils import normalize_channel_identifier, normalize_channel_list_json
 from bot.support_bot import (
     check_group_topic_permission,
@@ -150,9 +184,11 @@ from db.crud_ai_prompts import (
 
 from db.crud_settings import (
     ensure_default_settings,
+    get_ai_common_rewrite_rules,
     get_ai_settings,
     get_send_settings,
     update_ai_settings,
+    update_ai_common_rewrite_rules,
     update_send_settings,
 )
 from db.crud_notification import (
@@ -198,6 +234,7 @@ from db.crud_bot import (
     get_all_bots,
     create_bot,
     update_bot,
+    update_bot_error,
     delete_bot,
     get_all_bindings,
     create_binding,
@@ -267,6 +304,189 @@ AUTH_EXEMPT_PATHS = {
 }
 _REGISTRATION_CREATE_LOCK = threading.Lock()
 
+_READ_METHODS = frozenset({"GET", "HEAD"})
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_ADMIN_ONLY_API_RULES = (
+    (_READ_METHODS, re.compile(r"^/api/logs$")),
+)
+_CONTENT_PROCESSING_API_PATTERNS = (
+    re.compile(r"^/api/content-templates(?:/.*)?$"),
+    re.compile(r"^/api/content-template-rules(?:/.*)?$"),
+    re.compile(r"^/api/settings/ai$"),
+    re.compile(r"^/api/ai/prompts(?:/.*)?$"),
+    re.compile(r"^/api/ai/common-rules$"),
+)
+_API_FEATURE_RULES = (
+    (_READ_METHODS, re.compile(r"^/api/status$"), frozenset({"dashboard"})),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/runtime/dashboard$"),
+        frozenset({"dashboard"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/runtime/listener-handlers$"),
+        frozenset({"listener_tasks"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/clone-send-events$"),
+        frozenset({"clone_tasks"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/listener-send-events$"),
+        frozenset({"listener_tasks"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/clone-workers$"),
+        frozenset({"clone_tasks"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/options/accounts$"),
+        frozenset({"accounts", "listener_tasks", "clone_tasks", "channels"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/options/bots$"),
+        frozenset(
+            {"bots", "listener_tasks", "clone_tasks", "channels", "support"}
+        ),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/content-templates(?:/.*)?$"),
+        frozenset({"listener_tasks", "clone_tasks", "system_settings"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/content-template-rules(?:/.*)?$"),
+        frozenset({"listener_tasks", "clone_tasks", "system_settings"}),
+    ),
+    (
+        _WRITE_METHODS,
+        re.compile(r"^/api/content-templates(?:/.*)?$"),
+        frozenset({"system_settings"}),
+    ),
+    (
+        _WRITE_METHODS,
+        re.compile(r"^/api/content-template-rules(?:/.*)?$"),
+        frozenset({"system_settings"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/settings/ai$"),
+        frozenset({"listener_tasks", "clone_tasks", "ai_settings"}),
+    ),
+    (
+        _WRITE_METHODS,
+        re.compile(r"^/api/settings/ai$"),
+        frozenset({"ai_settings"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/ai/prompts(?:/.*)?$"),
+        frozenset({"listener_tasks", "clone_tasks", "ai_settings"}),
+    ),
+    (
+        _WRITE_METHODS,
+        re.compile(r"^/api/ai/prompts(?:/.*)?$"),
+        frozenset({"ai_settings"}),
+    ),
+    (
+        _READ_METHODS,
+        re.compile(r"^/api/ai/common-rules$"),
+        frozenset({"listener_tasks", "clone_tasks", "ai_settings"}),
+    ),
+    (
+        _WRITE_METHODS,
+        re.compile(r"^/api/ai/common-rules$"),
+        frozenset({"ai_settings"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/settings/send$"),
+        frozenset({"system_settings"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/rules(?:/.*)?$"),
+        frozenset({"listener_tasks"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/listener-tasks(?:/.*)?$"),
+        frozenset({"listener_tasks"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/clone-tasks(?:/.*)?$"),
+        frozenset({"clone_tasks"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/my-channels(?:/.*)?$"),
+        frozenset({"channels"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/search-bots(?:/.*)?$"),
+        frozenset({"channels"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/search-bot-submissions(?:/.*)?$"),
+        frozenset({"channels"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/clone-channels(?:/.*)?$"),
+        frozenset({"channels"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/bulk-replace(?:/.*)?$"),
+        frozenset({"bulk_replace"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/support(?:/.*)?$"),
+        frozenset({"support"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/accounts(?:/.*)?$"),
+        frozenset({"accounts"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/notification-settings(?:/.*)?$"),
+        frozenset({"notifications"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/control-alerts(?:/.*)?$"),
+        frozenset({"alerts"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/notify/test$"),
+        frozenset({"alerts"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/bots(?:/.*)?$"),
+        frozenset({"bots"}),
+    ),
+    (
+        _READ_METHODS | _WRITE_METHODS,
+        re.compile(r"^/api/bot-bindings(?:/.*)?$"),
+        frozenset({"bots"}),
+    ),
+)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -282,10 +502,163 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(PermissionError)
+async def tenant_permission_error_handler(_request: Request, _exc: PermissionError):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Resource not found or access denied"},
+    )
+
+
 def user_role(user) -> str:
     if isinstance(user, dict):
         return str(user.get("role") or "")
     return str(getattr(user, "role", "") or "")
+
+
+def is_admin_user(user) -> bool:
+    return user_role(user).strip().lower() == "admin"
+
+
+def request_required_features(method: str, path: str):
+    normalized_method = str(method or "").upper()
+    normalized_path = str(path or "").rstrip("/") or "/"
+    for methods, pattern, feature_keys in _API_FEATURE_RULES:
+        if normalized_method in methods and pattern.fullmatch(normalized_path):
+            return feature_keys
+    return None
+
+
+def is_admin_only_api(method: str, path: str) -> bool:
+    normalized_method = str(method or "").upper()
+    normalized_path = str(path or "").rstrip("/") or "/"
+    return any(
+        normalized_method in methods and pattern.fullmatch(normalized_path)
+        for methods, pattern in _ADMIN_ONLY_API_RULES
+    )
+
+
+def is_content_processing_api(path: str) -> bool:
+    normalized_path = str(path or "").rstrip("/") or "/"
+    return any(
+        pattern.fullmatch(normalized_path)
+        for pattern in _CONTENT_PROCESSING_API_PATTERNS
+    )
+
+
+def request_user_plan(request: Request) -> str:
+    current_user = getattr(request.state, "current_user", None) or {}
+    if is_admin_user(current_user):
+        return PLAN_PAID
+    return normalize_plan_tier(current_user.get("plan_tier"))
+
+
+def task_owner_plan(task, request: Request) -> str:
+    current_user = getattr(request.state, "current_user", None) or {}
+    if not is_admin_user(current_user):
+        return request_user_plan(request)
+    owner_user_id = getattr(task, "owner_user_id", None)
+    if owner_user_id:
+        owner = get_user_by_id(owner_user_id)
+        if owner:
+            return normalize_plan_tier(owner.get("plan_tier"))
+    return request_user_plan(request)
+
+
+def require_task_owner(task, request: Request):
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    current_user = getattr(request.state, "current_user", None) or {}
+    if is_admin_user(current_user):
+        return task
+    if getattr(task, "owner_user_id", None) != current_user.get("id"):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+
+def visible_tasks(tasks, request: Request):
+    current_user = getattr(request.state, "current_user", None) or {}
+    if is_admin_user(current_user):
+        return tasks
+    current_user_id = current_user.get("id")
+    return [
+        task
+        for task in tasks
+        if getattr(task, "owner_user_id", None) == current_user_id
+    ]
+
+
+def prepare_task_payload(data: dict, request: Request, existing_task=None) -> dict:
+    payload = dict(data or {})
+    current_user = getattr(request.state, "current_user", None) or {}
+    if existing_task is None:
+        plan_tier = request_user_plan(request)
+        if not is_admin_user(current_user):
+            payload["owner_user_id"] = current_user.get("id")
+    else:
+        plan_tier = task_owner_plan(existing_task, request)
+        if (
+            not getattr(existing_task, "owner_user_id", None)
+            and not is_admin_user(current_user)
+        ):
+            payload["owner_user_id"] = current_user.get("id")
+    payload = apply_plan_task_constraints(payload, plan_tier)
+    expected_owner_user_id = (
+        getattr(existing_task, "owner_user_id", None)
+        if existing_task is not None
+        else current_user.get("id")
+    )
+    validate_task_resource_ownership(payload, expected_owner_user_id)
+    return payload
+
+
+def validate_task_resource_ownership(payload, owner_user_id):
+    if owner_user_id in (None, "", 0, "0"):
+        return
+
+    resource_fields = {
+        "account_id": Account,
+        "bot_id": BotAccount,
+        "ai_prompt_template_id": AiPromptTemplate,
+        "selected_head_template_group_id": ContentTemplate,
+        "selected_body_template_group_id": ContentTemplate,
+        "selected_footer_template_group_id": ContentTemplate,
+        "selected_filter_template_group_id": ContentTemplate,
+        "selected_link_template_group_id": ContentTemplate,
+        "selected_contact_template_group_id": ContentTemplate,
+        "selected_head_template_id": ContentTemplate,
+        "selected_body_template_id": ContentTemplate,
+        "selected_footer_template_id": ContentTemplate,
+    }
+    db = user_store.SessionLocal()
+    try:
+        for field_name, model in resource_fields.items():
+            resource_id = payload.get(field_name)
+            if resource_id in (None, "", 0, "0"):
+                continue
+            exists = db.query(model.id).filter(
+                model.id == int(resource_id),
+                model.owner_user_id == int(owner_user_id),
+            ).first()
+            if not exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} 不属于当前任务归属账号",
+                )
+    finally:
+        db.close()
+
+
+def api_auth_error(status_code: int, code: str, detail: str, **extra):
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": False,
+            "code": code,
+            "detail": detail,
+            **extra,
+        },
+    )
 
 
 def legacy_admin_login_enabled() -> bool:
@@ -300,6 +673,11 @@ def is_legacy_admin_token(token: str) -> bool:
         and candidate
         and secrets.compare_digest(candidate, configured_token)
     )
+
+
+def get_bound_legacy_admin():
+    """Bind the compatibility token to one real database administrator."""
+    return get_single_active_admin()
 
 
 def is_loopback_registration_request(request: Request) -> bool:
@@ -358,6 +736,13 @@ def create_registration_user(
                 password_hash=password_hash,
                 role=role,
                 status="active",
+                plan_tier=PLAN_PAID if role == "admin" else PLAN_FREE,
+                feature_keys_json=dump_feature_keys_json(
+                    plan_feature_keys(PLAN_PAID if role == "admin" else PLAN_FREE)
+                ),
+                access_expires_at=None,
+                advertisement_text=DEFAULT_FREE_ADVERTISEMENT_TEXT,
+                advertisement_send_time=DEFAULT_ADVERTISEMENT_SEND_TIME,
             )
             db.add(user)
             try:
@@ -366,22 +751,39 @@ def create_registration_user(
                 db.rollback()
                 raise UsernameAlreadyExists("用户名已被使用") from exc
             db.refresh(user)
+            ensure_defaults_for_owner(user.id)
             return user
         finally:
             db.close()
 
 
 def require_bot_profile_admin(request: Request):
-    if user_role(getattr(request.state, "current_user", None)) != "admin":
+    if not user_has_feature(getattr(request.state, "current_user", None), "bots"):
         raise HTTPException(
             status_code=403,
-            detail="仅管理员可以修改 Telegram Bot 公开资料",
+            detail="仅管理员或拥有 Bot 管理权限的用户可以修改 Telegram Bot 公开资料",
         )
+
+
+def require_access_admin(request: Request):
+    if not is_admin_user(getattr(request.state, "current_user", None)):
+        raise HTTPException(status_code=403, detail="仅管理员可以管理用户权限")
+
+
+async def call_next_with_tenant(request, call_next, current_user):
+    tokens = bind_tenant(
+        current_user.get("id"),
+        is_admin=is_admin_user(current_user),
+    )
+    try:
+        return await call_next(request)
+    finally:
+        reset_tenant(tokens)
 
 
 @app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
-    path = request.url.path
+    path = request.url.path.rstrip("/") or "/"
 
     if request.method == "OPTIONS" or not path.startswith("/api/"):
         return await call_next(request)
@@ -393,19 +795,21 @@ async def require_admin_auth(request: Request, call_next):
     token = auth_header.removeprefix("Bearer ").strip()
 
     if is_legacy_admin_token(token):
-        current_user = {
-            "id": 0,
-            "username": "admin",
-            "role": "admin",
-            "status": "active",
-        }
+        current_user = get_bound_legacy_admin()
+        if not current_user:
+            return api_auth_error(
+                401,
+                "AUTH_REQUIRED",
+                "静态管理员令牌未绑定唯一数据库管理员",
+            )
         request.state.auth_token = token
     else:
         session_result = get_user_by_session_token(token) if token else None
         if not session_result:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "未登录或登录已失效"},
+            return api_auth_error(
+                401,
+                "AUTH_REQUIRED",
+                "未登录或登录已失效",
             )
 
         current_user, session_id = session_result
@@ -418,13 +822,67 @@ async def require_admin_auth(request: Request, call_next):
         (method == "GET" and path == "/api/auth/me")
         or (method == "POST" and path == "/api/auth/logout")
     )
-    if user_role(current_user) != "admin" and not self_service_request:
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "仅管理员可以访问管理后台接口"},
+    if self_service_request or is_admin_user(current_user):
+        return await call_next_with_tenant(request, call_next, current_user)
+
+    if path == "/api/admin" or path.startswith("/api/admin/"):
+        return api_auth_error(
+            403,
+            "ADMIN_REQUIRED",
+            "仅管理员可以管理用户权限",
         )
 
-    return await call_next(request)
+    if is_admin_only_api(method, path):
+        return api_auth_error(
+            403,
+            "ADMIN_REQUIRED",
+            "仅管理员可以访问该接口",
+        )
+
+    if current_user.get("access_state") == "expired":
+        return api_auth_error(
+            403,
+            "ACCESS_EXPIRED",
+            "账号使用期限已到期，请联系管理员续期",
+        )
+
+    if current_user.get("access_state") == "pending":
+        return api_auth_error(
+            403,
+            "ACCESS_PENDING",
+            "账号正在等待管理员分配功能权限",
+        )
+
+    if (
+        normalize_plan_tier(current_user.get("plan_tier")) == PLAN_FREE
+        and is_content_processing_api(path)
+    ):
+        return api_auth_error(
+            403,
+            "PLAN_RESTRICTED",
+            "免费版为一比一原样克隆，不能配置内容处理、AI 改写或内容模板",
+        )
+
+    required_features = request_required_features(method, path)
+    if required_features is None:
+        return api_auth_error(
+            403,
+            "API_FORBIDDEN",
+            "当前接口未向普通用户开放",
+        )
+
+    if not any(user_has_feature(current_user, key) for key in required_features):
+        ordered_required = [
+            key for key in FEATURE_ORDER if key in required_features
+        ]
+        return api_auth_error(
+            403,
+            "FEATURE_FORBIDDEN",
+            "当前账号没有此功能权限，请联系管理员授权",
+            required_features=ordered_required,
+        )
+
+    return await call_next_with_tenant(request, call_next, current_user)
 
 
 class LoginRequest(BaseModel):
@@ -439,9 +897,18 @@ class RegisterRequest(BaseModel):
     captcha_code: str
 
 
+class UserAccessUpdate(BaseModel):
+    plan_tier: Optional[str] = None
+    access_expires_at: Optional[datetime] = None
+    status: Optional[str] = None
+    advertisement_text: Optional[str] = None
+    advertisement_send_time: Optional[str] = None
+
+
 class RuleCreate(BaseModel):
     source: str
     target: str
+    account_id: Optional[int] = None
     enabled: bool = True
     blocked_keywords: str = "[]"
     replace_words: str = "{}"
@@ -477,6 +944,7 @@ class ListenerTaskCreate(BaseModel):
     ai_rewrite_model: str = ""
     ai_rewrite_prompt: str = ""
     ai_prompt_template_id: Optional[int] = None
+    ai_prompt_mode: Literal["fixed", "auto"] = "fixed"
     ai_rewrite_max_chars: int = 800
     ai_rewrite_ratio: int = 70
     ai_rewrite_failure_mode: str = "fallback"
@@ -515,6 +983,7 @@ class ListenerTaskUpdate(BaseModel):
     ai_rewrite_model: Optional[str] = None
     ai_rewrite_prompt: Optional[str] = None
     ai_prompt_template_id: Optional[int] = None
+    ai_prompt_mode: Optional[Literal["fixed", "auto"]] = None
     ai_rewrite_max_chars: Optional[int] = None
     ai_rewrite_ratio: Optional[int] = None
     ai_rewrite_failure_mode: Optional[str] = None
@@ -577,7 +1046,6 @@ class ContentTemplateRuleUpdate(BaseModel):
 class AccountCreate(BaseModel):
     name: str
     username: str = ""
-    session_path: str
     proxy: str = ""
     remark: str = ""
     is_default: bool = False
@@ -593,8 +1061,8 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str
     username: str = ""
-    session_path: str
-    proxy: str = ""
+    proxy: Optional[str] = None
+    clear_proxy: bool = False
     enabled: bool = True
     remark: str = ""
     is_default: Optional[bool] = None
@@ -615,11 +1083,9 @@ class NotificationSettingUpdate(BaseModel):
 class AccountLoginStart(BaseModel):
     phone: str
     name: str = ""
-    session_path: str = ""
     proxy: str = ""
     remark: str = ""
     account_id: Optional[int] = None
-    update_existing: bool = False
 
 
 class AccountLoginVerify(BaseModel):
@@ -653,6 +1119,7 @@ class CloneTaskCreate(BaseModel):
     ai_rewrite_model: str = ""
     ai_rewrite_prompt: str = ""
     ai_prompt_template_id: Optional[int] = None
+    ai_prompt_mode: Literal["fixed", "auto"] = "fixed"
     ai_rewrite_max_chars: int = 800
     ai_rewrite_ratio: int = 70
     ai_rewrite_failure_mode: str = "fallback"
@@ -698,6 +1165,7 @@ class CloneTaskUpdate(BaseModel):
     ai_rewrite_model: Optional[str] = None
     ai_rewrite_prompt: Optional[str] = None
     ai_prompt_template_id: Optional[int] = None
+    ai_prompt_mode: Optional[Literal["fixed", "auto"]] = None
     ai_rewrite_max_chars: Optional[int] = None
     ai_rewrite_ratio: Optional[int] = None
     ai_rewrite_failure_mode: Optional[str] = None
@@ -851,6 +1319,7 @@ class SendSettingsUpdate(BaseModel):
 
 
 class AiSettingsUpdate(BaseModel):
+    default_provider: Optional[Literal["grok", "deepseek"]] = None
     grok_api_key: Optional[str] = None
     deepseek_api_key: Optional[str] = None
     clear_grok_api_key: bool = False
@@ -860,7 +1329,12 @@ class AiSettingsUpdate(BaseModel):
     default_rewrite_prompt: Optional[str] = None
 
 
+class AiCommonRulesUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=20000)
+
+
 class AiPromptCreate(BaseModel):
+    content_type: Literal["", "product", "promotion", "notice", "tutorial", "story", "general"] = ""
     name: str
     content: str
     is_default: bool = False
@@ -868,10 +1342,18 @@ class AiPromptCreate(BaseModel):
 
 
 class AiPromptUpdate(BaseModel):
+    content_type: Optional[Literal["", "product", "promotion", "notice", "tutorial", "story", "general"]] = None
     name: Optional[str] = None
     content: Optional[str] = None
     is_default: Optional[bool] = None
     enabled: Optional[bool] = None
+
+
+class AiRewritePreview(BaseModel):
+    text: str = Field(min_length=1, max_length=16000)
+    provider: Literal["grok", "deepseek"] = "grok"
+    max_chars: int = Field(default=800, ge=100, le=4000)
+    rewrite_ratio: int = Field(default=70, ge=0, le=100)
 
 
 class BotSendTestRequest(BaseModel):
@@ -1011,6 +1493,7 @@ class ListenerSourceSubscriptionCheckRequest(BaseModel):
 def clone_task_to_dict(task):
     return {
         "id": task.id,
+        "owner_user_id": getattr(task, "owner_user_id", None),
         "name": task.name,
         "source_channel": task.source_channel,
         "target_channels": task.target_channels,
@@ -1034,6 +1517,7 @@ def clone_task_to_dict(task):
         "ai_rewrite_model": getattr(task, "ai_rewrite_model", "") or "",
         "ai_rewrite_prompt": getattr(task, "ai_rewrite_prompt", "") or "",
         "ai_prompt_template_id": getattr(task, "ai_prompt_template_id", None),
+        "ai_prompt_mode": getattr(task, "ai_prompt_mode", "fixed") or "fixed",
         "ai_rewrite_max_chars": getattr(task, "ai_rewrite_max_chars", 800) or 800,
         "ai_rewrite_ratio": getattr(task, "ai_rewrite_ratio", 70),
         "ai_rewrite_failure_mode": getattr(task, "ai_rewrite_failure_mode", "fallback") or "fallback",
@@ -1131,7 +1615,7 @@ async def check_listener_source_subscription(account_id: int, source_channel: st
 
     client = account_manager.get_client(account_id)
     if not client:
-        await account_manager.load_accounts()
+        await account_manager.load_account(account_id)
         client = account_manager.get_client(account_id)
 
     if not client:
@@ -1219,8 +1703,8 @@ async def check_listener_source_subscription(account_id: int, source_channel: st
             "ok": False,
             "joined": False,
             "warning": True,
-            "message": f"检测源频道订阅状态失败：{e}",
-            "error": repr(e),
+            "message": f"检测源频道订阅状态失败：{redact_sensitive_text(e)}",
+            "error": redact_sensitive_text(repr(e)),
         }
 
 
@@ -1245,6 +1729,7 @@ def rule_to_dict(rule):
 def listener_task_to_dict(task):
     return {
         "id": task.id,
+        "owner_user_id": getattr(task, "owner_user_id", None),
         "name": task.name,
         "source_channel": task.source_channel,
         "target_channels": task.target_channels,
@@ -1264,6 +1749,7 @@ def listener_task_to_dict(task):
         "ai_rewrite_model": getattr(task, "ai_rewrite_model", "") or "",
         "ai_rewrite_prompt": getattr(task, "ai_rewrite_prompt", "") or "",
         "ai_prompt_template_id": getattr(task, "ai_prompt_template_id", None),
+        "ai_prompt_mode": getattr(task, "ai_prompt_mode", "fixed") or "fixed",
         "ai_rewrite_max_chars": getattr(task, "ai_rewrite_max_chars", 800) or 800,
         "ai_rewrite_ratio": getattr(task, "ai_rewrite_ratio", 70),
         "ai_rewrite_failure_mode": getattr(task, "ai_rewrite_failure_mode", "fallback") or "fallback",
@@ -1283,7 +1769,7 @@ def listener_task_to_dict(task):
         "selected_body_template_id": getattr(task, "selected_body_template_id", None),
         "selected_footer_template_id": getattr(task, "selected_footer_template_id", None),
         "album_wait_seconds": task.album_wait_seconds,
-        "last_error": task.last_error,
+        "last_error": redact_sensitive_text(task.last_error),
         "last_received_at": str(task.last_received_at) if getattr(task, "last_received_at", None) else "",
         "clone_task_id": getattr(task, "clone_task_id", None),
         "created_at": str(task.created_at) if task.created_at else "",
@@ -1292,13 +1778,22 @@ def listener_task_to_dict(task):
 
 
 def account_to_dict(account):
+    phone = getattr(account, "phone", "") or ""
+    session_path = getattr(account, "session_path", "") or ""
+    proxy = getattr(account, "proxy", "") or ""
     return {
         "id": account.id,
         "name": account.name,
         "username": getattr(account, "username", "") or "",
-        "phone": getattr(account, "phone", "") or "",
-        "session_path": account.session_path,
-        "proxy": account.proxy,
+        # 登录凭证相关信息只写不回显，避免拥有账号模块权限的成员
+        # 通过列表接口取得手机号、Session 路径或代理认证信息。
+        "phone": "",
+        "phone_masked": mask_phone(phone),
+        "has_phone": bool(phone),
+        "session_path": "",
+        "has_session_path": bool(session_path),
+        "proxy": "",
+        "has_proxy": bool(proxy),
         "enabled": account.enabled,
         "is_default": bool(getattr(account, "is_default", False)),
         "remark": account.remark,
@@ -1322,7 +1817,7 @@ def bot_to_dict(bot):
         "bot_link": getattr(bot, "bot_link", "") or "",
         "enabled": bot.enabled,
         "remark": bot.remark,
-        "last_error": bot.last_error,
+        "last_error": redact_sensitive_text(bot.last_error),
         "created_at": str(bot.created_at) if bot.created_at else "",
         "updated_at": str(bot.updated_at) if bot.updated_at else "",
     }
@@ -1333,11 +1828,17 @@ def mask_secret(value):
 
     if not text:
         return ""
+    return "******"
 
-    if len(text) <= 12:
-        return "******"
 
-    return f"{text[:8]}...{text[-6:]}"
+def support_settings_for_api(settings):
+    """Return legacy support settings without exposing the stored Bot Token."""
+    result = dict(settings or {})
+    token = str(result.pop("support_bot_token", "") or "").strip()
+    result["support_bot_token"] = ""
+    result["support_bot_token_masked"] = "******" if token else ""
+    result["has_support_bot_token"] = bool(token)
+    return result
 
 
 async def refresh_bot_profile(bot):
@@ -1368,14 +1869,102 @@ def get_profile_bot_or_404(bot_id: int):
     return bot
 
 
+def visible_account_clients():
+    """Return only Telegram clients owned by the active tenant."""
+    visible_account_ids = {
+        int(account.id)
+        for account in get_all_accounts()
+        if getattr(account, "id", None) is not None
+    }
+    return {
+        int(account_id): client
+        for account_id, client in account_manager.clients.items()
+        if int(account_id) in visible_account_ids
+    }
+
+
+def require_visible_account(account_id: int):
+    db = user_store.SessionLocal()
+    try:
+        account = db.query(Account).filter(Account.id == int(account_id)).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Telegram account not found")
+        return account
+    finally:
+        db.close()
+
+
 def safe_bot_profile_error(error: Exception, token: str) -> str:
-    message = redact_bot_token(str(error))
+    message = redact_sensitive_text(error)
     token = (token or "").strip()
 
     if token:
         message = message.replace(token, "<hidden>")
 
     return message[:1000] or "Telegram Bot API 请求失败"
+
+
+BOT_TOKEN_INVALID_DETAIL = (
+    "Bot Token 无效或已被 BotFather 撤销，请从 BotFather 获取当前有效 Token 后重试。"
+)
+BOT_API_NETWORK_DETAIL = (
+    "暂时无法连接 Telegram Bot API，请检查服务器网络或代理后重试。"
+)
+
+
+def bot_api_error_code(error: Exception):
+    code = getattr(error, "error_code", None)
+    try:
+        if code is not None:
+            return int(code)
+    except (TypeError, ValueError):
+        pass
+
+    message = str(error or "")
+    match = re.search(r"error_code[^0-9]{0,8}(\d{3})", message, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    if "unauthorized" in message.lower() or re.search(r"\b401\b", message):
+        return 401
+    return None
+
+
+def friendly_bot_api_error(error: Exception, token: str) -> str:
+    """Return an actionable, credential-safe Bot API error for UI and storage."""
+    if bot_api_error_code(error) == 401:
+        return BOT_TOKEN_INVALID_DETAIL
+    if isinstance(error, BotApiNetworkError):
+        return BOT_API_NETWORK_DETAIL
+    return safe_bot_profile_error(error, token)
+
+
+def bot_token_validation_http_error(error: Exception, token: str) -> HTTPException:
+    code = bot_api_error_code(error)
+    detail = friendly_bot_api_error(error, token)
+    if isinstance(error, BotApiNetworkError) or code == 429 or (code or 0) >= 500:
+        return HTTPException(status_code=502, detail=detail)
+    if isinstance(error, BotApiError) or code is not None:
+        return HTTPException(status_code=422, detail=detail)
+    return HTTPException(status_code=502, detail=detail)
+
+
+async def validate_bot_token(token: str) -> dict:
+    normalized_token = str(token or "").strip()
+    if not normalized_token or is_masked_secret(normalized_token):
+        raise HTTPException(status_code=422, detail="请填写真实的 Bot Token")
+
+    try:
+        result = await bot_get_me(normalized_token)
+    except Exception as exc:
+        raise bot_token_validation_http_error(exc, normalized_token) from exc
+
+    profile = result.get("result") or {}
+    username = str(profile.get("username") or "").strip().lstrip("@")
+    return {
+        "username": username,
+        "bot_link": f"https://t.me/{username}" if username else "",
+        "last_error": "",
+    }
 
 
 def validate_bot_profile_update(data: BotProfileUpdate):
@@ -1507,10 +2096,10 @@ def apply_profile_role_capabilities(profile: dict, request: Request | None):
     if request is None:
         return profile
     current_user = getattr(request.state, "current_user", None)
-    if user_role(current_user) == "admin":
+    if user_has_feature(current_user, "bots"):
         return profile
 
-    reason = "仅管理员可以修改 Telegram Bot 公开资料"
+    reason = "仅管理员或拥有 Bot 管理权限的用户可以修改 Telegram Bot 公开资料"
     for capability in (profile.get("capabilities") or {}).values():
         if not isinstance(capability, dict):
             continue
@@ -1534,7 +2123,7 @@ async def get_enriched_bot_profile(bot, base_profile=None, extended_fields=None)
             dict(extended_fields)
             if extended_fields is not None
             else await get_botfather_profile_fields(
-                account_manager.clients,
+                visible_account_clients(),
                 username,
             )
         )
@@ -1720,6 +2309,8 @@ async def check_my_channel_permissions(
     fill_empty_only=False,
     preserve_disabled_status=False,
 ):
+    from bot.channel_activity import refresh_channel_activity
+    await refresh_channel_activity(channel, account_manager)
     fill_empty_only_fields = {
         "title",
         "username",
@@ -1816,7 +2407,7 @@ async def check_my_channel_permissions(
         updated = save_check_result(
             {
                 "status": "error",
-                "last_error": str(e)[:1000],
+                "last_error": redact_sensitive_text(e)[:1000],
                 "bot_id": bot.id,
                 "bot_is_member": False,
                 "bot_is_admin": False,
@@ -1835,8 +2426,54 @@ async def check_my_channel_permissions(
         return my_channel_to_dict(updated)
 
 
+def _parse_client_ip(value):
+    candidate = str(value or "").strip().strip('"')
+    if not candidate:
+        return None
+    if candidate.lower().startswith("for="):
+        candidate = candidate[4:].strip().strip('"')
+    if candidate.startswith("[") and "]" in candidate:
+        candidate = candidate[1:candidate.index("]")]
+    elif candidate.count(":") == 1 and "." in candidate:
+        host, port = candidate.rsplit(":", 1)
+        if port.isdigit():
+            candidate = host
+    candidate = candidate.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+
+
+def _trusted_forwarded_public_ip(request: Request):
+    headers = getattr(request, "headers", None)
+    if not headers:
+        return None
+    header_values = (
+        headers.get("x-forwarded-for") or "",
+        headers.get("x-real-ip") or "",
+    )
+    for header_value in header_values:
+        for candidate in reversed(str(header_value).split(",")):
+            parsed = _parse_client_ip(candidate)
+            if parsed is not None and parsed.is_global:
+                return str(parsed)
+    return None
+
+
 def _auth_client_key(request: Request):
-    return request.client.host if request.client else "unknown"
+    client = getattr(request, "client", None)
+    direct_host = str(getattr(client, "host", "") or "").strip()
+    direct_ip = _parse_client_ip(direct_host)
+
+    if direct_ip is not None and (direct_ip.is_loopback or direct_ip.is_private):
+        forwarded_ip = _trusted_forwarded_public_ip(request)
+        if forwarded_ip:
+            return forwarded_ip
+
+    if direct_ip is not None:
+        return str(direct_ip)
+    return direct_host or "unknown"
 
 
 def _apply_auth_rate_limit(key, limit, window_seconds):
@@ -1926,15 +2563,16 @@ async def api_auth_login(payload: LoginRequest, request: Request):
             )
         if not secrets.compare_digest(payload.password, ADMIN_PASSWORD):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
+        current_user = get_bound_legacy_admin()
+        if not current_user:
+            raise HTTPException(
+                status_code=403,
+                detail="静态管理员登录未绑定唯一数据库管理员，请使用数据库账号登录",
+            )
         return {
             "ok": True,
             "token": ADMIN_TOKEN,
-            "user": {
-                "id": 0,
-                "username": "admin",
-                "role": "admin",
-                "status": "active",
-            },
+            "user": current_user,
         }
 
     user = get_user_by_username(username)
@@ -1952,6 +2590,13 @@ async def api_auth_login(payload: LoginRequest, request: Request):
     if not verify_password(payload.password, user.password_hash):
         record_login_failure(user.id)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    if user_to_dict(user)["access_state"] == "expired":
+        return api_auth_error(
+            403,
+            "ACCESS_EXPIRED",
+            "账号使用期限已到期，请联系管理员续期",
+        )
 
     user = record_login_success(user.id)
     token, expires_at = create_user_session(user.id, AUTH_SESSION_DAYS)
@@ -1979,6 +2624,101 @@ async def api_auth_logout(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/admin/features")
+def api_admin_features(request: Request):
+    require_access_admin(request)
+    return {
+        "ok": True,
+        "items": [dict(item) for item in FEATURE_DEFINITIONS],
+        "plans": [dict(item) for item in PLAN_DEFINITIONS],
+    }
+
+
+@app.get("/api/admin/users")
+def api_admin_users(request: Request):
+    require_access_admin(request)
+    return {
+        "ok": True,
+        "items": list_users(),
+    }
+
+
+@app.patch("/api/admin/users/{user_id}/access")
+def api_admin_update_user_access(
+    user_id: int,
+    payload: UserAccessUpdate,
+    request: Request,
+):
+    require_access_admin(request)
+    updates = (
+        payload.model_dump(exclude_unset=True)
+        if hasattr(payload, "model_dump")
+        else payload.dict(exclude_unset=True)
+    )
+    if not updates:
+        raise HTTPException(status_code=422, detail="至少需要提交一项权限设置")
+
+    plan_tier = updates.get("plan_tier")
+    if "plan_tier" in updates:
+        if plan_tier is None:
+            raise HTTPException(status_code=422, detail="必须选择免费版或付费版")
+        try:
+            plan_tier = normalize_plan_tier(plan_tier, strict=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    status = updates.get("status")
+    if "status" in updates and status not in {"active", "disabled"}:
+        raise HTTPException(
+            status_code=422,
+            detail="账号状态只能是 active 或 disabled",
+        )
+
+    access_expires_at_provided = "access_expires_at" in updates
+    access_expires_at = normalize_utc_datetime(
+        updates.get("access_expires_at")
+    )
+
+    advertisement_text_provided = "advertisement_text" in updates
+    advertisement_text = updates.get("advertisement_text")
+    if advertisement_text_provided and len(str(advertisement_text or "")) > 4000:
+        raise HTTPException(status_code=422, detail="广告内容不能超过 4000 个字符")
+
+    advertisement_send_time_provided = "advertisement_send_time" in updates
+    advertisement_send_time = updates.get("advertisement_send_time")
+    if advertisement_send_time_provided:
+        advertisement_send_time = str(advertisement_send_time or "").strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", advertisement_send_time):
+            raise HTTPException(status_code=422, detail="广告发送时间必须是 HH:MM 格式")
+
+    try:
+        user = update_user_access(
+            user_id,
+            plan_tier=plan_tier,
+            advertisement_text=advertisement_text,
+            advertisement_text_provided=advertisement_text_provided,
+            advertisement_send_time=advertisement_send_time,
+            advertisement_send_time_provided=advertisement_send_time_provided,
+            access_expires_at=access_expires_at,
+            access_expires_at_provided=access_expires_at_provided,
+            status=status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if user and {"plan_tier", "access_expires_at", "status"}.intersection(updates):
+        # This endpoint is synchronous and normally runs in an AnyIO worker
+        # thread. Marshal handler mutation back onto the bot event loop.
+        request_reload_handlers()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {
+        "ok": True,
+        "user": user,
+    }
+
+
 @app.get("/api/status")
 def status():
     listener_tasks = get_all_listener_tasks()
@@ -1990,9 +2730,26 @@ def status():
 
 
 @app.get("/api/runtime/listener-handlers")
-def api_runtime_listener_handlers():
+def api_runtime_listener_handlers(request: Request):
     listener_tasks = get_all_listener_tasks()
+    current_user = getattr(request.state, "current_user", None)
+    admin_view = is_admin_user(current_user)
+    visible_task_ids = {int(task.id) for task in listener_tasks}
     registered_groups = get_registered_listener_snapshot()
+    if not admin_view:
+        filtered_groups = []
+        for group in registered_groups:
+            task_ids = [
+                int(task_id)
+                for task_id in group.get("task_ids", [])
+                if int(task_id) in visible_task_ids
+            ]
+            if not task_ids:
+                continue
+            filtered_group = dict(group)
+            filtered_group["task_ids"] = task_ids
+            filtered_groups.append(filtered_group)
+        registered_groups = filtered_groups
     registered_task_ids = {
         task_id
         for group in registered_groups
@@ -2000,7 +2757,7 @@ def api_runtime_listener_handlers():
     }
 
     client_states = {}
-    for account_id, client in account_manager.clients.items():
+    for account_id, client in visible_account_clients().items():
         connected = None
         try:
             if hasattr(client, "is_connected"):
@@ -2034,7 +2791,7 @@ def api_runtime_listener_handlers():
             "client_connected": client_state.get("connected"),
             "registered": task.id in registered_task_ids,
             "last_received_at": str(task.last_received_at) if getattr(task, "last_received_at", None) else "",
-            "last_error": task.last_error or "",
+            "last_error": redact_sensitive_text(task.last_error),
         })
 
     return {
@@ -2046,35 +2803,57 @@ def api_runtime_listener_handlers():
 
 
 @app.get("/api/runtime/dashboard")
-def api_runtime_dashboard():
+def api_runtime_dashboard(request: Request):
     queue_snapshot = runtime_queue_state.snapshot()
     listener_tasks = get_all_listener_tasks()
     clone_snapshot = clone_manager.snapshot()
-    loaded_account_ids = sorted(account_manager.clients.keys())
+    loaded_account_ids = sorted(visible_account_clients().keys())
 
     enabled_listener_count = len([
         task for task in listener_tasks
         if getattr(task, "enabled", False)
     ])
 
-    queue_stats = queue_snapshot.get("stats", {})
+    current_user = getattr(request.state, "current_user", None)
+    admin_view = is_admin_user(current_user)
+    visible_clone_task_ids = {int(task.id) for task in get_all_clone_tasks()}
+    visible_running_clone_ids = [
+        int(task_id)
+        for task_id in clone_snapshot.get("running_task_ids", [])
+        if int(task_id) in visible_clone_task_ids
+    ]
+    raw_queue_stats = queue_snapshot.get("stats", {})
+    queue_stats = raw_queue_stats if admin_view else {
+        key: 0 for key in raw_queue_stats
+    }
     stats = {
         **queue_stats,
-        "clone_running_count": clone_snapshot.get("total_running", 0),
+        "clone_running_count": len(visible_running_clone_ids),
         "listener_enabled_count": enabled_listener_count,
         "loaded_account_count": len(loaded_account_ids),
     }
 
+    public_queue = queue_snapshot if admin_view else {
+        "current": None,
+        "waiting": [],
+        "recent": [],
+        "stats": queue_stats,
+    }
+    public_clone_workers = clone_snapshot if admin_view else {
+        "running_task_ids": visible_running_clone_ids,
+        "total_running": len(visible_running_clone_ids),
+    }
+
     return {
-        "queue": queue_snapshot,
-        "clone_workers": clone_snapshot,
+        "queue": redact_sensitive_data(public_queue),
+        "clone_workers": public_clone_workers,
         "listener": {
             "enabled_count": enabled_listener_count,
             "total_count": len(listener_tasks),
         },
         "accounts": {
             "loaded_count": len(loaded_account_ids),
-            "loaded_ids": loaded_account_ids,
+            "loaded_ids": loaded_account_ids if admin_view else [],
         },
         "stats": stats,
     }
@@ -2189,8 +2968,9 @@ async def api_check_search_bot(bot_id: int):
             },
         }
     except Exception as exc:
-        item = set_search_bot_check_result(bot_id, False, str(exc))
-        return {"ok": False, "message": str(exc), "item": item}
+        safe_error = redact_sensitive_text(exc)
+        item = set_search_bot_check_result(bot_id, False, safe_error)
+        return {"ok": False, "message": safe_error, "item": item}
 
 
 @app.get("/api/search-bot-submissions")
@@ -2321,7 +3101,10 @@ async def api_batch_create_search_bot_submissions(data: SearchBotSubmissionBatch
         try:
             result.append(await execute_search_bot_submission(entry))
         except ValueError as exc:
-            errors_result.append({"index": index, "message": str(exc)})
+            errors_result.append({
+                "index": index,
+                "message": redact_sensitive_text(exc),
+            })
     return {
         "ok": bool(result),
         "items": result,
@@ -2565,7 +3348,7 @@ async def api_check_my_channel(channel_id: int):
             "message": "channel not found",
         }
 
-    checked = await check_my_channel_permissions(channel)
+    checked = redact_sensitive_data(await check_my_channel_permissions(channel))
     return {
         "ok": checked.get("status") != "error",
         "item": checked,
@@ -2584,10 +3367,35 @@ def rules():
 
 
 @app.post("/api/rules")
-def add_rule(rule: RuleCreate):
+def add_rule(rule: RuleCreate, request: Request):
+    current_user = getattr(request.state, "current_user", None) or {}
+    owner_user_id = current_user.get("id")
+    owned_accounts = [
+        account
+        for account in get_all_accounts()
+        if getattr(account, "owner_user_id", None) == owner_user_id
+    ]
+    if rule.account_id is not None:
+        account = next(
+            (item for item in owned_accounts if int(item.id) == int(rule.account_id)),
+            None,
+        )
+        if account is None:
+            raise HTTPException(status_code=404, detail="Telegram account not found")
+    else:
+        account = next(
+            (item for item in owned_accounts if bool(getattr(item, "is_default", False))),
+            None,
+        ) or next(iter(owned_accounts), None)
+        if account is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Please add a Telegram account before creating a listener rule",
+            )
     new_rule = create_rule(
         source=rule.source,
         target=rule.target,
+        account_id=account.id,
         enabled=rule.enabled,
         blocked_keywords=rule.blocked_keywords,
         replace_words=rule.replace_words,
@@ -2642,21 +3450,21 @@ def get_logs(limit: int = 200):
     ).splitlines()
 
     return {
-        "logs": lines[-limit:],
+        "logs": [redact_sensitive_text(line) for line in lines[-limit:]],
     }
 
 
 @app.get("/api/clone-send-events")
 def api_get_clone_send_events(limit: int = 20):
     return {
-        "events": get_clone_send_events(limit),
+        "events": redact_sensitive_data(get_clone_send_events(limit)),
     }
 
 
 @app.get("/api/listener-send-events")
 def api_get_listener_send_events(limit: int = 200):
     return {
-        "events": get_listener_send_events(limit),
+        "events": redact_sensitive_data(get_listener_send_events(limit)),
     }
 
 
@@ -2811,14 +3619,22 @@ def api_support_settings():
     ensure_support_defaults()
 
     return {
-        "settings": get_support_settings(),
+        "settings": support_settings_for_api(get_support_settings()),
     }
 
 
 @app.put("/api/support/settings")
 def api_support_update_settings(data: SupportSettingsUpdate):
+    payload = (
+        data.model_dump(exclude_unset=True)
+        if hasattr(data, "model_dump")
+        else data.dict(exclude_unset=True)
+    )
+    if not str(payload.get("support_bot_token") or "").strip():
+        payload.pop("support_bot_token", None)
+
     return {
-        "settings": update_support_settings(data.dict(exclude_unset=True)),
+        "settings": support_settings_for_api(update_support_settings(payload)),
     }
 
 
@@ -2831,12 +3647,28 @@ def api_support_bots():
 
 @app.post("/api/support/bots")
 def api_create_support_bot(data: SupportBotCreate):
-    return create_support_bot(data.dict())
+    create_data = data.dict()
+    if is_masked_secret(create_data.get("bot_token")):
+        if not create_data.get("bot_id"):
+            raise HTTPException(status_code=422, detail="请填写真实的 Bot Token")
+        create_data["bot_token"] = ""
+    try:
+        return create_support_bot(create_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.put("/api/support/bots/{support_bot_id}")
 def api_update_support_bot(support_bot_id: int, data: SupportBotUpdate):
-    item = update_support_bot(support_bot_id, data.dict(exclude_unset=True))
+    update_data = data.dict(exclude_unset=True)
+    if "bot_token" in update_data:
+        submitted_token = str(update_data.get("bot_token") or "").strip()
+        if not submitted_token or is_masked_secret(submitted_token):
+            update_data.pop("bot_token", None)
+    try:
+        item = update_support_bot(support_bot_id, update_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not item:
         return {
             "ok": False,
@@ -2886,12 +3718,16 @@ async def api_test_support_bot_item(support_bot_id: int):
         return {
             "ok": False,
             "mode": "polling",
-            "message": str(e),
+            "message": redact_sensitive_text(e),
         }
 
 
 @app.post("/api/support/media/upload")
 async def api_upload_support_media(file: UploadFile = File(...)):
+    owner_user_id = current_tenant_user_id()
+    if owner_user_id is None:
+        raise HTTPException(status_code=403, detail="support media requires an owned user account")
+
     content = await file.read()
     max_size = 50 * 1024 * 1024
 
@@ -2901,7 +3737,11 @@ async def api_upload_support_media(file: UploadFile = File(...)):
     if len(content) > max_size:
         raise HTTPException(status_code=400, detail="上传文件不能超过 50MB")
 
-    result = save_uploaded_media(file.filename or "welcome-media", content)
+    result = save_uploaded_media(
+        file.filename or "welcome-media",
+        content,
+        owner_user_id=owner_user_id,
+    )
     return {
         "ok": True,
         "media_ref": result["media_ref"],
@@ -2913,12 +3753,12 @@ async def api_upload_support_media(file: UploadFile = File(...)):
 
 @app.post("/api/support/bot/test")
 async def api_support_test_bot():
-    return await test_support_bot_config()
+    return redact_sensitive_data(await test_support_bot_config())
 
 
 @app.get("/api/support/updates/recent")
 async def api_support_recent_updates(limit: int = 30):
-    return await get_recent_support_updates(limit=limit)
+    return redact_sensitive_data(await get_recent_support_updates(limit=limit))
 
 
 @app.get("/api/support/tags")
@@ -3021,15 +3861,16 @@ def api_delete_content_template(template_id: int):
 
 
 @app.get("/api/listener-tasks")
-def api_get_listener_tasks():
+def api_get_listener_tasks(request: Request):
     return [
         listener_task_to_dict(task)
-        for task in get_all_listener_tasks()
+        for task in visible_tasks(get_all_listener_tasks(), request)
     ]
 
 
 @app.post("/api/listener-tasks/check-source-subscription")
 async def api_check_listener_source_subscription(data: ListenerSourceSubscriptionCheckRequest):
+    require_visible_account(data.account_id)
     sources = normalize_source_channel_list(data.source_channels)
 
     if not sources:
@@ -3040,10 +3881,10 @@ async def api_check_listener_source_subscription(data: ListenerSourceSubscriptio
             "warning_count": 0,
         }
 
-    results = [
+    results = redact_sensitive_data([
         await check_listener_source_subscription(data.account_id, source)
         for source in sources
-    ]
+    ])
     warning_count = len([item for item in results if item.get("warning")])
 
     return {
@@ -3056,17 +3897,32 @@ async def api_check_listener_source_subscription(data: ListenerSourceSubscriptio
 
 
 @app.post("/api/listener-tasks")
-def api_create_listener_task(data: ListenerTaskCreate):
-    task = create_listener_task(normalize_task_channels(data.dict()))
+def api_create_listener_task(data: ListenerTaskCreate, request: Request):
+    task_data = prepare_task_payload(
+        normalize_task_channels(data.dict()),
+        request,
+    )
+    task = create_listener_task(task_data)
     reload_handlers()
     return listener_task_to_dict(task)
 
 
 @app.put("/api/listener-tasks/{task_id}")
-def api_update_listener_task(task_id: int, data: ListenerTaskUpdate):
+def api_update_listener_task(task_id: int, data: ListenerTaskUpdate, request: Request):
+    existing_task = get_listener_task(task_id)
+    if not existing_task:
+        return {
+            "ok": False,
+            "message": "listener task not found",
+        }
+    require_task_owner(existing_task, request)
     task = update_listener_task(
         task_id,
-        normalize_task_channels(data.dict(exclude_unset=True)),
+        prepare_task_payload(
+            normalize_task_channels(data.dict(exclude_unset=True)),
+            request,
+            existing_task,
+        ),
     )
 
     if not task:
@@ -3080,7 +3936,8 @@ def api_update_listener_task(task_id: int, data: ListenerTaskUpdate):
 
 
 @app.delete("/api/listener-tasks/{task_id}")
-def api_delete_listener_task(task_id: int):
+def api_delete_listener_task(task_id: int, request: Request):
+    require_task_owner(get_listener_task(task_id), request)
     ok = delete_listener_task(task_id)
     reload_handlers()
 
@@ -3091,7 +3948,8 @@ def api_delete_listener_task(task_id: int):
 
 
 @app.post("/api/listener-tasks/{task_id}/start")
-async def api_start_listener_task(task_id: int):
+async def api_start_listener_task(task_id: int, request: Request):
+    require_task_owner(get_listener_task(task_id), request)
     task = update_listener_status(
         task_id,
         enabled=True,
@@ -3106,7 +3964,7 @@ async def api_start_listener_task(task_id: int):
         }
 
     if not account_manager.get_client(task.account_id):
-        await account_manager.load_accounts()
+        await account_manager.load_account(task.account_id)
 
     if not account_manager.get_client(task.account_id):
         error = f"监听账号不存在或未加载：account_id={task.account_id}"
@@ -3133,7 +3991,8 @@ async def api_start_listener_task(task_id: int):
 
 
 @app.post("/api/listener-tasks/{task_id}/stop")
-def api_stop_listener_task(task_id: int):
+def api_stop_listener_task(task_id: int, request: Request):
+    require_task_owner(get_listener_task(task_id), request)
     task = update_listener_status(
         task_id,
         enabled=False,
@@ -3156,7 +4015,7 @@ def api_stop_listener_task(task_id: int):
 
 
 @app.post("/api/listener-tasks/{task_id}/catchup-check")
-async def api_listener_catchup_check(task_id: int):
+async def api_listener_catchup_check(task_id: int, request: Request):
     task = get_listener_task(task_id)
 
     if not task:
@@ -3165,6 +4024,7 @@ async def api_listener_catchup_check(task_id: int):
             "consistent": False,
             "message": "listener task not found",
         }
+    require_task_owner(task, request)
 
     plan = await build_listener_catchup_plan(task)
     plan.pop("_pending_items", None)
@@ -3174,6 +4034,7 @@ async def api_listener_catchup_check(task_id: int):
 @app.post("/api/listener-tasks/{task_id}/catchup-latest")
 async def api_listener_catchup_latest(
     task_id: int,
+    request: Request,
     payload: Optional[ListenerCatchupRequest] = None,
 ):
     task = get_listener_task(task_id)
@@ -3183,6 +4044,7 @@ async def api_listener_catchup_latest(
             "ok": False,
             "message": "listener task not found",
         }
+    require_task_owner(task, request)
 
     force = bool(payload.force) if payload else True
     limit = payload.limit if payload else 500
@@ -3237,6 +4099,34 @@ async def api_listener_catchup_latest(
     return await catchup_latest_listener_message(task, force=force, limit=limit)
 
 
+@app.get("/api/options/accounts")
+def account_options():
+    return [
+        {
+            "id": account.id,
+            "name": account.name,
+            "username": getattr(account, "username", "") or "",
+            "enabled": bool(account.enabled),
+            "is_default": bool(getattr(account, "is_default", False)),
+        }
+        for account in get_all_accounts()
+    ]
+
+
+@app.get("/api/options/bots")
+def bot_options():
+    return [
+        {
+            "id": bot.id,
+            "name": bot.name,
+            "username": getattr(bot, "username", "") or "",
+            "bot_link": getattr(bot, "bot_link", "") or "",
+            "enabled": bool(bot.enabled),
+        }
+        for bot in get_all_bots()
+    ]
+
+
 @app.get("/api/accounts")
 def accounts():
     return [
@@ -3250,7 +4140,6 @@ def add_account(data: AccountCreate):
     account = create_account(
         name=data.name,
         username=data.username,
-        session_path=data.session_path,
         proxy=data.proxy,
         remark=data.remark,
         is_default=data.is_default,
@@ -3271,16 +4160,17 @@ async def api_account_login_start(data: AccountLoginStart):
     result = await account_login_manager.start_login(
         phone=data.phone,
         name=data.name,
-        session_path=data.session_path,
         proxy=data.proxy,
         remark=data.remark,
         account_id=data.account_id,
-        update_existing=data.update_existing,
     )
 
     account = result.get("account") if isinstance(result, dict) else None
     if result.get("ok") and account and account.get("id"):
-        result["runtime_loaded"] = await account_manager.load_account(account["id"])
+        result["runtime_loaded"] = await account_manager.load_account(
+            account["id"],
+            force_reload=True,
+        )
 
     return result
 
@@ -3295,16 +4185,25 @@ async def api_account_login_verify(data: AccountLoginVerify):
 
     account = result.get("account") if isinstance(result, dict) else None
     if result.get("ok") and account and account.get("id"):
-        result["runtime_loaded"] = await account_manager.load_account(account["id"])
+        result["runtime_loaded"] = await account_manager.load_account(
+            account["id"],
+            force_reload=True,
+        )
 
     return result
 
 
 @app.put("/api/accounts/{account_id}")
 def edit_account(account_id: int, data: AccountUpdate):
+    updates = data.dict(exclude_unset=True)
+    for write_only_field in ("proxy",):
+        value = updates.get(write_only_field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            updates.pop(write_only_field, None)
+
     account = update_account(
         account_id,
-        data.dict(exclude_unset=True),
+        updates,
     )
 
     if not account:
@@ -3404,26 +4303,29 @@ async def api_test_notification_setting(account_id: int):
         }
     except Exception as exc:
         status = getattr(exc, "status_code", "-")
-        message = f"ntfy 推送失败（HTTP {status}）：{exc}"
+        message = f"ntfy 推送失败（HTTP {status}）：{redact_sensitive_text(exc)}"
         update_notification_test_result(account_id, "error", message)
         raise HTTPException(status_code=502, detail=message) from exc
 
 
 @app.get("/api/clone-tasks")
-def api_get_clone_tasks():
+def api_get_clone_tasks(request: Request):
     """获取克隆任务列表"""
     tasks = get_all_clone_tasks()
 
     return [
         clone_task_to_dict(task)
-        for task in tasks
+        for task in visible_tasks(tasks, request)
     ]
 
 
 @app.post("/api/clone-tasks")
-def api_create_clone_task(data: CloneTaskCreate):
+def api_create_clone_task(data: CloneTaskCreate, request: Request):
     """创建克隆任务"""
-    task_data = normalize_task_channels(data.dict())
+    task_data = prepare_task_payload(
+        normalize_task_channels(data.dict()),
+        request,
+    )
     task_data = validate_clone_task_message_range(task_data)
 
     try:
@@ -3444,9 +4346,19 @@ def api_create_clone_task(data: CloneTaskCreate):
 
 
 @app.put("/api/clone-tasks/{task_id}")
-def api_update_clone_task(task_id: int, data: CloneTaskUpdate):
+def api_update_clone_task(task_id: int, data: CloneTaskUpdate, request: Request):
     """更新克隆任务"""
-    update_data = normalize_task_channels(data.dict(exclude_unset=True))
+    existing_task = get_clone_task(task_id)
+    if not existing_task:
+        return {
+            "message": "clone task not found",
+        }
+    require_task_owner(existing_task, request)
+    update_data = prepare_task_payload(
+        normalize_task_channels(data.dict(exclude_unset=True)),
+        request,
+        existing_task,
+    )
     update_data = validate_clone_task_update_message_range(task_id, update_data)
 
     try:
@@ -3475,8 +4387,9 @@ def api_update_clone_task(task_id: int, data: CloneTaskUpdate):
 
 
 @app.delete("/api/clone-tasks/{task_id}")
-def api_delete_clone_task(task_id: int):
+def api_delete_clone_task(task_id: int, request: Request):
     """删除克隆任务"""
+    require_task_owner(get_clone_task(task_id), request)
     if clone_manager.is_running(task_id):
         return {
             "ok": False,
@@ -3499,32 +4412,37 @@ def api_delete_clone_task(task_id: int):
 
 
 @app.post("/api/clone-tasks/{task_id}/start")
-async def api_start_clone_task(task_id: int):
+async def api_start_clone_task(task_id: int, request: Request):
     """开始克隆任务"""
+    require_task_owner(get_clone_task(task_id), request)
     return await clone_manager.start(task_id)
 
 
 @app.post("/api/clone-tasks/{task_id}/pause")
-def api_pause_clone_task(task_id: int):
+def api_pause_clone_task(task_id: int, request: Request):
     """暂停克隆任务"""
+    require_task_owner(get_clone_task(task_id), request)
     return clone_manager.pause(task_id)
 
 
 @app.post("/api/clone-tasks/{task_id}/resume")
-async def api_resume_clone_task(task_id: int):
+async def api_resume_clone_task(task_id: int, request: Request):
     """继续克隆任务"""
+    require_task_owner(get_clone_task(task_id), request)
     return await clone_manager.resume(task_id)
 
 
 @app.post("/api/clone-tasks/{task_id}/stop")
-async def api_stop_clone_task(task_id: int):
+async def api_stop_clone_task(task_id: int, request: Request):
     """停止克隆任务"""
+    require_task_owner(get_clone_task(task_id), request)
     return await clone_manager.stop(task_id)
 
 
 @app.post("/api/clone-tasks/{task_id}/reset")
-def api_reset_clone_task(task_id: int):
+def api_reset_clone_task(task_id: int, request: Request):
     """重置克隆进度"""
+    require_task_owner(get_clone_task(task_id), request)
     task = update_clone_task(
         task_id,
         {
@@ -3553,9 +4471,21 @@ def api_reset_clone_task(task_id: int):
 
 
 @app.get("/api/clone-workers")
-def api_clone_workers():
+def api_clone_workers(request: Request):
     """查看当前真实运行中的 clone worker"""
-    return clone_manager.snapshot()
+    snapshot = clone_manager.snapshot()
+    if is_admin_user(getattr(request.state, "current_user", None)):
+        return snapshot
+    visible_ids = {int(task.id) for task in get_all_clone_tasks()}
+    running_ids = [
+        int(task_id)
+        for task_id in snapshot.get("running_task_ids", [])
+        if int(task_id) in visible_ids
+    ]
+    return {
+        "running_task_ids": running_ids,
+        "total_running": len(running_ids),
+    }
 
 
 @app.get("/api/settings/send")
@@ -3579,9 +4509,42 @@ def api_update_ai_settings(data: AiSettingsUpdate):
     return update_ai_settings(data.dict(exclude_unset=True))
 
 
+@app.get("/api/ai/common-rules")
+def api_get_ai_common_rules():
+    return {"content": get_ai_common_rewrite_rules()}
+
+
+@app.put("/api/ai/common-rules")
+def api_update_ai_common_rules(data: AiCommonRulesUpdate):
+    try:
+        return update_ai_common_rewrite_rules(data.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/ai/prompts")
 def api_list_ai_prompts():
     return list_ai_prompts()
+
+
+@app.get("/api/ai/prompts/presets")
+def api_ai_prompt_presets():
+    from bot.ai_prompt_routing import prompt_presets
+    return prompt_presets()
+
+
+@app.post("/api/ai/prompts/preview")
+async def api_ai_rewrite_preview(data: AiRewritePreview):
+    from bot.grok_rewriter import rewrite_text
+    if not data.text.strip():
+        raise HTTPException(status_code=422, detail="请输入源文案")
+    task = SimpleNamespace(ai_rewrite_enabled=True, ai_prompt_mode="auto",
+                           ai_rewrite_provider=data.provider, ai_rewrite_model="",
+                           ai_rewrite_max_chars=data.max_chars, ai_rewrite_ratio=data.rewrite_ratio,
+                           owner_user_id=current_tenant_user_id())
+    details = {}
+    output, error = await rewrite_text(task, data.text, details=details)
+    return {"text": output if not error else "", "error": error, **details}
 
 
 @app.post("/api/ai/prompts")
@@ -3640,8 +4603,11 @@ def api_get_bots():
 @app.post("/api/bots")
 async def api_create_bot(data: BotCreate):
     """添加 Bot"""
-    bot = create_bot(data.dict())
-    bot = await refresh_bot_profile(bot)
+    create_data = data.dict()
+    create_data["token"] = str(create_data.get("token") or "").strip()
+    token_profile = await validate_bot_token(create_data["token"])
+    create_data.update(token_profile)
+    bot = create_bot(create_data)
 
     return bot_to_dict(bot)
 
@@ -3649,7 +4615,22 @@ async def api_create_bot(data: BotCreate):
 @app.put("/api/bots/{bot_id}")
 async def api_update_bot(bot_id: int, data: BotUpdate):
     """更新 Bot"""
+    existing_bot = get_bot(bot_id)
+    if not existing_bot:
+        return {
+            "ok": False,
+            "message": "bot not found",
+        }
+
     update_data = data.dict(exclude_unset=True)
+    if "token" in update_data:
+        submitted_token = str(update_data.get("token") or "").strip()
+        if not submitted_token or is_masked_secret(submitted_token):
+            update_data.pop("token", None)
+        else:
+            token_profile = await validate_bot_token(submitted_token)
+            update_data["token"] = submitted_token
+            update_data.update(token_profile)
 
     bot = update_bot(bot_id, update_data)
 
@@ -3658,9 +4639,6 @@ async def api_update_bot(bot_id: int, data: BotUpdate):
             "ok": False,
             "message": "bot not found",
         }
-
-    if "token" in update_data:
-        bot = await refresh_bot_profile(bot)
 
     return bot_to_dict(bot)
 
@@ -3675,9 +4653,11 @@ async def api_get_bot_profile(bot_id: int, request: Request = None):
         profile = apply_profile_role_capabilities(profile, request)
         return bot_profile_response(bot_id, profile)
     except Exception as exc:
+        detail = friendly_bot_api_error(exc, bot.token)
+        update_bot_error(bot.id, detail)
         raise HTTPException(
-            status_code=502,
-            detail=safe_bot_profile_error(exc, bot.token),
+            status_code=422 if bot_api_error_code(exc) == 401 else 502,
+            detail=detail,
         ) from exc
 
 
@@ -3716,7 +4696,7 @@ async def api_update_bot_profile(bot_id: int, data: BotProfileUpdate):
         raise HTTPException(
             status_code=502,
             detail={
-                "message": str(exc),
+                "message": redact_sensitive_text(exc),
                 "updated_fields": exc.updated_fields,
                 "failed_fields": failed_fields,
                 "profile": (
@@ -3858,7 +4838,7 @@ async def api_upload_bot_description_photo(
     try:
         username = await get_bot_username_or_error(bot)
         verified = await set_description_picture(
-            account_manager.clients,
+            visible_account_clients(),
             username,
             jpeg_content,
         )
@@ -3894,7 +4874,7 @@ async def api_get_bot_description_photo(bot_id: int):
     try:
         username = await get_bot_username_or_error(bot)
         photo = await download_description_photo(
-            account_manager.clients,
+            visible_account_clients(),
             username,
         )
     except BotProfileCapabilityError as exc:
@@ -3932,7 +4912,7 @@ async def api_delete_bot_description_photo(bot_id: int):
     try:
         username = await get_bot_username_or_error(bot)
         verified = await set_description_picture(
-            account_manager.clients,
+            visible_account_clients(),
             username,
             None,
         )
@@ -3975,7 +4955,7 @@ async def api_update_bot_privacy_policy(
     try:
         username = await get_bot_username_or_error(bot)
         verified = await set_privacy_policy(
-            account_manager.clients,
+            visible_account_clients(),
             username,
             url,
         )
@@ -4103,9 +5083,11 @@ async def api_test_bot(bot_id: int):
         }
 
     except Exception as e:
+        message = friendly_bot_api_error(e, bot.token)
+        update_bot_error(bot.id, message)
         return {
             "ok": False,
-            "message": str(e),
+            "message": message,
         }
     
 
@@ -4189,7 +5171,7 @@ async def api_bot_send_test(bot_id: int, data: BotSendTestRequest):
     except Exception as e:
         return {
             "ok": False,
-            "message": str(e),
+            "message": redact_sensitive_text(e),
         }
     
 @app.get("/api/notify/test")

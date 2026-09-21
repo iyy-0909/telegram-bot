@@ -2,6 +2,13 @@ from datetime import datetime
 import os
 
 from sqlalchemy import or_
+from auth.tenant import current_tenant_user_id
+from bot.support_media import (
+    SupportMediaError,
+    is_uploaded_media_ref,
+    validate_uploaded_media_ref,
+)
+from utils.redaction import is_masked_secret, redact_sensitive_text
 
 from db.database import SessionLocal
 from db.models import (
@@ -33,8 +40,37 @@ DEFAULT_SUPPORT_SETTINGS = {
 DEFAULT_TAGS = ["新客户", "意向客户", "已成交", "无效", "黑名单"]
 
 
+_TENANT_EMPTY_SUPPORT_SETTING_KEYS = {
+    "support_bot_id",
+    "support_bot_token",
+    "support_group_chat_id",
+}
+
+
 def now():
     return datetime.utcnow()
+
+
+def resolve_support_owner(db, *, support_bot_id=None, customer_id=None, conversation_id=None):
+    if conversation_id not in (None, ""):
+        owner_user_id = db.query(SupportConversation.owner_user_id).filter(
+            SupportConversation.id == int(conversation_id)
+        ).scalar()
+        if owner_user_id is not None:
+            return owner_user_id
+    if customer_id not in (None, ""):
+        owner_user_id = db.query(SupportCustomer.owner_user_id).filter(
+            SupportCustomer.id == int(customer_id)
+        ).scalar()
+        if owner_user_id is not None:
+            return owner_user_id
+    if support_bot_id not in (None, ""):
+        owner_user_id = db.query(SupportBot.owner_user_id).filter(
+            SupportBot.id == int(support_bot_id)
+        ).scalar()
+        if owner_user_id is not None:
+            return owner_user_id
+    return current_tenant_user_id()
 
 
 def as_bool(value):
@@ -45,12 +81,46 @@ def normalize_welcome_text_type(value):
     return "html" if str(value or "").strip().lower() == "html" else "plain"
 
 
-def set_support_setting(key, value, remark=""):
+def _support_owner_id(owner_user_id=None):
+    value = current_tenant_user_id() if owner_user_id is None else owner_user_id
+    return int(value) if value not in (None, "", 0, "0") else None
+
+
+def _owned_query(query, model, owner_user_id):
+    if owner_user_id is None:
+        return query.filter(model.owner_user_id.is_(None))
+    return query.filter(model.owner_user_id == int(owner_user_id))
+
+
+def _support_default_value(key, value, owner_user_id):
+    if owner_user_id is not None and key in _TENANT_EMPTY_SUPPORT_SETTING_KEYS:
+        return ""
+    return value
+
+
+def _validated_welcome_media_ref(value, owner_user_id):
+    media_ref = str(value or "").strip()
+    if not is_uploaded_media_ref(media_ref):
+        return media_ref
+    try:
+        validate_uploaded_media_ref(media_ref, owner_user_id=owner_user_id)
+    except SupportMediaError as exc:
+        raise ValueError("welcome media is unavailable for the current owner") from exc
+    return media_ref
+
+
+def set_support_setting(key, value, remark="", owner_user_id=None):
+    owner_user_id = _support_owner_id(owner_user_id)
     db = SessionLocal()
     try:
-        setting = db.query(SupportSetting).filter(SupportSetting.key == key).first()
+        setting = _owned_query(
+            db.query(SupportSetting).filter(SupportSetting.key == key),
+            SupportSetting,
+            owner_user_id,
+        ).first()
         if not setting:
             setting = SupportSetting(
+                owner_user_id=owner_user_id,
                 key=key,
                 value=str(value or ""),
                 remark=remark,
@@ -69,36 +139,64 @@ def set_support_setting(key, value, remark=""):
         db.close()
 
 
-def get_support_setting(key, default=""):
+def get_support_setting(key, default="", owner_user_id=None):
+    owner_user_id = _support_owner_id(owner_user_id)
     db = SessionLocal()
     try:
-        setting = db.query(SupportSetting).filter(SupportSetting.key == key).first()
+        setting = _owned_query(
+            db.query(SupportSetting).filter(SupportSetting.key == key),
+            SupportSetting,
+            owner_user_id,
+        ).first()
         return setting.value if setting else default
     finally:
         db.close()
 
 
-def ensure_support_defaults():
+def ensure_support_defaults(owner_user_id=None):
+    owner_user_id = _support_owner_id(owner_user_id)
+    if owner_user_id is None:
+        # Global polling/listing may span tenants, but it must never seed
+        # ownerless data. Tenant defaults are created at registration/migration.
+        return False
     db = SessionLocal()
     try:
         for key, value in DEFAULT_SUPPORT_SETTINGS.items():
-            exists = db.query(SupportSetting).filter(SupportSetting.key == key).first()
+            exists = _owned_query(
+                db.query(SupportSetting).filter(SupportSetting.key == key),
+                SupportSetting,
+                owner_user_id,
+            ).first()
             if not exists:
-                db.add(SupportSetting(key=key, value=str(value), updated_at=now()))
+                db.add(SupportSetting(
+                    owner_user_id=owner_user_id,
+                    key=key,
+                    value=str(_support_default_value(key, value, owner_user_id)),
+                    updated_at=now(),
+                ))
 
         for tag_name in DEFAULT_TAGS:
-            exists = db.query(SupportTag).filter(SupportTag.name == tag_name).first()
+            exists = _owned_query(
+                db.query(SupportTag).filter(SupportTag.name == tag_name),
+                SupportTag,
+                owner_user_id,
+            ).first()
             if not exists:
-                db.add(SupportTag(name=tag_name, updated_at=now()))
+                db.add(SupportTag(
+                    owner_user_id=owner_user_id,
+                    name=tag_name,
+                    updated_at=now(),
+                ))
 
         db.commit()
     finally:
         db.close()
 
-    ensure_default_support_bot()
+    ensure_default_support_bot(owner_user_id)
+    return True
 
 
-def support_bot_to_dict(bot, include_secret=False):
+def support_bot_to_dict(bot, include_secret=False, include_internal=False):
     bot_token = bot.bot_token or ""
     bot_name = ""
     bot_username = ""
@@ -115,7 +213,7 @@ def support_bot_to_dict(bot, include_secret=False):
         finally:
             db.close()
 
-    return {
+    result = {
         "id": bot.id,
         "name": bot.name or "",
         "bot_id": bot.bot_id,
@@ -137,10 +235,13 @@ def support_bot_to_dict(bot, include_secret=False):
         "business_end_hour": bot.business_end_hour or 22,
         "backend_base_url": bot.backend_base_url or "",
         "status": bot.status or "enabled",
-        "last_error": bot.last_error or "",
+        "last_error": redact_sensitive_text(bot.last_error),
         "created_at": str(bot.created_at) if bot.created_at else "",
         "updated_at": str(bot.updated_at) if bot.updated_at else "",
     }
+    if include_internal:
+        result["_owner_user_id"] = getattr(bot, "owner_user_id", None)
+    return result
 
 
 def mask_secret(value):
@@ -148,11 +249,7 @@ def mask_secret(value):
 
     if not text:
         return ""
-
-    if len(text) <= 12:
-        return "******"
-
-    return f"{text[:8]}...{text[-6:]}"
+    return "******"
 
 
 def normalize_bot_username(username="", bot_link=""):
@@ -169,9 +266,14 @@ def normalize_bot_username(username="", bot_link=""):
     return ""
 
 
-def legacy_settings_to_support_bot_data():
+def legacy_settings_to_support_bot_data(owner_user_id=None):
+    owner_user_id = _support_owner_id(owner_user_id)
     settings = {
-        key: get_support_setting(key, default)
+        key: get_support_setting(
+            key,
+            _support_default_value(key, default, owner_user_id),
+            owner_user_id=owner_user_id,
+        )
         for key, default in DEFAULT_SUPPORT_SETTINGS.items()
     }
     return {
@@ -193,15 +295,23 @@ def legacy_settings_to_support_bot_data():
     }
 
 
-def ensure_default_support_bot():
+def ensure_default_support_bot(owner_user_id=None):
+    owner_user_id = _support_owner_id(owner_user_id)
+    if owner_user_id is None:
+        return None
     db = SessionLocal()
     try:
-        exists = db.query(SupportBot).first()
+        query = db.query(SupportBot)
+        if owner_user_id is None:
+            exists = query.first()
+        else:
+            exists = query.filter(SupportBot.owner_user_id == owner_user_id).first()
         if exists:
             return exists
 
         bot = SupportBot(
-            **legacy_settings_to_support_bot_data(),
+            owner_user_id=owner_user_id,
+            **legacy_settings_to_support_bot_data(owner_user_id),
             created_at=now(),
             updated_at=now(),
         )
@@ -213,8 +323,10 @@ def ensure_default_support_bot():
         db.close()
 
 
-def list_support_bots(include_disabled=True, include_secret=False):
-    ensure_support_defaults()
+def list_support_bots(include_disabled=True, include_secret=False, include_internal=False):
+    owner_user_id = current_tenant_user_id()
+    if owner_user_id is not None:
+        ensure_support_defaults(owner_user_id)
     db = SessionLocal()
     try:
         query = db.query(SupportBot)
@@ -224,7 +336,11 @@ def list_support_bots(include_disabled=True, include_secret=False):
                 SupportBot.status != "disabled",
             )
         return [
-            support_bot_to_dict(bot, include_secret=include_secret)
+            support_bot_to_dict(
+                bot,
+                include_secret=include_secret,
+                include_internal=include_internal,
+            )
             for bot in query.order_by(SupportBot.id.asc()).all()
         ]
     finally:
@@ -235,25 +351,37 @@ def get_support_bot_config(support_bot_id, include_secret=True):
     db = SessionLocal()
     try:
         bot = db.query(SupportBot).filter(SupportBot.id == int(support_bot_id)).first()
-        return support_bot_to_dict(bot, include_secret=include_secret) if bot else None
+        return (
+            support_bot_to_dict(bot, include_secret=include_secret, include_internal=True)
+            if bot
+            else None
+        )
     finally:
         db.close()
 
 
 def create_support_bot(data):
+    owner_user_id = _support_owner_id()
     db = SessionLocal()
     try:
+        bot_token = str(data.get("bot_token") or "").strip()
+        if is_masked_secret(bot_token):
+            bot_token = ""
         bot = SupportBot(
+            owner_user_id=owner_user_id,
             name=str(data.get("name") or "").strip() or "客服 Bot",
             bot_id=data.get("bot_id"),
-            bot_token=str(data.get("bot_token") or "").strip(),
+            bot_token=bot_token,
             price=str(data.get("price") or "").strip(),
             support_group_chat_id=str(data.get("support_group_chat_id") or "").strip(),
             polling_enabled=bool(data.get("polling_enabled", False)),
             welcome_message=data.get("welcome_message") or "",
             welcome_text_type=normalize_welcome_text_type(data.get("welcome_text_type")),
             welcome_media_type=data.get("welcome_media_type") or "text",
-            welcome_media_file_id=data.get("welcome_media_file_id") or "",
+            welcome_media_file_id=_validated_welcome_media_ref(
+                data.get("welcome_media_file_id"),
+                owner_user_id,
+            ),
             off_hours_message=data.get("off_hours_message") or "",
             business_hours_enabled=bool(data.get("business_hours_enabled", False)),
             business_start_hour=int(data.get("business_start_hour") or 9),
@@ -278,13 +406,21 @@ def update_support_bot(support_bot_id, data):
         if not bot:
             return None
 
+        owner_user_id = getattr(bot, "owner_user_id", None) or _support_owner_id()
+
         bool_fields = {"polling_enabled", "business_hours_enabled"}
         int_fields = {"bot_id", "business_start_hour", "business_end_hour"}
         for key, value in (data or {}).items():
             if not hasattr(bot, key) or value is None:
                 continue
-            if key == "bot_token" and not str(value or "").strip():
-                continue
+            if key == "bot_token":
+                value = str(value or "").strip()
+                if not value or is_masked_secret(value):
+                    continue
+            if key == "last_error":
+                value = redact_sensitive_text(value)
+            if key == "welcome_media_file_id":
+                value = _validated_welcome_media_ref(value, owner_user_id)
             if key in bool_fields:
                 value = bool(value)
             elif key == "welcome_text_type":
@@ -421,9 +557,11 @@ def message_to_dict(message):
         "support_group_message_id": getattr(message, "support_group_message_id", None),
         "reply_to_support_group_message_id": getattr(message, "reply_to_support_group_message_id", None),
         "send_status": getattr(message, "send_status", None) or message.status or "",
-        "error_message": getattr(message, "error_message", None) or message.error or "",
+        "error_message": redact_sensitive_text(
+            getattr(message, "error_message", None) or message.error
+        ),
         "status": message.status or "",
-        "error": message.error or "",
+        "error": redact_sensitive_text(message.error),
         "created_at": str(message.created_at) if message.created_at else "",
     }
 
@@ -456,6 +594,7 @@ def get_customer_by_telegram_user_id(telegram_user_id):
 def upsert_customer(user, chat_id, source="", support_bot_id=None):
     db = SessionLocal()
     try:
+        owner_user_id = resolve_support_owner(db, support_bot_id=support_bot_id)
         telegram_user_id = str(user.get("id") or "")
         customer = (
             db.query(SupportCustomer)
@@ -473,6 +612,7 @@ def upsert_customer(user, chat_id, source="", support_bot_id=None):
         created = False
         if not customer:
             customer = SupportCustomer(
+                owner_user_id=owner_user_id,
                 support_bot_id=support_bot_id,
                 telegram_user_id=telegram_user_id,
                 telegram_chat_id=str(chat_id),
@@ -504,6 +644,11 @@ def upsert_customer(user, chat_id, source="", support_bot_id=None):
 def get_or_create_conversation(customer_id, support_bot_id=None):
     db = SessionLocal()
     try:
+        owner_user_id = resolve_support_owner(
+            db,
+            support_bot_id=support_bot_id,
+            customer_id=customer_id,
+        )
         conversation = (
             db.query(SupportConversation)
             .filter(SupportConversation.customer_id == customer_id)
@@ -514,6 +659,7 @@ def get_or_create_conversation(customer_id, support_bot_id=None):
         )
         if not conversation:
             conversation = SupportConversation(
+                owner_user_id=owner_user_id,
                 support_bot_id=support_bot_id,
                 customer_id=customer_id,
                 status="open",
@@ -558,7 +704,14 @@ def add_support_message(
 ):
     db = SessionLocal()
     try:
+        owner_user_id = resolve_support_owner(
+            db,
+            support_bot_id=support_bot_id,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+        )
         message = SupportMessage(
+            owner_user_id=owner_user_id,
             support_bot_id=support_bot_id,
             conversation_id=conversation_id,
             customer_id=customer_id,

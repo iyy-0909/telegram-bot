@@ -12,6 +12,14 @@ export function registerUser(data) {
   return http.post("/api/auth/register", data)
 }
 
+export function getCurrentUser() {
+  return http.get("/api/auth/me")
+}
+
+export function logoutUser() {
+  return http.post("/api/auth/logout")
+}
+
 export function getStatus() {
   return http.get("/api/status")
 }
@@ -126,6 +134,10 @@ export function getCloneSendEvents(limit = 200) {
 
 export function getBots() {
   return http.get("/api/bots")
+}
+
+export function getBotOptions() {
+  return http.get("/api/options/bots")
 }
 
 export function createBot(data) {
@@ -316,6 +328,10 @@ export function deleteContentTemplate(id) {
 
 export function getAccounts() {
   return http.get("/api/accounts")
+}
+
+export function getAccountOptions() {
+  return http.get("/api/options/accounts")
 }
 
 export function createAccount(data) {

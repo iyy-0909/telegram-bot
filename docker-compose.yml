@@ -25,7 +25,7 @@ services:
       CONTROL_NOTIFY_LEVEL: ${CONTROL_NOTIFY_LEVEL:-error}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - ./data:/app/backend/data
       - ./logs:/app/backend/logs

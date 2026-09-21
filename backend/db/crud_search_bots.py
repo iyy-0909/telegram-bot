@@ -7,6 +7,7 @@ from sqlalchemy import func, or_
 from db.database import SessionLocal
 from db.models import Account, MyChannel, SearchBot, SearchBotChannelSubmission
 from db.search_utils import build_channel_search_terms
+from utils.redaction import redact_sensitive_text
 
 
 def normalize_bot_username(value):
@@ -35,7 +36,7 @@ def search_bot_to_dict(bot, stats=None):
         "submit_template": bot.submit_template or "{{channel_link}}",
         "remark": bot.remark or "",
         "last_check_at": str(bot.last_check_at) if bot.last_check_at else "",
-        "last_error": bot.last_error or "",
+        "last_error": redact_sensitive_text(bot.last_error),
         "submission_count": int(stats.get("submission_count") or 0),
         "current_channel_count": int(stats.get("current_channel_count") or 0),
         "blocked_channel_count": int(stats.get("blocked_channel_count") or 0),
@@ -79,14 +80,16 @@ def submission_to_dict(row, bot=None, channel=None, account=None):
             for key, value in applied_admin_rights.items()
         },
         "permission_status": getattr(row, "permission_status", "") or "pending",
-        "permission_last_error": getattr(row, "permission_last_error", "") or "",
+        "permission_last_error": redact_sensitive_text(
+            getattr(row, "permission_last_error", "")
+        ),
         "permissions_applied_at": (
             str(row.permissions_applied_at)
             if getattr(row, "permissions_applied_at", None)
             else ""
         ),
         "telegram_message_id": row.telegram_message_id,
-        "last_error": row.last_error or "",
+        "last_error": redact_sensitive_text(row.last_error),
         "submitted_at": str(row.submitted_at) if row.submitted_at else "",
         "last_checked_at": str(row.last_checked_at) if row.last_checked_at else "",
         "created_at": str(row.created_at) if row.created_at else "",
@@ -233,7 +236,7 @@ def set_search_bot_check_result(bot_id, ok, error="", identity=None):
         if bot.status != "disabled":
             bot.status = "enabled" if ok else "error"
         bot.last_check_at = datetime.utcnow()
-        bot.last_error = str(error or "")
+        bot.last_error = redact_sensitive_text(error)
         identity = identity or {}
         if identity.get("username"):
             bot.username = normalize_bot_username(identity["username"])
@@ -319,6 +322,8 @@ def update_submission_runtime(submission_id, **fields):
             if hasattr(row, key):
                 if key in {"admin_rights_json", "applied_admin_rights_json"} and isinstance(value, dict):
                     value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if key in {"last_error", "permission_last_error"}:
+                    value = redact_sensitive_text(value)
                 setattr(row, key, value)
         row.updated_at = datetime.utcnow()
         db.commit()

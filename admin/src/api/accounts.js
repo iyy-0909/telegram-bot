@@ -5,6 +5,10 @@ export function getAccounts() {
   return axios.get(`${API}/api/accounts`)
 }
 
+export function getAccountOptions() {
+  return axios.get(`${API}/api/options/accounts`)
+}
+
 export function createAccount(data) {
   return axios.post(`${API}/api/accounts`, data)
 }

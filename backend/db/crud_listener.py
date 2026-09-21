@@ -4,9 +4,11 @@ from datetime import datetime
 from db.database import SessionLocal
 from db.models import ListenerTask, ListenerSentMessage
 from db.crud_bot import normalize_target_channel
+from utils.redaction import redact_sensitive_text
 
 
 DEFAULT_TASK_VALUES = {
+    "owner_user_id": None,
     "name": "",
     "source_channel": "",
     "target_channels": "[]",
@@ -25,6 +27,7 @@ DEFAULT_TASK_VALUES = {
     "ai_rewrite_model": "",
     "ai_rewrite_prompt": "",
     "ai_prompt_template_id": None,
+    "ai_prompt_mode": "fixed",
     "ai_rewrite_max_chars": 800,
     "ai_rewrite_ratio": 70,
     "ai_rewrite_failure_mode": "fallback",
@@ -74,6 +77,9 @@ def normalize_task_data(data):
         if key in ("name", "source_channel", "footer", "last_error", "ai_rewrite_prompt", "ai_rewrite_failure_mode", "ai_rewrite_provider", "ai_rewrite_model"):
             value = str(value or "").strip()
 
+        if key == "last_error":
+            value = redact_sensitive_text(value)
+
         if key in ("target_channels", "blocked_keywords", "listen_required_keywords", "replace_words"):
             if isinstance(value, (list, dict)):
                 value = json.dumps(value, ensure_ascii=False)
@@ -85,6 +91,16 @@ def normalize_task_data(data):
             except (TypeError, ValueError):
                 value = default
             value = max(value, 1)
+
+        if key == "owner_user_id":
+            if value in ("", 0):
+                value = None
+            elif value is not None:
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    value = None
+                value = value if value and value > 0 else None
 
         if key == "ai_rewrite_max_chars":
             value = min(value, 4000)
@@ -98,6 +114,9 @@ def normalize_task_data(data):
 
         if key == "ai_rewrite_failure_mode" and value not in ("fallback", "skip"):
             value = "fallback"
+
+        if key == "ai_prompt_mode" and value not in ("fixed", "auto"):
+            value = "fixed"
 
         if key == "ai_rewrite_provider" and value not in ("grok", "deepseek"):
             value = "grok"
@@ -337,6 +356,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
             }
 
         task = ListenerTask(
+            owner_user_id=getattr(clone_task, "owner_user_id", None),
             name=f"{clone_task.name} 实时监听",
             source_channel=clone_task.source_channel,
             target_channels=json.dumps(targets, ensure_ascii=False),
@@ -355,6 +375,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
             ai_rewrite_model=getattr(clone_task, "ai_rewrite_model", "") or "",
             ai_rewrite_prompt=getattr(clone_task, "ai_rewrite_prompt", "") or "",
             ai_prompt_template_id=getattr(clone_task, "ai_prompt_template_id", None),
+            ai_prompt_mode=getattr(clone_task, "ai_prompt_mode", "fixed") or "fixed",
             ai_rewrite_max_chars=getattr(clone_task, "ai_rewrite_max_chars", 800) or 800,
             ai_rewrite_ratio=getattr(clone_task, "ai_rewrite_ratio", 70),
             ai_rewrite_failure_mode=getattr(clone_task, "ai_rewrite_failure_mode", "fallback") or "fallback",
@@ -390,7 +411,7 @@ def sync_clone_task_to_listener_tasks(clone_task):
         db.rollback()
         return {
             "ok": False,
-            "message": str(e),
+            "message": redact_sensitive_text(e),
             "created": 0,
         }
 
@@ -418,7 +439,7 @@ def update_listener_status(task_id: int, enabled=None, status=None, last_error=N
             task.status = status
 
         if last_error is not None:
-            task.last_error = last_error
+            task.last_error = redact_sensitive_text(last_error)
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -502,7 +523,11 @@ def mark_listener_message_sent(
 
     try:
         target = normalize_target_channel(target_channel)
+        owner_user_id = db.query(ListenerTask.owner_user_id).filter(
+            ListenerTask.id == task_id
+        ).scalar()
         record = ListenerSentMessage(
+            owner_user_id=owner_user_id,
             listener_task_id=task_id,
             target_channel=target,
             source_message_id=source_message_id,

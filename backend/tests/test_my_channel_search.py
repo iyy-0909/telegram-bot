@@ -25,11 +25,13 @@ class MyChannelSearchTest(unittest.TestCase):
             db.add_all(
                 [
                     MyChannel(
+                        owner_user_id=1,
                         title="上海频道 A",
                         username="@shanghaiktval",
                         chat_id="-100000001",
                     ),
                     MyChannel(
+                        owner_user_id=1,
                         title="上海频道 B",
                         username="@shanghaiktvyl",
                         chat_id="-100000002",
@@ -76,6 +78,7 @@ class MyChannelSearchTest(unittest.TestCase):
         db = self.session_factory()
         try:
             db.add(SearchBotChannelSubmission(
+                owner_user_id=1,
                 search_bot_id=1,
                 my_channel_id=1,
                 review_status="reviewing",
@@ -96,12 +99,14 @@ class MyChannelSearchTest(unittest.TestCase):
         try:
             db.add_all([
                 SearchBotChannelSubmission(
+                    owner_user_id=1,
                     search_bot_id=1,
                     my_channel_id=1,
                     review_status="reviewing",
                     collection_status="unknown",
                 ),
                 SearchBotChannelSubmission(
+                    owner_user_id=1,
                     search_bot_id=2,
                     my_channel_id=1,
                     review_status="approved",

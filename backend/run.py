@@ -10,6 +10,11 @@ from bot.logger import logger
 from bot.support_bot import start_support_polling
 from bot.control_bot import start_control_polling
 from bot.listener_health import start_listener_health_worker
+from bot.free_plan_ads import start_free_plan_advertisement_worker
+from bot.runtime_access_guard import (
+    enforce_runtime_access_state,
+    start_runtime_access_guard,
+)
 from notification import start_notification_service
 from auto_reply import start_account_auto_reply_service
 from init_db import init_db
@@ -45,6 +50,7 @@ async def start_api():
 async def main():
     cleanup_local_proxy_env_vars()
     init_db()
+    enforce_runtime_access_state()
 
     await start_bot()
 
@@ -53,6 +59,8 @@ async def main():
     start_support_polling()
     start_control_polling()
     start_listener_health_worker()
+    start_free_plan_advertisement_worker()
+    start_runtime_access_guard()
 
     await start_api()
 
