@@ -5,9 +5,9 @@
         <span>账号管理</span>
 
         <div class="header-actions">
-          <el-button type="primary" @click="$emit('login')">
+          <request-button type="primary" @click="emit('login')">
             登录账号
-          </el-button>
+          </request-button>
         </div>
       </div>
     </template>
@@ -47,16 +47,16 @@
       <el-table-column label="默认账号" width="100" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.is_default" type="success" size="small">全局默认</el-tag>
-          <el-button
+          <request-button
             v-else
             text
             type="primary"
             :disabled="!row.enabled"
             :loading="defaultSettingId === row.id"
-            @click="$emit('set-default', row)"
+            @click="emit('set-default', row)"
           >
             设为默认
-          </el-button>
+          </request-button>
         </template>
       </el-table-column>
 
@@ -81,36 +81,36 @@
       <el-table-column label="操作" width="285">
         <template #default="{ row }">
           <div class="row-actions">
-            <el-button
+            <request-button
               size="small"
               type="primary"
               plain
-              @click="$emit('relogin', row)"
+              @click="emit('relogin', row)"
             >
               重新登录
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
-              @click="$emit('edit', row)"
+              @click="emit('edit', row)"
             >
               编辑
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               @click="toggleAccount(row)"
             >
               {{ row.enabled ? "禁用" : "启用" }}
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="danger"
-              @click="$emit('delete', row.id)"
+              @click="emit('delete', row.id)"
             >
               删除
-            </el-button>
+            </request-button>
           </div>
         </template>
       </el-table-column>
@@ -119,10 +119,13 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   accounts: {
     type: Array,
     default: () => [],
@@ -137,7 +140,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "login",
   "relogin",
   "edit",
@@ -145,6 +148,7 @@ const emit = defineEmits([
   "toggle",
   "set-default",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 function formatUsername(username) {
   const value = String(username || "").trim()
@@ -162,7 +166,7 @@ function formatAccountUsername(row) {
 
 function toggleAccount(row) {
   row.enabled = !row.enabled
-  emit("toggle", row)
+  return emit("toggle", row)
 }
 </script>
 

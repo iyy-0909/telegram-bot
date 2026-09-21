@@ -9,9 +9,9 @@
           </div>
         </div>
 
-        <el-button type="primary" @click="emit('add')">
+        <request-button type="primary" @click="emit('add')">
           添加规则
-        </el-button>
+        </request-button>
       </div>
     </template>
 
@@ -51,7 +51,7 @@
 
       <el-table-column label="启用" width="90" align="center">
         <template #default="{ row }">
-          <el-switch
+          <request-switch
             :model-value="row.enabled"
             @change="value => emit('toggle', row, value)"
           />
@@ -60,16 +60,16 @@
 
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="emit('edit', row)">
+          <request-button size="small" @click="emit('edit', row)">
             编辑
-          </el-button>
-          <el-button
+          </request-button>
+          <request-button
             size="small"
             type="danger"
             @click="emit('delete', row.id)"
           >
             删除
-          </el-button>
+          </request-button>
         </template>
       </el-table-column>
     </el-table>
@@ -77,9 +77,12 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed } from "vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   templates: {
     type: Array,
     required: true,
@@ -90,7 +93,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["add", "edit", "delete", "toggle"])
+const rawEmit = defineEmits(["add", "edit", "delete", "toggle"])
+const emit = useRequestEmit(rawEmit, props)
 
 const rules = computed(() => {
   const groups = props.templates

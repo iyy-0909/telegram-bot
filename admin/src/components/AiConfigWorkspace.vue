@@ -5,35 +5,36 @@
         <h1>AI 配置</h1>
         <p>统一管理模型供应商和任务可复用的改写提示词。</p>
       </div>
-      <el-button :loading="loading" @click="emit('refresh')">刷新</el-button>
+      <request-button :loading="loading" @click="emit('refresh')">刷新</request-button>
     </header>
 
     <AiSettingsPanel
       :settings="settings"
       :saving="settingsSaving"
       :loading="settingsLoading"
-      @submit="emit('save-settings', $event)"
+      :request-actions="{ 'submit': ($event) => (emit('save-settings', $event)) }"
     />
     <AiPromptLibrary
       :prompts="prompts"
       :loading="loading"
       :deleting-id="deletingId"
       :defaulting-id="defaultingId"
-      @add="emit('add-prompt')"
-      @edit="emit('edit-prompt', $event)"
-      @delete="emit('delete-prompt', $event)"
-      @set-default="emit('set-default-prompt', $event)"
+      :request-actions="{ 'add': ($event) => (emit('add-prompt')), 'edit': ($event) => (emit('edit-prompt', $event)), 'delete': ($event) => (emit('delete-prompt', $event)), 'set-default': ($event) => (emit('set-default-prompt', $event)) }"
+
     />
     <AiRewritePreview :default-provider="settings.default_provider" />
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import AiPromptLibrary from "./AiPromptLibrary.vue"
 import AiSettingsPanel from "./AiSettingsPanel.vue"
 import AiRewritePreview from "./AiRewritePreview.vue"
 
-defineProps({
+const requestProps = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   settings: { type: Object, default: () => ({ providers: {} }) },
   settingsSaving: Boolean,
   settingsLoading: Boolean,
@@ -43,7 +44,7 @@ defineProps({
   defaultingId: { type: Number, default: null },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "refresh",
   "save-settings",
   "add-prompt",
@@ -51,6 +52,7 @@ const emit = defineEmits([
   "delete-prompt",
   "set-default-prompt",
 ])
+const emit = useRequestEmit(rawEmit, requestProps)
 </script>
 
 <style scoped>

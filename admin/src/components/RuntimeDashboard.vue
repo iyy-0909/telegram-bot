@@ -8,9 +8,9 @@
             <div class="page-subtitle">查看当前发送队列、运行中的克隆任务和监听任务概况。</div>
           </div>
 
-          <el-button :loading="loading" @click="$emit('refresh')">
+          <request-button :loading="loading" @click="emit('refresh')">
             刷新
-          </el-button>
+          </request-button>
         </div>
       </template>
 
@@ -41,7 +41,7 @@
           <div class="stat-help">可用采集账号</div>
         </div>
       </div>
-      
+
     </el-card>
 
     <el-card class="page-card">
@@ -201,10 +201,14 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, onMounted, onUnmounted, ref } from "vue"
+import { ElMessage } from "element-plus"
 import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   dashboard: {
     type: Object,
     default: () => ({}),
@@ -215,7 +219,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["refresh"])
+const rawEmit = defineEmits(["refresh"])
+const emit = useRequestEmit(rawEmit, props)
 
 const queue = computed(() => props.dashboard.queue || {})
 const stats = computed(() => props.dashboard.stats || {})
@@ -297,6 +302,18 @@ function stopCurrentPolling() {
   pollingItemId = ""
 }
 
+let refreshErrorShown = false
+async function refreshInBackground() {
+  try {
+    await emit("refresh")
+    refreshErrorShown = false
+  } catch (error) {
+    if (error?.code === "ERR_CANCELED") return
+    if (!refreshErrorShown) ElMessage.error("首页自动刷新失败，请稍后重试")
+    refreshErrorShown = true
+  }
+}
+
 function startCurrentPolling() {
   if (currentPollingTimer) {
     return
@@ -304,13 +321,13 @@ function startCurrentPolling() {
 
   pollingItemId = current.value?.id || ""
   currentPollingTimer = window.setInterval(() => {
-    emit("refresh")
+    return refreshInBackground()
   }, 10000)
 }
 
 onMounted(() => {
   dashboardRefreshTimer = window.setInterval(() => {
-    emit("refresh")
+    return refreshInBackground()
   }, 5000)
 
   tickTimer = window.setInterval(() => {
@@ -336,7 +353,7 @@ onMounted(() => {
     )
 
     if (previous > 0 && current.value.estimated_send_remaining_seconds === 0) {
-      emit("refresh")
+      refreshInBackground()
       startCurrentPolling()
     }
   }, 1000)

@@ -2,7 +2,7 @@
   <div class="mobile-profile-editor">
     <el-skeleton v-if="loading" :rows="10" animated />
     <el-result v-else-if="loadError" icon="error" title="公开资料加载失败" :sub-title="loadError">
-      <template #extra><el-button type="primary" @click="loadProfile">重新加载</el-button></template>
+      <template #extra><request-button type="primary" @click="loadProfile">重新加载</request-button></template>
     </el-result>
 
     <el-form v-else ref="formRef" :model="form" :rules="rules" label-position="top">
@@ -43,10 +43,10 @@
           <CapabilityAlert :capability="capabilities.photo" fallback="当前 Bot Token 无法修改机器人头像。" compact />
           <div class="media-actions">
             <el-upload :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png,image/webp" :disabled="busy || !capabilities.photo.write" :on-change="selectBotPhoto">
-              <el-button :disabled="busy || !capabilities.photo.write">选择图片</el-button>
+              <request-button :disabled="busy || !capabilities.photo.write">选择图片</request-button>
             </el-upload>
-            <el-button v-if="selectedBotPhoto" :disabled="busy" @click="cancelBotPhoto">取消选择</el-button>
-            <el-button v-else-if="hasBotPhoto" type="danger" plain :loading="removingBotPhoto" :disabled="busy || !capabilities.photo.remove" @click="removeBotPhoto">移除</el-button>
+            <request-button v-if="selectedBotPhoto" :disabled="busy" @click="cancelBotPhoto">取消选择</request-button>
+            <request-button v-else-if="hasBotPhoto" type="danger" plain :loading="removingBotPhoto" :disabled="busy || !capabilities.photo.remove" @click="removeBotPhoto">移除</request-button>
           </div>
           <p v-if="selectedBotPhoto" class="selected-file" :title="selectedBotPhoto.name">待上传：{{ selectedBotPhoto.name }}</p>
           <p v-if="mediaErrors.botPhoto" class="media-error">{{ mediaErrors.botPhoto }}</p>
@@ -66,10 +66,10 @@
           <CapabilityAlert :capability="capabilities.descriptionPhoto" fallback="需要登录该机器人的拥有者账号；当前只能在 BotFather 中配置。" compact />
           <div class="media-actions">
             <el-upload :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png,image/webp" :disabled="busy || !capabilities.descriptionPhoto.write" :on-change="selectDescriptionPhoto">
-              <el-button :disabled="busy || !capabilities.descriptionPhoto.write">选择图片</el-button>
+              <request-button :disabled="busy || !capabilities.descriptionPhoto.write">选择图片</request-button>
             </el-upload>
-            <el-button v-if="selectedDescriptionPhoto" :disabled="busy" @click="cancelDescriptionPhoto">取消选择</el-button>
-            <el-button v-else-if="hasDescriptionPhoto" type="danger" plain :loading="removingDescriptionPhoto" :disabled="busy || !capabilities.descriptionPhoto.remove" @click="removeDescriptionPhoto">移除</el-button>
+            <request-button v-if="selectedDescriptionPhoto" :disabled="busy" @click="cancelDescriptionPhoto">取消选择</request-button>
+            <request-button v-else-if="hasDescriptionPhoto" type="danger" plain :loading="removingDescriptionPhoto" :disabled="busy || !capabilities.descriptionPhoto.remove" @click="removeDescriptionPhoto">移除</request-button>
           </div>
           <p v-if="selectedDescriptionPhoto" class="selected-file" :title="selectedDescriptionPhoto.name">待上传：{{ selectedDescriptionPhoto.name }}</p>
           <p v-if="mediaErrors.descriptionPhoto" class="media-error">{{ mediaErrors.descriptionPhoto }}</p>
@@ -93,9 +93,9 @@
               <div class="command-card-heading">
                 <strong>命令 {{ index + 1 }}</strong>
                 <div class="command-actions">
-                  <el-button text circle :icon="ArrowUp" :aria-label="`上移第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write || index === 0" @click="moveCommand(index, -1)" />
-                  <el-button text circle :icon="ArrowDown" :aria-label="`下移第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write || index === form.commands.length - 1" @click="moveCommand(index, 1)" />
-                  <el-button text circle type="danger" :icon="Delete" :aria-label="`删除第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write" @click="removeCommand(index)" />
+                  <request-button text circle :icon="ArrowUp" :aria-label="`上移第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write || index === 0" @click="moveCommand(index, -1)" />
+                  <request-button text circle :icon="ArrowDown" :aria-label="`下移第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write || index === form.commands.length - 1" @click="moveCommand(index, 1)" />
+                  <request-button text circle type="danger" :icon="Delete" :aria-label="`删除第 ${index + 1} 条命令`" :disabled="busy || !capabilities.commands.write" @click="removeCommand(index)" />
                 </div>
               </div>
               <el-form-item :prop="`commands.${index}.command`" :rules="commandFieldRules(index, 'command')">
@@ -106,7 +106,7 @@
               </el-form-item>
             </article>
           </div>
-          <el-button class="full-button" :icon="Plus" :disabled="busy || !capabilities.commands.write || form.commands.length >= 100" @click="addCommand">添加命令</el-button>
+          <request-button class="full-button" :icon="Plus" :disabled="busy || !capabilities.commands.write || form.commands.length >= 100" @click="addCommand">添加命令</request-button>
           <p v-if="form.commands.length >= 100" class="limit-tip">已达到 Telegram 允许的 100 条上限。</p>
         </el-collapse-item>
 
@@ -123,14 +123,14 @@
             <el-input v-model.trim="form.privacy_policy_url" type="url" maxlength="2048" placeholder="https://example.com/privacy" :disabled="busy || !capabilities.privacyPolicy.write" />
             <div class="field-help">请输入可公开访问的 HTTPS 完整网址。</div>
           </el-form-item>
-          <el-button v-if="form.privacy_policy_url" class="full-button" type="danger" plain :loading="removingPrivacyPolicy" :disabled="busy || !capabilities.privacyPolicy.remove" @click="clearPrivacyPolicy">移除隐私政策</el-button>
+          <request-button v-if="form.privacy_policy_url" class="full-button" type="danger" plain :loading="removingPrivacyPolicy" :disabled="busy || !capabilities.privacyPolicy.remove" @click="clearPrivacyPolicy">移除隐私政策</request-button>
         </el-collapse-item>
       </el-collapse>
 
       <el-alert v-if="saveError" title="部分资料未保存" :description="saveError" type="error" :closable="false" show-icon class="save-error" />
       <div class="sticky-actions">
-        <el-button :disabled="busy" @click="loadProfile">重新同步</el-button>
-        <el-button type="primary" :loading="saving" :disabled="destructiveBusy" @click="saveProfile">保存全部资料</el-button>
+        <request-button :disabled="busy" @click="loadProfile">重新同步</request-button>
+        <request-button type="primary" :loading="saving" :disabled="destructiveBusy" @click="saveProfile">保存全部资料</request-button>
       </div>
     </el-form>
   </div>

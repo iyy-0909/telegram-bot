@@ -5,12 +5,12 @@
         <h2 id="common-rules-title">通用改写规则</h2>
         <p>联系方式、链接、事实和排版要求只维护一处，统一用于当前账号的固定改写、自动改写和文案试写。</p>
       </div>
-      <el-button :loading="loading" :disabled="!loaded || forbidden" @click="openEditor">编辑通用规则</el-button>
+      <request-button :loading="loading" :disabled="!loaded || forbidden" @click="openEditor">编辑通用规则</request-button>
     </div>
     <el-skeleton v-if="loading && !loaded" :rows="2" animated />
     <div v-else-if="loadError" class="common-rules-feedback" role="status">
       <el-alert :title="loadError" type="error" :closable="false" show-icon />
-      <el-button :loading="loading" @click="loadRules">重新加载规则</el-button>
+      <request-button :loading="loading" @click="loadRules">重新加载规则</request-button>
     </div>
     <template v-else-if="loaded">
       <p class="common-rules-preview">{{ savedContent || "尚未设置通用规则，请先编辑并保存。" }}</p>
@@ -35,8 +35,8 @@
         <el-alert v-if="saveError" :title="saveError" type="error" :closable="false" show-icon />
       </el-form>
       <template #footer>
-        <el-button :disabled="saving" @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" :disabled="forbidden" @click="saveRules">保存通用规则</el-button>
+        <request-button :disabled="saving" @click="visible = false">取消</request-button>
+        <request-button type="primary" :loading="saving" :disabled="forbidden" @click="saveRules">保存通用规则</request-button>
       </template>
     </el-dialog>
   </section>
@@ -105,12 +105,12 @@ function openEditor() {
 
 async function saveRules() {
   if (saving.value || forbidden.value) return
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
   const generation = getAuthGeneration()
   saving.value = true
   saveError.value = ""
   try {
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid) return
     const response = await updateAiCommonRules({ content: form.content.trim() })
     if (!active || !isAuthGenerationCurrent(generation)) return
     savedContent.value = response.data.content

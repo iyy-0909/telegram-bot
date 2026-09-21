@@ -90,22 +90,23 @@
               placeholder="输入图中字符"
               @keyup.enter="submit"
             />
-            <button
+            <request-button native
               type="button"
               class="mobile-captcha-image"
-              :disabled="captchaLoading || submitting"
+              :loading="captchaLoading"
+              :disabled="submitting"
               aria-label="刷新图形验证码"
               title="点击刷新验证码"
               @click="loadCaptcha"
             >
               <img v-if="captchaImage" :src="captchaImage" alt="图形验证码" />
               <el-icon v-else :class="{ rotating: captchaLoading }"><Refresh /></el-icon>
-            </button>
+            </request-button>
           </div>
           <p class="mobile-field-help">点击图片可刷新，5 分钟内有效。</p>
         </el-form-item>
 
-        <el-button
+        <request-button
           type="primary"
           size="large"
           native-type="submit"
@@ -114,18 +115,23 @@
           :disabled="mode === 'register' && captchaLoading"
         >
           {{ mode === "login" ? "登录" : "注册并登录" }}
-        </el-button>
+        </request-button>
       </el-form>
     </section>
   </main>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
+const requestProps = defineProps({ requestActions: { type: Object, default: () => ({}) } })
+
 import { computed, nextTick, reactive, ref, watch } from "vue"
 import { Refresh } from "@element-plus/icons-vue"
 import { getCaptcha, loginAdmin, registerUser } from "../api"
 
-const emit = defineEmits(["authenticated"])
+const rawEmit = defineEmits(["authenticated"])
+const emit = useRequestEmit(rawEmit, requestProps)
 const mode = ref("login")
 const formRef = ref(null)
 const submitting = ref(false)
@@ -178,6 +184,7 @@ const rules = computed(() => ({
 }))
 
 async function loadCaptcha() {
+  if (captchaLoading.value) return
   captchaLoading.value = true
   requestError.value = ""
   try {
@@ -196,12 +203,12 @@ async function loadCaptcha() {
 }
 
 async function submit() {
-  requestError.value = ""
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
-
+  if (submitting.value) return
   submitting.value = true
+  requestError.value = ""
   try {
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid) return
     const response = mode.value === "register"
       ? await registerUser({
           username: form.username.trim(),
@@ -212,7 +219,7 @@ async function submit() {
       : await loginAdmin(form.password, form.loginUsername.trim())
     const token = response.data?.token
     if (!token) throw new Error("登录成功但未返回访问凭证")
-    emit("authenticated", token, mode.value)
+    await emit("authenticated", token, mode.value)
   } catch (error) {
     const operationError = error.response?.data?.detail || error.message || "操作失败，请稍后重试"
     if (mode.value === "register") await loadCaptcha()

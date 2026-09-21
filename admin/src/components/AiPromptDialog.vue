@@ -25,10 +25,10 @@
         <div class="field-help">自动模式采用同类型最近保存且启用的提示词。未配置分类时使用内置规则。</div>
       </el-form-item>
       <el-form-item v-if="localForm.content_type">
-        <el-button :loading="presetsLoading" :disabled="!selectedPreset || Boolean(localForm.content.trim())" @click="usePreset">填入内置提示词</el-button>
+        <request-button :loading="presetsLoading" :disabled="!selectedPreset || Boolean(localForm.content.trim())" @click="usePreset">填入内置提示词</request-button>
         <div class="field-help">内容为空时可填入内置规则，再按需要编辑；已有内容将保留。</div>
         <el-alert v-if="presetsError" :title="presetsError" type="error" :closable="false" show-icon />
-        <el-button v-if="presetsError" link type="primary" @click="loadPresets">重新加载内置规则</el-button>
+        <request-button v-if="presetsError" link type="primary" @click="loadPresets">重新加载内置规则</request-button>
       </el-form-item>
 
       <el-form-item label="提示词内容" prop="content">
@@ -57,25 +57,29 @@
     </el-form>
 
     <template #footer>
-      <el-button :disabled="saving" @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="submit">保存提示词</el-button>
+      <request-button :disabled="saving" @click="emit('update:visible', false)">取消</request-button>
+      <request-button type="primary" :loading="saving" @click="submit">保存提示词</request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, reactive, ref, watch } from "vue"
 import { aiContentTypes } from "../config/aiContentTypes"
 import { getAiPromptPresets } from "../api/aiPrompts"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: Boolean,
   prompt: { type: Object, default: () => ({}) },
   isEdit: Boolean,
   saving: Boolean,
 })
 
-const emit = defineEmits(["update:visible", "submit"])
+const rawEmit = defineEmits(["update:visible", "submit"])
+const emit = useRequestEmit(rawEmit, props)
 const formRef = ref(null)
 const contentToken = "{{content}}"
 const maxCharsToken = "{{max_chars}}"
@@ -149,7 +153,7 @@ function handleDefaultChange(value) {
 async function submit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
-  emit("submit", {
+  await emit("submit", {
     id: localForm.id,
     name: localForm.name.trim(),
     content: localForm.content.trim(),

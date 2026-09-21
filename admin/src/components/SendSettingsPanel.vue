@@ -7,9 +7,9 @@
           <div class="card-subtitle">控制所有任务共享的 Bot API 发送节奏</div>
         </div>
 
-        <el-button type="primary" :loading="saving" @click="submit">
+        <request-button type="primary" :loading="saving" @click="submit">
           保存设置
-        </el-button>
+        </request-button>
       </div>
     </template>
 
@@ -30,9 +30,12 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { reactive, watch } from "vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   settings: {
     type: Object,
     required: true,
@@ -43,7 +46,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["submit"])
+const rawEmit = defineEmits(["submit"])
+const emit = useRequestEmit(rawEmit, props)
 
 const localForm = reactive({
   global_send_delay: 3,
@@ -75,7 +79,7 @@ watch(
 )
 
 function submit() {
-  emit("submit", {
+  return emit("submit", {
     global_send_delay: toNonNegativeNumber(localForm.global_send_delay, 3),
     send_retry_count: toNonNegativeNumber(localForm.send_retry_count, 2),
     send_retry_delay: toNonNegativeNumber(localForm.send_retry_delay, 5),

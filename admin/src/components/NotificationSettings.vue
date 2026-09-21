@@ -5,7 +5,7 @@
         <div class="title">Telegram 消息通知</div>
         <div class="subtitle">为每个登录账号配置独立的 ntfy 推送主题。</div>
       </div>
-      <el-button :icon="Refresh" :loading="loading" @click="loadSettings">刷新</el-button>
+      <request-button :icon="Refresh" :loading="loading" @click="loadSettings">刷新</request-button>
     </div>
 
     <el-alert
@@ -28,7 +28,7 @@
       :title="loadError"
     >
       <template #default>
-        <el-button link type="primary" @click="loadSettings">重新加载</el-button>
+        <request-button link type="primary" @click="loadSettings">重新加载</request-button>
       </template>
     </el-alert>
 
@@ -114,7 +114,7 @@
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button
+              <request-button
                 type="primary"
                 link
                 :icon="Check"
@@ -123,8 +123,8 @@
                 @click="saveRow(row)"
               >
                 保存
-              </el-button>
-              <el-button
+              </request-button>
+              <request-button
                 type="primary"
                 link
                 :icon="MagicStick"
@@ -133,8 +133,8 @@
                 @click="generateRow(row)"
               >
                 自动生成
-              </el-button>
-              <el-button
+              </request-button>
+              <request-button
                 type="primary"
                 link
                 :icon="Promotion"
@@ -143,7 +143,7 @@
                 @click="testRow(row)"
               >
                 测试
-              </el-button>
+              </request-button>
             </div>
           </template>
         </el-table-column>
@@ -190,23 +190,23 @@
           </div>
 
           <div class="mobile-actions">
-            <el-button
+            <request-button
               :icon="Check"
               :loading="savingId === row.account_id"
               :disabled="testingId === row.account_id"
               @click="saveRow(row)"
             >
               保存
-            </el-button>
-            <el-button
+            </request-button>
+            <request-button
               :icon="MagicStick"
               :loading="generatingId === row.account_id"
               :disabled="savingId === row.account_id || testingId === row.account_id"
               @click="generateRow(row)"
             >
               自动生成
-            </el-button>
-            <el-button
+            </request-button>
+            <request-button
               type="primary"
               :icon="Promotion"
               :loading="testingId === row.account_id"
@@ -214,7 +214,7 @@
               @click="testRow(row)"
             >
               测试推送
-            </el-button>
+            </request-button>
           </div>
         </section>
       </div>

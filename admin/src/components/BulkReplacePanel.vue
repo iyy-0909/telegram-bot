@@ -80,29 +80,29 @@
         </div>
 
         <div class="actions">
-          <el-button
+          <request-button
             type="primary"
             :loading="previewLoading"
             @click="handlePreview"
           >
             扫描预览
-          </el-button>
-          <el-button @click="resetForm">重置</el-button>
-          <el-button
+          </request-button>
+          <request-button @click="resetForm">重置</request-button>
+          <request-button
             type="success"
             :disabled="!editableItems.length"
             :loading="executeLoading"
             @click="handleExecute(false)"
           >
             确认执行
-          </el-button>
-          <el-button
+          </request-button>
+          <request-button
             :disabled="!editableItems.length"
             :loading="executeLoading"
             @click="handleExecute(true)"
           >
             Dry Run
-          </el-button>
+          </request-button>
         </div>
       </el-form>
     </el-card>

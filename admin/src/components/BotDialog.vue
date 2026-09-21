@@ -53,27 +53,30 @@
     </el-tabs>
 
     <template #footer>
-      <el-button @click="handleClose">
+      <request-button @click="handleClose">
         取消
-      </el-button>
+      </request-button>
 
-      <el-button
+      <request-button
         v-if="activeTab === 'local'"
         type="primary"
         :loading="saving"
         @click="handleSubmit"
       >
         保存
-      </el-button>
+      </request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { reactive, ref, watch } from "vue"
 import BotProfileEditor from "./BotProfileEditor.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: {
     type: Boolean,
     default: false,
@@ -92,10 +95,11 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "update:visible",
   "submit",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const localForm = reactive({
   id: null,
@@ -136,7 +140,7 @@ const handleClose = () => {
 
 const handleSubmit = async () => {
   if (!(await formRef.value?.validate().catch(() => false))) return
-  emit("submit", {
+  await emit("submit", {
     id: localForm.id,
     name: localForm.name,
     token: localForm.token,

@@ -18,7 +18,7 @@
       <el-form-item label="改写比例">
         <AiRewriteRatioField v-model="rewriteRatio" />
       </el-form-item>
-      <el-button type="primary" :loading="loading" native-type="submit">{{ loading ? "正在分析并改写…" : "分析并试写" }}</el-button>
+      <request-button type="primary" :loading="loading" native-type="submit">{{ loading ? "正在分析并改写…" : "分析并试写" }}</request-button>
     </el-form>
     <el-alert v-if="error" class="feedback" type="error" :title="error" :closable="false" show-icon />
     <div v-if="result" class="preview-result" aria-live="polite">

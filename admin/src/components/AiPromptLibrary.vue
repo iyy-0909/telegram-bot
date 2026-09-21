@@ -8,7 +8,7 @@
             固定模式按任务选择；自动模式按适用类型匹配最近保存且启用的提示词，未配置时使用内置规则。
           </div>
         </div>
-        <el-button type="primary" @click="emit('add')">新增提示词</el-button>
+        <request-button type="primary" @click="emit('add')">新增提示词</request-button>
       </div>
     </template>
 
@@ -57,8 +57,8 @@
       </el-table-column>
       <el-table-column label="操作" width="250" :fixed="compact ? false : 'right'">
         <template #default="{ row }">
-          <el-button link type="primary" @click="emit('edit', row)">编辑</el-button>
-          <el-button
+          <request-button link type="primary" @click="emit('edit', row)">编辑</request-button>
+          <request-button
             v-if="!row.is_default"
             link
             type="primary"
@@ -67,7 +67,7 @@
             @click="emit('set-default', row)"
           >
             设为默认
-          </el-button>
+          </request-button>
           <el-popconfirm
             v-if="!row.is_default"
             :title="row.usage_count ? `该提示词正被 ${row.usage_count} 个任务使用，暂时不能删除。` : '确定删除这个提示词吗？删除后无法恢复。'"
@@ -75,14 +75,14 @@
             @confirm="emit('delete', row)"
           >
             <template #reference>
-              <el-button
+              <request-button
                 link
                 type="danger"
                 :loading="deletingId === row.id"
                 :disabled="Boolean(row.usage_count)"
               >
                 删除
-              </el-button>
+              </request-button>
             </template>
           </el-popconfirm>
         </template>
@@ -92,18 +92,22 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { contentTypeLabel } from "../config/aiContentTypes"
 import AiCommonRulesEditor from "./AiCommonRulesEditor.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   prompts: { type: Array, default: () => [] },
   loading: Boolean,
   deletingId: { type: Number, default: null },
   defaultingId: { type: Number, default: null },
 })
 
-const emit = defineEmits(["add", "edit", "delete", "set-default"])
+const rawEmit = defineEmits(["add", "edit", "delete", "set-default"])
+const emit = useRequestEmit(rawEmit, props)
 const defaultPrompt = computed(() => props.prompts.find((item) => item.is_default))
 const compact = ref(false)
 const mediaQuery = window.matchMedia("(max-width: 900px)")

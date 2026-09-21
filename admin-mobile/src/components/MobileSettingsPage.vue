@@ -17,7 +17,7 @@
         <el-form-item label="重试等待秒">
           <el-input-number v-model="sendForm.send_retry_delay" :min="0" controls-position="right" />
         </el-form-item>
-        <el-button type="primary" class="full-button" :loading="saving" @click="emit('save-settings', { ...sendForm })">保存发送设置</el-button>
+        <request-button type="primary" class="full-button" :loading="saving" @click="emit('save-settings', { ...sendForm })">保存发送设置</request-button>
       </el-form>
     </section>
 
@@ -32,9 +32,9 @@
           <div class="provider-title"><strong>{{ provider.title }}</strong><el-tag :type="configured(provider.key) ? 'success' : 'info'">{{ configured(provider.key) ? '已配置' : '未配置' }}</el-tag></div>
           <el-form-item label="API Key"><el-input v-model="aiForm[`${provider.key}_api_key`]" type="password" show-password :placeholder="configured(provider.key) ? '留空保持当前密钥' : `输入 ${provider.title} API Key`" autocomplete="new-password" /></el-form-item>
           <el-form-item label="默认模型"><el-input v-model="aiForm[`${provider.key}_model`]" :placeholder="provider.defaultModel" /></el-form-item>
-          <el-popconfirm title="确定清除已保存的密钥吗？" @confirm="clearKey(provider.key)"><template #reference><el-button plain type="danger" :disabled="!configured(provider.key)">清除密钥</el-button></template></el-popconfirm>
+          <el-popconfirm title="确定清除已保存的密钥吗？" @confirm="clearKey(provider.key)"><template #reference><request-button plain type="danger" :disabled="!configured(provider.key)">清除密钥</request-button></template></el-popconfirm>
         </template>
-        <el-button type="primary" class="full-button ai-save" :loading="saving" @click="saveAi">保存 AI 配置</el-button>
+        <request-button type="primary" class="full-button ai-save" :loading="saving" @click="saveAi">保存 AI 配置</request-button>
       </el-form>
     </section>
 
@@ -62,7 +62,7 @@
 
         <div class="section-actions">
           <span>共 {{ rulesFor(section).length }} 条</span>
-          <el-button
+          <request-button
             circle
             type="primary"
             :icon="Plus"
@@ -79,11 +79,11 @@
                 <strong>{{ rule.name || `${typeLabel(rule.type)}配置` }}</strong>
                 <span>{{ ruleSummary(rule) }}</span>
               </div>
-              <el-switch :model-value="rule.enabled" @change="emit('toggle-template', rule)" />
+              <request-switch :model-value="rule.enabled" @change="emit('toggle-template', rule)" />
             </div>
             <div class="icon-actions">
-              <el-button circle plain :icon="Edit" aria-label="编辑配置" title="编辑配置" @click="emit('edit-template', rule)" />
-              <el-button circle plain type="danger" :icon="Delete" aria-label="删除配置" title="删除配置" @click="emit('delete-template', rule)" />
+              <request-button circle plain :icon="Edit" aria-label="编辑配置" title="编辑配置" @click="emit('edit-template', rule)" />
+              <request-button circle plain type="danger" :icon="Delete" aria-label="删除配置" title="删除配置" @click="emit('delete-template', rule)" />
             </div>
           </article>
         </div>
@@ -94,10 +94,13 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, reactive, ref, watch } from "vue"
 import { Delete, Edit, Plus } from "@element-plus/icons-vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   settings: { type: Object, required: true },
   aiSettings: { type: Object, default: () => ({ providers: {} }) },
   templates: { type: Array, default: () => [] },
@@ -106,7 +109,8 @@ const props = defineProps({
   showAi: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(["save-settings", "save-ai-settings", "create-template", "edit-template", "delete-template", "toggle-template"])
+const rawEmit = defineEmits(["save-settings", "save-ai-settings", "create-template", "edit-template", "delete-template", "toggle-template"])
+const emit = useRequestEmit(rawEmit, props)
 
 const sectionRegistry = [
   { key: "contact", title: "联系方式配置", subtitle: "手机号、链接、用户名和关键词删除", types: ["contact"] },
@@ -145,7 +149,7 @@ watch(() => props.aiSettings, (settings) => {
 
 function configured(key) { return Boolean(props.aiSettings?.providers?.[key]?.configured) }
 function saveAi() {
-  emit("save-ai-settings", {
+  return emit("save-ai-settings", {
     grok_api_key: aiForm.grok_api_key || undefined,
     grok_model: aiForm.grok_model.trim() || "grok-4.6",
     deepseek_api_key: aiForm.deepseek_api_key || undefined,
@@ -153,7 +157,7 @@ function saveAi() {
     default_rewrite_prompt: aiForm.default_rewrite_prompt.trim(),
   })
 }
-function clearKey(key) { emit("save-ai-settings", { [`clear_${key}_api_key`]: true }) }
+function clearKey(key) { return emit("save-ai-settings", { [`clear_${key}_api_key`]: true }) }
 
 const visibleSections = computed(() => {
   const known = new Set(sectionRegistry.flatMap((section) => section.types))

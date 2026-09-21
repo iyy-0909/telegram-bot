@@ -17,12 +17,12 @@
       :description="authLoadError || '请检查网络后重试。你的登录状态仍已保留。'"
     />
     <div class="auth-bootstrap__actions">
-      <el-button type="primary" :loading="permissionRefreshing" @click="retryAuthBootstrap">重新加载</el-button>
-      <el-button @click="logoutCurrentUser">退出登录</el-button>
+      <request-button type="primary" :loading="permissionRefreshing" @click="retryAuthBootstrap">重新加载</request-button>
+      <request-button @click="logoutCurrentUser">退出登录</request-button>
     </div>
   </section>
 
-  <AuthPanel v-else-if="!authenticated" @authenticated="handleAuthSuccess" />
+  <AuthPanel v-else-if="!authenticated" :request-actions="{ 'authenticated': handleAuthSuccess }" />
 
   <MobileLayout
     v-else
@@ -30,9 +30,9 @@
     :nav-keys="mobileNavKeys"
     :user="currentUser"
     :refresh-disabled="!canRefreshActive"
-    @change="changeTab"
-    @refresh="loadActive"
-    @logout="logoutCurrentUser"
+    :request-actions="{ 'change': changeTab, 'refresh': loadActive, 'logout': logoutCurrentUser }"
+
+
   >
     <HomePage
       v-if="activeTab === 'home'"
@@ -62,7 +62,7 @@
         @update:keyword="keyword.listeners = $event"
       >
         <template #actions>
-          <el-button size="small" type="primary" @click="openCreate('listener')">新增</el-button>
+          <request-button size="small" type="primary" @click="openCreate('listener')">新增</request-button>
         </template>
         <template #default="{ item }">
           <TaskCard
@@ -85,12 +85,12 @@
               ['最后错误', compactText(item.last_error)],
             ]"
           >
-            <el-button size="small" type="primary" plain @click="openEdit('listener', item)">编辑</el-button>
-            <el-button size="small" :type="item.enabled ? 'warning' : 'success'" plain @click="toggleListener(item)">
+            <request-button size="small" type="primary" plain @click="openEdit('listener', item)">编辑</request-button>
+            <request-button size="small" :type="item.enabled ? 'warning' : 'success'" plain @click="toggleListener(item)">
               {{ item.enabled ? "停止" : "启动" }}
-            </el-button>
-            <el-button size="small" plain @click="catchupListener(item)">补齐</el-button>
-            <el-button size="small" type="danger" plain @click="removeItem('listener', item)">删除</el-button>
+            </request-button>
+            <request-button size="small" plain :loading="catchupCheckingId === item.id" :disabled="catchupVisible || catchupCheckingId !== null" @click="catchupListener(item)">补齐</request-button>
+            <request-button size="small" type="danger" plain @click="removeItem('listener', item)">删除</request-button>
           </TaskCard>
         </template>
       </ListPage>
@@ -101,7 +101,7 @@
           :keyword="logKeyword"
           :loading="logLoading"
           @update:keyword="logKeyword = $event"
-          @refresh="showLogs('listener')"
+          :request-actions="{ 'refresh': ($event) => (showLogs('listener')) }"
         />
       </div>
     </div>
@@ -127,7 +127,7 @@
         @update:keyword="keyword.clones = $event"
       >
         <template #actions>
-          <el-button size="small" type="primary" @click="openCreate('clone')">新增</el-button>
+          <request-button size="small" type="primary" @click="openCreate('clone')">新增</request-button>
         </template>
         <template #default="{ item }">
           <TaskCard
@@ -149,12 +149,12 @@
               ['最后错误', compactText(item.last_error)],
             ]"
           >
-            <el-button size="small" type="primary" plain @click="openEdit('clone', item)">编辑</el-button>
-            <el-button size="small" type="success" plain @click="runAction(() => startCloneTask(item.id), '已启动克隆任务', loadClones)">启动</el-button>
-            <el-button size="small" type="warning" plain @click="runAction(() => pauseCloneTask(item.id), '已暂停克隆任务', loadClones)">暂停</el-button>
-            <el-button size="small" plain @click="runAction(() => resumeCloneTask(item.id), '已继续克隆任务', loadClones)">继续</el-button>
-            <el-button size="small" type="danger" plain @click="runAction(() => stopCloneTask(item.id), '已停止克隆任务', loadClones)">停止</el-button>
-            <el-button size="small" type="danger" plain @click="removeItem('clone', item)">删除</el-button>
+            <request-button size="small" type="primary" plain @click="openEdit('clone', item)">编辑</request-button>
+            <request-button size="small" type="success" plain @click="runAction(() => startCloneTask(item.id), '已启动克隆任务', loadClones)">启动</request-button>
+            <request-button size="small" type="warning" plain @click="runAction(() => pauseCloneTask(item.id), '已暂停克隆任务', loadClones)">暂停</request-button>
+            <request-button size="small" plain @click="runAction(() => resumeCloneTask(item.id), '已继续克隆任务', loadClones)">继续</request-button>
+            <request-button size="small" type="danger" plain @click="runAction(() => stopCloneTask(item.id), '已停止克隆任务', loadClones)">停止</request-button>
+            <request-button size="small" type="danger" plain @click="removeItem('clone', item)">删除</request-button>
           </TaskCard>
         </template>
       </ListPage>
@@ -165,7 +165,7 @@
           :keyword="logKeyword"
           :loading="logLoading"
           @update:keyword="logKeyword = $event"
-          @refresh="showLogs('clone')"
+          :request-actions="{ 'refresh': ($event) => (showLogs('clone')) }"
         />
       </div>
     </div>
@@ -187,8 +187,8 @@
       @update:keyword="keyword.channels = $event"
     >
       <template #actions>
-        <el-button size="small" type="primary" @click="openCreate('channel')">新增</el-button>
-        <el-button size="small" plain @click="batchCheckChannels">批量检测</el-button>
+        <request-button size="small" type="primary" @click="openCreate('channel')">新增</request-button>
+        <request-button size="small" plain @click="batchCheckChannels">批量检测</request-button>
       </template>
       <template #default="{ item }">
         <TaskCard
@@ -211,18 +211,18 @@
             ['备注', compactText(item.remark)],
           ]"
         >
-          <el-button size="small" type="primary" :disabled="item.status === 'disabled'" @click="openChannelSubmit(item)">提交</el-button>
-          <el-button size="small" plain @click="openChannelSubmissionStatus(item)">查看</el-button>
-          <el-button size="small" type="primary" plain @click="openEdit('channel', item)">编辑</el-button>
-          <el-button size="small" plain @click="checkChannel(item)">检测</el-button>
-          <el-button size="small" type="danger" plain @click="removeItem('channel', item)">删除</el-button>
+          <request-button size="small" type="primary" :disabled="item.status === 'disabled'" @click="openChannelSubmit(item)">提交</request-button>
+          <request-button size="small" plain @click="openChannelSubmissionStatus(item)">查看</request-button>
+          <request-button size="small" type="primary" plain @click="openEdit('channel', item)">编辑</request-button>
+          <request-button size="small" plain @click="checkChannel(item)">检测</request-button>
+          <request-button size="small" type="danger" plain @click="removeItem('channel', item)">删除</request-button>
         </TaskCard>
       </template>
     </ListPage>
       <MobileSearchBots
         ref="searchBotPanelRef"
         :page-visible="channelView === 'search-bots'"
-        @submission-changed="loadChannels"
+        :request-actions="{ 'submission-changed': loadChannels }"
       />
       <MobileSearchBotCollections v-if="channelView === 'collections'" />
     </div>
@@ -231,14 +231,14 @@
       v-else-if="morePage === 'access'"
       :user="currentUser"
       :refreshing="permissionRefreshing"
-      @refresh="refreshAccessAndData"
-      @logout="logoutCurrentUser"
+      :request-actions="{ 'refresh': refreshAccessAndData, 'logout': logoutCurrentUser }"
+
     />
 
     <MobileControlAlerts
       v-else-if="morePage === 'alerts'"
-      @back="morePage = 'menu'"
-      @open-task="openTaskFromAlert"
+      :request-actions="{ 'back': ($event) => (morePage = 'menu'), 'open-task': openTaskFromAlert }"
+
     />
 
     <MorePage
@@ -255,22 +255,22 @@
       :keyword="keyword"
       :allowed-features="featureKeys"
       :is-admin="currentUser?.role === 'admin'"
-      @select="selectMorePage"
-      @update-keyword="updateKeyword"
-      @edit="openEdit"
-      @delete="removeItem"
-      @test-bot="testBotAction"
-      @manage-profile="openBotProfile"
-      @test-support="testSupportAction"
-      @toggle-account="toggleAccount"
-      @set-default-account="setDefaultAccount"
-      @toggle-bot="toggleBot"
-      @toggle-support="toggleSupportBot"
-      @toggle-template="toggleTemplate"
-      @save-settings="saveMobileSendSettings"
-      @save-ai-settings="saveMobileAiSettings"
-      @create="openCreate"
-      @login-account="openAccountLogin"
+      :request-actions="{ 'select': selectMorePage, 'update-keyword': updateKeyword, 'edit': openEdit, 'delete': removeItem, 'test-bot': testBotAction, 'manage-profile': openBotProfile, 'test-support': testSupportAction, 'toggle-account': toggleAccount, 'set-default-account': setDefaultAccount, 'toggle-bot': toggleBot, 'toggle-support': toggleSupportBot, 'toggle-template': toggleTemplate, 'save-settings': saveMobileSendSettings, 'save-ai-settings': saveMobileAiSettings, 'create': openCreate, 'login-account': openAccountLogin }"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     />
 
     <el-drawer
@@ -289,10 +289,10 @@
         :accounts="accounts"
         :templates="templates"
         :uploading="uploadingMedia"
-        @cancel="editVisible = false"
-        @save="saveEdit"
-        @upload-media="uploadWelcomeMedia"
-        @clear-media="clearWelcomeMedia"
+        :request-actions="{ 'cancel': ($event) => (editVisible = false), 'save': saveEdit, 'upload-media': uploadWelcomeMedia, 'clear-media': clearWelcomeMedia }"
+
+
+
       />
     </el-drawer>
 
@@ -307,9 +307,9 @@
       <AccountLoginForm
         :account="accountLoginTarget"
         :loading="accountLoginLoading"
-        @cancel="accountLoginVisible = false"
-        @start="startAccountLoginFlow"
-        @verify="verifyAccountLoginFlow"
+        :request-actions="{ 'cancel': ($event) => (accountLoginVisible = false), 'start': startAccountLoginFlow, 'verify': verifyAccountLoginFlow }"
+
+
       />
     </el-drawer>
 
@@ -334,10 +334,35 @@
       <pre class="detail-text">{{ detailText }}</pre>
     </el-drawer>
 
+    <el-dialog
+      v-model="catchupVisible" title="一键补齐" width="min(520px, calc(100vw - 24px))"
+      :close-on-click-modal="false" :close-on-press-escape="!catchupSubmitting"
+      :show-close="!catchupSubmitting" destroy-on-close
+    >
+      <p>任务：{{ catchupPlan.task_name || '当前监听任务' }}</p>
+      <p>检测到可补齐 {{ catchupPlan.catchup_count }} 条内容，仅发送各目标缺少的内容。</p>
+      <el-form ref="catchupFormRef" :model="catchupForm" label-position="top" :disabled="catchupSubmitting">
+        <el-form-item label="补齐条数" prop="limit" :rules="[{ required: true, type: 'integer', min: 1, max: catchupPlan.catchup_count, message: '请输入可补齐范围内的整数', trigger: 'change' }]">
+          <el-input-number v-model="catchupForm.limit" :min="1" :max="catchupPlan.catchup_count" :precision="0" controls-position="right" aria-label="补齐条数" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="内容间隔（秒）" prop="interval_seconds" :rules="[{ required: true, type: 'integer', min: 1, max: 86400, message: '请输入 1 至 86400 秒的整数', trigger: 'change' }]">
+          <el-input-number v-model="catchupForm.interval_seconds" :min="1" :max="86400" :precision="0" controls-position="right" aria-label="内容间隔（秒）" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="首条直接进入队列；每条发送完成后，等待设定间隔再处理下一条。相册按一条内容计算，全局发送限流仍生效。" />
+      <el-alert v-if="catchupError" type="error" :closable="false" show-icon :title="catchupError" style="margin-top: 12px" />
+      <template #footer>
+        <request-button :disabled="catchupSubmitting" @click="catchupVisible = false">取消</request-button>
+        <request-button type="primary" :loading="catchupSubmitting" @click="submitListenerCatchup">加入队列</request-button>
+      </template>
+    </el-dialog>
+
   </MobileLayout>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../frontend-shared/requestActions.mjs'
+
 import { computed, defineComponent, h, onMounted, onUnmounted, reactive, ref, resolveComponent } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { ArrowDownBold, ArrowUpBold, Loading } from "@element-plus/icons-vue"
@@ -648,7 +673,7 @@ function changeTab(tab) {
   activeTab.value = tab
   if (tab === "more") morePage.value = "menu"
   window.localStorage.setItem("mobile_active_tab", tab)
-  loadActive()
+  return loadActive()
 }
 
 function canOpenMorePage(page) {
@@ -1393,31 +1418,61 @@ async function toggleListener(item) {
   await runAction(() => fn(item.id), item.enabled ? "已停止监听任务" : "已启动监听任务", loadListeners)
 }
 
+const catchupVisible = ref(false)
+const catchupCheckingId = ref(null)
+const catchupSubmitting = ref(false)
+const catchupTaskId = ref(null)
+const catchupPlan = ref({ catchup_count: 1 })
+const catchupFormRef = ref(null)
+const catchupForm = reactive({ limit: 1, interval_seconds: 60 })
+const catchupError = ref("")
+
 async function catchupListener(item) {
+  const id = item.id
+  if (catchupCheckingId.value !== null || catchupVisible.value) return
+  catchupCheckingId.value = id
   try {
-    const res = await checkListenerCatchup(item.id)
-    const count = res.data?.missing_count ?? res.data?.catchup_count ?? res.data?.count ?? 0
-    if (count <= 0) {
-      ElMessage.success(res.data?.message || "未检测到需要补齐的内容")
+    const res = await checkListenerCatchup(id)
+    const plan = res.data || {}
+    if (!plan.ok) throw new Error(plan.message || "补齐检测失败")
+    if (!plan.catchup_count) {
+      ElMessage.success(plan.message || "未检测到需要补齐的内容")
       return
     }
-    const { value } = await ElMessageBox.prompt(`检测到可补齐 ${count} 条内容，请输入本次补齐条数。`, "一键补齐", {
-      inputValue: String(Math.max(count, 1)),
-      inputPattern: /^[1-9]\d*$/,
-      inputErrorMessage: "请输入大于 0 的整数",
-      confirmButtonText: "加入队列",
-      cancelButtonText: "取消",
-      type: count > 0 ? "warning" : "info",
-    })
-    const limit = Math.min(Math.max(Number(value || 1), 1), Math.max(count, 1))
-    await catchupListenerTask(item.id, { background: true, limit })
-    const canViewDashboard = hasFeature(currentUser.value, "dashboard")
-    ElMessage.success(canViewDashboard ? "补齐任务已加入首页排队列表" : "补齐任务已加入队列")
-    if (canViewDashboard) await loadHome()
+    catchupTaskId.value = id
+    catchupPlan.value = plan
+    catchupForm.limit = plan.catchup_count
+    catchupForm.interval_seconds = 60
+    catchupError.value = ""
+    catchupVisible.value = true
   } catch (error) {
-    if (error === "cancel") return
-    ElMessage.error(getErrorMessage(error, "补齐失败"))
+    ElMessage.error(error?.response?.data?.message || error?.message || "补齐检测失败，请重试")
+  } finally {
+    catchupCheckingId.value = null
   }
+}
+
+async function submitListenerCatchup() {
+  if (catchupSubmitting.value) return
+  if (!await catchupFormRef.value?.validate().catch(() => false)) return
+  catchupSubmitting.value = true
+  catchupError.value = ""
+  try {
+    const res = await catchupListenerTask(catchupTaskId.value, {
+      background: true,
+      limit: catchupForm.limit,
+      interval_seconds: catchupForm.interval_seconds,
+    })
+    if (!res.data?.ok) throw new Error(res.data?.message || "补齐任务提交失败")
+    catchupVisible.value = false
+    ElMessage.success(`补齐任务已加入队列，内容间隔 ${catchupForm.interval_seconds} 秒`)
+  } catch (error) {
+    catchupError.value = error?.response?.data?.message || error?.message || "补齐任务提交失败，请重试"
+    return
+  } finally {
+    catchupSubmitting.value = false
+  }
+  if (hasFeature(currentUser.value, "dashboard")) await loadHome()
 }
 
 async function checkChannel(item) {
@@ -1440,7 +1495,7 @@ function openChannelSubmit(item) {
     ElMessage.error("提交功能尚未加载，请刷新页面后重试")
     return
   }
-  searchBotPanelRef.value.openSubmitForChannel(item)
+  return searchBotPanelRef.value.openSubmitForChannel(item)
 }
 
 function openChannelSubmissionStatus(item) {
@@ -1448,7 +1503,7 @@ function openChannelSubmissionStatus(item) {
     ElMessage.error("频道提交状态尚未加载，请刷新页面后重试")
     return
   }
-  searchBotPanelRef.value.openChannelStatus(item)
+  return searchBotPanelRef.value.openChannelStatus(item)
 }
 
 async function batchCheckChannels() {
@@ -1477,7 +1532,7 @@ async function showLogs(type) {
 function changeTaskView(type, name) {
   if (name !== "logs") return
   logKeyword.value = ""
-  showLogs(type)
+  return showLogs(type)
 }
 
 async function uploadWelcomeMedia(file) {
@@ -1879,6 +1934,7 @@ const HomePage = defineComponent({
 
 const ListPage = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     title: String,
     placeholder: String,
     emptyTitle: String,
@@ -1887,7 +1943,8 @@ const ListPage = defineComponent({
     loading: Boolean,
   },
   emits: ["update:keyword"],
-  setup(props, { emit, slots }) {
+  setup(props, { emit: rawEmit, slots }) {
+    const emit = useRequestEmit(rawEmit, props)
     return () => h("div", [
       h("div", { class: "search-bar" }, [
         h(resolve("el-input"), {
@@ -1964,13 +2021,15 @@ const TaskCard = defineComponent({
 
 const LogDrawer = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     type: String,
     items: Array,
     keyword: String,
     loading: Boolean,
   },
   emits: ["update:keyword", "refresh"],
-  setup(props, { emit }) {
+  setup(props, { emit: rawEmit }) {
+    const emit = useRequestEmit(rawEmit, props)
     return () => h("div", { class: "log-drawer" }, [
       h("div", { class: "search-bar" }, [
         h(resolve("el-input"), {
@@ -1979,7 +2038,7 @@ const LogDrawer = defineComponent({
           placeholder: props.type === "clone" ? "搜索任务 / 目标 / 消息 / 错误" : "搜索任务 / 频道 / 消息 / 错误",
           clearable: true,
         }),
-        h(resolve("el-button"), {
+        h(resolve("request-button"), {
           plain: true,
           loading: props.loading,
           onClick: () => emit("refresh"),
@@ -2064,6 +2123,7 @@ const LogCard = defineComponent({
 
 const MorePage = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     page: String,
     bots: Array,
     supportBots: Array,
@@ -2095,7 +2155,8 @@ const MorePage = defineComponent({
     "create",
     "login-account",
   ],
-  setup(props, { emit }) {
+  setup(props, { emit: rawEmit }) {
+    const emit = useRequestEmit(rawEmit, props)
     return () => {
       if (props.page === "menu") {
         const allowed = new Set(props.allowedFeatures || [])
@@ -2121,7 +2182,7 @@ const MorePage = defineComponent({
           return required.some((key) => allowed.has(key))
         })
         return h("div", { class: "page card-list" }, visibleEntries.map(([key, title, text]) =>
-          h("button", { type: "button", class: "data-card more-entry", onClick: () => emit("select", key) }, [
+          h(resolve("request-button"), { native: true, type: "button", class: "data-card more-entry", onClick: () => emit("select", key) }, () => [
             h("div", { class: "card-title" }, title),
             h("div", { class: "card-subtitle" }, text),
           ]),
@@ -2130,7 +2191,7 @@ const MorePage = defineComponent({
       if (props.page === "settings") {
         return h("div", [
           h("div", { class: "search-bar" }, [
-            h(resolve("el-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
+            h(resolve("request-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
           ]),
           h("div", { class: "page" }, [
             h(MobileSettingsPage, {
@@ -2140,12 +2201,12 @@ const MorePage = defineComponent({
               saving: props.loading?.settings,
               showSystem: props.isAdmin || props.allowedFeatures?.includes("system_settings"),
               showAi: props.isAdmin || props.allowedFeatures?.includes("ai_settings"),
-              onSaveSettings: (payload) => emit("save-settings", payload),
-              onSaveAiSettings: (payload) => emit("save-ai-settings", payload),
-              onCreateTemplate: (type) => emit("create", "template", type),
-              onEditTemplate: (item) => emit("edit", "template", item),
-              onDeleteTemplate: (item) => emit("delete", "template", item),
-              onToggleTemplate: (item) => emit("toggle-template", item),
+              requestActions: { 'save-settings': (payload) => emit("save-settings", payload), 'save-ai-settings': (payload) => emit("save-ai-settings", payload), 'create-template': (type) => emit("create", "template", type), 'edit-template': (item) => emit("edit", "template", item), 'delete-template': (item) => emit("delete", "template", item), 'toggle-template': (item) => emit("toggle-template", item) },
+
+
+
+
+
             }),
           ]),
         ])
@@ -2162,12 +2223,12 @@ const MorePage = defineComponent({
             title: "当前页面不可用",
             text: "请返回功能菜单，或刷新账号授权后重试。",
           }),
-          h(resolve("el-button"), { type: "primary", onClick: () => emit("select", "menu") }, () => "返回功能菜单"),
+          h(resolve("request-button"), { type: "primary", onClick: () => emit("select", "menu") }, () => "返回功能菜单"),
         ])
       }
       return h("div", [
         h("div", { class: "search-bar" }, [
-          h(resolve("el-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
+          h(resolve("request-button"), { plain: true, onClick: () => emit("select", "menu") }, () => "返回"),
           h(resolve("el-input"), {
             style: "margin-top:8px",
             modelValue: props.keyword[config[2]],
@@ -2181,8 +2242,8 @@ const MorePage = defineComponent({
             h("div", { class: "section-title" }, config[0]),
             h("div", { class: "row-actions" }, [
               props.page === "accounts"
-                ? h(resolve("el-button"), { size: "small", type: "primary", onClick: () => emit("login-account", null) }, () => "登录账号")
-                : h(resolve("el-button"), { size: "small", type: "primary", onClick: () => emit("create", props.page === "bots" ? "bot" : props.page === "support" ? "support" : "template") }, () => "新增"),
+                ? h(resolve("request-button"), { size: "small", type: "primary", onClick: () => emit("login-account", null) }, () => "登录账号")
+                : h(resolve("request-button"), { size: "small", type: "primary", onClick: () => emit("create", props.page === "bots" ? "bot" : props.page === "support" ? "support" : "template") }, () => "新增"),
             ]),
           ]),
           config[4]
@@ -2218,11 +2279,11 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
         ["最后错误", item.last_error],
       ],
     }, () => [
-      h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "bot", item) }, () => "编辑"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("manage-profile", item) }, () => "公开资料"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("test-bot", item) }, () => "测试"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-bot", item) }, () => item.enabled ? "停用" : "启用"),
-      h(resolve("el-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "bot", item) }, () => "删除"),
+      h(resolve("request-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "bot", item) }, () => "编辑"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("manage-profile", item) }, () => "公开资料"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("test-bot", item) }, () => "测试"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("toggle-bot", item) }, () => item.enabled ? "停用" : "启用"),
+      h(resolve("request-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "bot", item) }, () => "删除"),
     ])
   }
   if (type === "support") {
@@ -2243,10 +2304,10 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
         ["最后错误", item.last_error],
       ],
     }, () => [
-      h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "support", item) }, () => "编辑"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("test-support", item) }, () => "测试"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-support", item) }, () => item.polling_enabled ? "停用" : "启用"),
-      h(resolve("el-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "support", item) }, () => "删除"),
+      h(resolve("request-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "support", item) }, () => "编辑"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("test-support", item) }, () => "测试"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("toggle-support", item) }, () => item.polling_enabled ? "停用" : "启用"),
+      h(resolve("request-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "support", item) }, () => "删除"),
     ])
   }
   if (type === "settings") {
@@ -2263,9 +2324,9 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
         ["备注", item.remark],
       ],
     }, () => [
-      h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "template", item) }, () => "编辑"),
-      h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-template", item) }, () => item.enabled ? "停用" : "启用"),
-      h(resolve("el-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "template", item) }, () => "删除"),
+      h(resolve("request-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "template", item) }, () => "编辑"),
+      h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("toggle-template", item) }, () => item.enabled ? "停用" : "启用"),
+      h(resolve("request-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "template", item) }, () => "删除"),
     ])
   }
   return h(TaskCard, {
@@ -2289,7 +2350,7 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
   }, () => [
     item.is_default
       ? h(resolve("el-tag"), { size: "small", type: "success" }, () => "全局默认")
-      : h(resolve("el-button"), {
+      : h(resolve("request-button"), {
         size: "small",
         type: "primary",
         plain: true,
@@ -2297,15 +2358,16 @@ function moreCard(type, item, emit, defaultAccountSettingId = null) {
         loading: defaultAccountSettingId === item.id,
         onClick: () => emit("set-default-account", item),
       }, () => "设为默认"),
-    h(resolve("el-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "account", item) }, () => "编辑"),
-    h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("login-account", item) }, () => "重新登录"),
-    h(resolve("el-button"), { size: "small", plain: true, onClick: () => emit("toggle-account", item) }, () => item.enabled ? "停用" : "启用"),
-    h(resolve("el-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "account", item) }, () => "删除"),
+    h(resolve("request-button"), { size: "small", type: "primary", plain: true, onClick: () => emit("edit", "account", item) }, () => "编辑"),
+    h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("login-account", item) }, () => "重新登录"),
+    h(resolve("request-button"), { size: "small", plain: true, onClick: () => emit("toggle-account", item) }, () => item.enabled ? "停用" : "启用"),
+    h(resolve("request-button"), { size: "small", type: "danger", plain: true, onClick: () => emit("delete", "account", item) }, () => "删除"),
   ])
 }
 
 const EditForm = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     type: String,
     form: Object,
     saving: Boolean,
@@ -2315,7 +2377,8 @@ const EditForm = defineComponent({
     uploading: Boolean,
   },
   emits: ["cancel", "save", "upload-media", "clear-media"],
-  setup(props, { emit }) {
+  setup(props, { emit: rawEmit }) {
+    const emit = useRequestEmit(rawEmit, props)
     const activeStep = ref(0)
     const activePanels = ref(["basic"])
 
@@ -2361,19 +2424,19 @@ const EditForm = defineComponent({
               )),
           ]),
           h("div", { class: "form-actions" }, [
-            h(resolve("el-button"), {
+            h(resolve("request-button"), {
               disabled: step <= 0,
               onClick: () => { activeStep.value = Math.max(0, step - 1) },
             }, () => "上一步"),
             step < sections.length - 1
-              ? h(resolve("el-button"), {
+              ? h(resolve("request-button"), {
                 type: "primary",
                 onClick: () => {
                   if (!validateWizardStep(props.type, current, props.form)) return
                   activeStep.value = Math.min(sections.length - 1, step + 1)
                 },
               }, () => "下一步")
-              : h(resolve("el-button"), {
+              : h(resolve("request-button"), {
                 type: "primary",
                 loading: props.saving,
                 onClick: () => emit("save"),
@@ -2407,8 +2470,8 @@ const EditForm = defineComponent({
           ]),
         )),
         h("div", { class: "form-actions" }, [
-          h(resolve("el-button"), { onClick: () => emit("cancel") }, () => "取消"),
-          h(resolve("el-button"), { type: "primary", loading: props.saving, onClick: () => emit("save") }, () => (
+          h(resolve("request-button"), { onClick: () => emit("cancel") }, () => "取消"),
+          h(resolve("request-button"), { type: "primary", loading: props.saving, onClick: () => emit("save") }, () => (
             props.type === "channel" ? "保存并检测" : "保存"
           )),
         ]),
@@ -2434,11 +2497,13 @@ function mobileStepTitle(section) {
 
 const AccountLoginForm = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     account: Object,
     loading: Boolean,
   },
   emits: ["cancel", "start", "verify"],
-  setup(props, { emit }) {
+  setup(props, { emit: rawEmit }) {
+    const emit = useRequestEmit(rawEmit, props)
     const step = ref(0)
     const loginId = ref("")
     const needPassword = ref(false)
@@ -2524,12 +2589,12 @@ const AccountLoginForm = defineComponent({
         subTitle: "请刷新账号列表确认状态。",
       }) : null,
       h("div", { class: "form-actions" }, [
-        h(resolve("el-button"), { onClick: () => emit("cancel") }, () => "关闭"),
+        h(resolve("request-button"), { onClick: () => emit("cancel") }, () => "关闭"),
         step.value === 0
-          ? h(resolve("el-button"), { type: "primary", loading: props.loading, onClick: start }, () => "发送验证码")
+          ? h(resolve("request-button"), { type: "primary", loading: props.loading, onClick: start }, () => "发送验证码")
           : null,
         step.value === 1
-          ? h(resolve("el-button"), { type: "primary", loading: props.loading, onClick: verify }, () => needPassword.value ? "提交密码" : "登录")
+          ? h(resolve("request-button"), { type: "primary", loading: props.loading, onClick: verify }, () => needPassword.value ? "提交密码" : "登录")
           : null,
       ]),
     ])
@@ -2561,7 +2626,7 @@ function loginPlaceholder(key) {
 
 function emitAsync(emit, event, payload) {
   return new Promise((resolvePromise) => {
-    emit(event, payload, resolvePromise)
+    return emit(event, payload, resolvePromise)
   })
 }
 
@@ -3066,8 +3131,8 @@ function legacyFieldRender(props, emit, field) {
         h(resolve("el-upload"), {
           showFileList: false,
           httpRequest: (request) => emit("upload-media", request),
-        }, () => h(resolve("el-button"), { loading: props.uploading, plain: true }, () => "上传文件")),
-        h(resolve("el-button"), { plain: true, onClick: () => emit("clear-media") }, () => "清空"),
+        }, () => h(resolve("request-button"), { loading: props.uploading, plain: true }, () => "上传文件")),
+        h(resolve("request-button"), { plain: true, onClick: () => emit("clear-media") }, () => "清空"),
       ]),
     ])
   }
@@ -3129,7 +3194,7 @@ function legacyFieldRender(props, emit, field) {
   if (field.input === "rich-textarea") {
     return h("div", [
       h("div", { class: "rich-actions" }, richActions().map((action) =>
-        h(resolve("el-button"), {
+        h(resolve("request-button"), {
           size: "small",
           plain: true,
           onClick: () => { form[field.key] = `${form[field.key] || ""}${action.value}` },
@@ -3219,8 +3284,8 @@ function fieldRender(props, emit, field) {
         h(resolve("el-upload"), {
           showFileList: false,
           httpRequest: (request) => emit("upload-media", request),
-        }, () => h(resolve("el-button"), { loading: props.uploading, plain: true }, () => "上传文件")),
-        h(resolve("el-button"), { plain: true, onClick: () => emit("clear-media") }, () => "清空"),
+        }, () => h(resolve("request-button"), { loading: props.uploading, plain: true }, () => "上传文件")),
+        h(resolve("request-button"), { plain: true, onClick: () => emit("clear-media") }, () => "清空"),
       ]),
     ])
   }
@@ -3284,7 +3349,7 @@ function fieldRender(props, emit, field) {
   if (field.input === "rich-textarea") {
     return h("div", [
       h("div", { class: "rich-actions" }, richActions().map((action) =>
-        h(resolve("el-button"), {
+        h(resolve("request-button"), {
           size: "small",
           plain: true,
           onClick: () => { form[field.key] = `${form[field.key] || ""}${action.value}` },

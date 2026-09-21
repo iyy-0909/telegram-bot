@@ -3,7 +3,7 @@
     <template #header>
       <div class="card-header">
         <span>监听任务</span>
-        <el-button type="primary" @click="$emit('add')">新增任务</el-button>
+        <request-button type="primary" @click="emit('add')">新增任务</request-button>
       </div>
     </template>
 
@@ -14,9 +14,9 @@
 
       <el-table-column label="启用" width="100">
         <template #default="{ row }">
-          <el-switch
+          <request-switch
             v-model="row.enabled"
-            @change="$emit('toggle', row)"
+            @change="emit('toggle', row)"
           />
         </template>
       </el-table-column>
@@ -25,10 +25,10 @@
 
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
-          <el-button size="small" @click="$emit('edit', row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="$emit('delete', row.id)">
+          <request-button size="small" @click="emit('edit', row)">编辑</request-button>
+          <request-button size="small" type="danger" @click="emit('delete', row.id)">
             删除
-          </el-button>
+          </request-button>
         </template>
       </el-table-column>
     </el-table>
@@ -36,14 +36,18 @@
 </template>
 
 <script setup>
-defineProps({
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
+const requestProps = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   rules: {
     type: Array,
     required: true
   }
 })
 
-defineEmits(["add", "edit", "delete", "toggle","clone"])
+const rawEmit = defineEmits(["add", "edit", "delete", "toggle","clone"])
+const emit = useRequestEmit(rawEmit, requestProps)
 </script>
 
 <style scoped>

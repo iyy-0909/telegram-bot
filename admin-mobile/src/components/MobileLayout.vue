@@ -6,19 +6,19 @@
         <span>{{ currentSubtitle }}<template v-if="user?.username"> · {{ user.username }}</template></span>
       </div>
       <div class="top-actions">
-        <el-button
+        <request-button
           circle
           plain
           :disabled="refreshDisabled"
           :aria-label="refreshDisabled ? '当前页面无需刷新' : '刷新当前页面'"
           :title="refreshDisabled ? '当前页面无需刷新' : '刷新当前页面'"
-          @click="$emit('refresh')"
+          @click="emit('refresh')"
         >
           <el-icon><Refresh /></el-icon>
-        </el-button>
-        <el-button circle plain aria-label="退出登录" title="退出登录" @click="$emit('logout')">
+        </request-button>
+        <request-button circle plain aria-label="退出登录" title="退出登录" @click="emit('logout')">
           <el-icon><SwitchButton /></el-icon>
-        </el-button>
+        </request-button>
       </div>
     </header>
 
@@ -31,23 +31,25 @@
       aria-label="主要导航"
       :style="{ gridTemplateColumns: `repeat(${Math.max(navItems.length, 1)}, minmax(0, 1fr))` }"
     >
-      <button
+      <request-button native
         v-for="item in navItems"
         :key="item.key"
         type="button"
         class="nav-item"
         :class="{ active: active === item.key }"
         :aria-current="active === item.key ? 'page' : undefined"
-        @click="$emit('change', item.key)"
+        @click="emit('change', item.key)"
       >
         <el-icon><component :is="item.icon" /></el-icon>
         <span>{{ item.label }}</span>
-      </button>
+      </request-button>
     </nav>
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed } from "vue"
 import {
   Collection,
@@ -60,6 +62,7 @@ import {
 } from "@element-plus/icons-vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   active: {
     type: String,
     required: true,
@@ -78,7 +81,8 @@ const props = defineProps({
   },
 })
 
-defineEmits(["change", "refresh", "logout"])
+const rawEmit = defineEmits(["change", "refresh", "logout"])
+const emit = useRequestEmit(rawEmit, props)
 
 const allNavItems = [
   { key: "home", label: "首页", title: "移动运营台", subtitle: "排队、告警和系统状态", icon: House },

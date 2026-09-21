@@ -88,35 +88,38 @@
     </div>
 
     <template #footer>
-      <el-button @click="closeDialog">关闭</el-button>
+      <request-button @click="closeDialog">关闭</request-button>
 
-      <el-button
+      <request-button
         v-if="activeStep === 0"
         type="primary"
         :loading="loading"
         @click="sendCode"
       >
         发送验证码
-      </el-button>
+      </request-button>
 
-      <el-button
+      <request-button
         v-if="activeStep === 1"
         type="primary"
         :loading="loading"
         @click="verifyCode"
       >
         {{ needPassword ? "提交二步验证" : "登录" }}
-      </el-button>
+      </request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, reactive, ref, watch } from "vue"
 import { ElMessage } from "element-plus"
 import { startAccountLogin, verifyAccountLogin } from "../api/accounts"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: Boolean,
   account: {
     type: Object,
@@ -124,7 +127,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["update:visible", "success"])
+const rawEmit = defineEmits(["update:visible", "success"])
+const emit = useRequestEmit(rawEmit, props)
 
 const loading = ref(false)
 const activeStep = ref(0)
@@ -231,7 +235,7 @@ async function sendCode() {
     if (data.ok && data.already_authorized) {
       savedAccount.value = data.account
       activeStep.value = 2
-      emit("success", data.account)
+      await emit("success", data.account)
       ElMessage.success(data.message || "账号已授权")
       return
     }
@@ -270,7 +274,7 @@ async function verifyCode() {
     if (data.ok) {
       savedAccount.value = data.account
       activeStep.value = 2
-      emit("success", data.account)
+      await emit("success", data.account)
       ElMessage.success("账号登录成功")
       return
     }

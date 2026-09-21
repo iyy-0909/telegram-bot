@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="visible"
-    @update:model-value="$emit('update:visible', $event)"
+    @update:model-value="emit('update:visible', $event)"
     title="编辑账号"
     width="min(720px, calc(100vw - 24px))"
     destroy-on-close
@@ -107,17 +107,21 @@
     </el-form>
 
     <template #footer>
-      <el-button :disabled="saving" @click="$emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+      <request-button :disabled="saving" @click="emit('update:visible', false)">取消</request-button>
+      <request-button type="primary" :loading="saving" @click="submit">保存</request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { reactive, ref, watch } from "vue"
 
-const props = defineProps({ visible: Boolean, form: Object, isEdit: Boolean, saving: Boolean })
-const emit = defineEmits(["update:visible", "submit"])
+const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) }, visible: Boolean, form: Object, isEdit: Boolean, saving: Boolean })
+const rawEmit = defineEmits(["update:visible", "submit"])
+const emit = useRequestEmit(rawEmit, props)
 const formRef = ref(null)
 
 const localForm = reactive({
@@ -154,7 +158,7 @@ watch(() => props.form, (val) => {
 
 async function submit() {
   if (!formRef.value || !(await formRef.value.validate().catch(() => false))) return
-  emit("submit", { ...localForm, username: String(localForm.username || "").trim().replace(/^@+/, "") })
+  await emit("submit", { ...localForm, username: String(localForm.username || "").trim().replace(/^@+/, "") })
 }
 </script>
 

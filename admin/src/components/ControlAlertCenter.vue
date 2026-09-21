@@ -6,8 +6,8 @@
         <p>集中查看克隆、监听、客服机器人和系统运行告警。</p>
       </div>
       <div class="header-actions">
-        <el-button :icon="Refresh" :loading="loading" @click="loadAlerts">刷新</el-button>
-        <el-button
+        <request-button :icon="Refresh" :loading="loading" @click="loadAlerts">刷新</request-button>
+        <request-button
           type="primary"
           :icon="CircleCheck"
           :disabled="!stats.pending"
@@ -15,7 +15,7 @@
           @click="acknowledgeAll"
         >
           全部已读
-        </el-button>
+        </request-button>
       </div>
     </header>
 
@@ -69,12 +69,12 @@
           @keyup.enter="applyFilters"
           @clear="applyFilters"
         />
-        <el-button type="primary" :icon="Search" @click="applyFilters">查询</el-button>
+        <request-button type="primary" :icon="Search" @click="applyFilters">查询</request-button>
       </div>
 
       <el-alert v-if="loadError" type="error" show-icon :closable="false" class="load-error">
         <template #title>{{ loadError }}</template>
-        <el-button link type="primary" @click="loadAlerts">重新加载</el-button>
+        <request-button link type="primary" @click="loadAlerts">重新加载</request-button>
       </el-alert>
 
       <el-table
@@ -119,15 +119,15 @@
         </el-table-column>
         <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button
+            <request-button
               v-if="taskType(row)"
               type="primary"
               link
               :icon="Document"
               @click.stop="openTask(row)"
-            >任务</el-button>
-            <el-button link :icon="View" @click.stop="openDetail(row)">详情</el-button>
-            <el-button
+            >任务</request-button>
+            <request-button link :icon="View" @click.stop="openDetail(row)">详情</request-button>
+            <request-button
               v-if="row.status === 'pending'"
               type="primary"
               link
@@ -136,7 +136,7 @@
               @click.stop="acknowledge(row)"
             >
               已读
-            </el-button>
+            </request-button>
           </template>
         </el-table-column>
       </el-table>
@@ -172,19 +172,23 @@
         <pre>{{ selectedAlert.detail || "无详细信息" }}</pre>
       </div>
       <template #footer>
-        <el-button @click="detailVisible = false">关闭</el-button>
-        <el-button
+        <request-button @click="detailVisible = false">关闭</request-button>
+        <request-button
           v-if="selectedAlert?.status === 'pending'"
           type="primary"
           :loading="acknowledgingId === selectedAlert.id"
           @click="acknowledge(selectedAlert, true)"
-        >已读并关闭</el-button>
+        >已读并关闭</request-button>
       </template>
     </el-dialog>
   </section>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
+const requestProps = defineProps({ requestActions: { type: Object, default: () => ({}) } })
+
 import { onMounted, onUnmounted, reactive, ref } from "vue"
 import { CircleCheck, Document, Refresh, Search, View } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
@@ -208,7 +212,8 @@ const selectedAlert = ref(null)
 let refreshTimer = null
 
 const filters = reactive({ q: "", status: "pending", level: "all", module: "" })
-const emit = defineEmits(["open-task"])
+const rawEmit = defineEmits(["open-task"])
+const emit = useRequestEmit(rawEmit, requestProps)
 
 function errorText(error, fallback) {
   return error?.response?.data?.detail || error?.response?.data?.message || error?.message || fallback
@@ -235,7 +240,7 @@ async function loadAlerts() {
 
 function applyFilters() {
   page.value = 1
-  loadAlerts()
+  return loadAlerts()
 }
 
 async function acknowledge(row, closeAfter = false) {
@@ -297,7 +302,7 @@ function taskType(row) {
 function openTask(row) {
   const type = taskType(row)
   if (!type) return
-  emit("open-task", { alert: row, taskType: type })
+  return emit("open-task", { alert: row, taskType: type })
 }
 
 function handleRowClick(row) {

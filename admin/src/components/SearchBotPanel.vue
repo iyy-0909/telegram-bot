@@ -19,9 +19,9 @@
               <el-option label="已停用" value="disabled" />
               <el-option label="异常" value="error" />
             </el-select>
-            <el-button :loading="botLoading" @click="refreshAll"><el-icon><Refresh /></el-icon>刷新</el-button>
+            <request-button :loading="botLoading" @click="refreshAll"><el-icon><Refresh /></el-icon>刷新</request-button>
           </div>
-          <el-button type="primary" @click="openBotCreate"><el-icon><Plus /></el-icon>新增机器人</el-button>
+          <request-button type="primary" @click="openBotCreate"><el-icon><Plus /></el-icon>新增机器人</request-button>
         </div>
 
         <el-table
@@ -35,7 +35,7 @@
         >
           <template #empty>
             <el-empty :image-size="72" description="暂无搜索机器人">
-              <el-button type="primary" @click="openBotCreate"><el-icon><Plus /></el-icon>新增机器人</el-button>
+              <request-button type="primary" @click="openBotCreate"><el-icon><Plus /></el-icon>新增机器人</request-button>
             </el-empty>
           </template>
           <el-table-column prop="name" label="机器人名称" min-width="160" show-overflow-tooltip />
@@ -75,9 +75,9 @@
           <el-table-column label="操作" width="170" fixed="right" align="center">
             <template #default="{ row }">
               <div class="row-actions">
-                <el-button size="small" @click="openBotEdit(row)">编辑</el-button>
-                <el-button size="small" type="warning" plain :loading="checkingId === row.id" @click="detectBot(row)">检测</el-button>
-                <el-button size="small" type="danger" @click="removeBot(row)">删除</el-button>
+                <request-button size="small" @click="openBotEdit(row)">编辑</request-button>
+                <request-button size="small" type="warning" plain :loading="checkingId === row.id" @click="detectBot(row)">检测</request-button>
+                <request-button size="small" type="danger" @click="removeBot(row)">删除</request-button>
               </div>
             </template>
           </el-table-column>
@@ -98,7 +98,7 @@
               <el-option label="已拉黑" value="blocked" />
               <el-option label="未知" value="unknown" />
             </el-select>
-            <el-button :loading="submissionLoading" @click="loadSubmissions"><el-icon><Refresh /></el-icon>刷新</el-button>
+            <request-button :loading="submissionLoading" @click="loadSubmissions"><el-icon><Refresh /></el-icon>刷新</request-button>
           </div>
         </div>
 
@@ -132,9 +132,9 @@
           <el-table-column label="操作" width="260" fixed="right" align="center">
             <template #default="{ row }">
               <div class="row-actions submission-actions">
-                <el-button size="small" type="primary" @click="openSubmissionEdit(row)">更新状态</el-button>
-                <el-button size="small" @click="openPermissionEdit(row)">调整权限</el-button>
-                <el-button size="small" type="warning" plain :disabled="row.submit_status === 'queued' || row.submit_status === 'submitting'" @click="openResubmit(row)">改投</el-button>
+                <request-button size="small" type="primary" @click="openSubmissionEdit(row)">更新状态</request-button>
+                <request-button size="small" @click="openPermissionEdit(row)">调整权限</request-button>
+                <request-button size="small" type="warning" plain :disabled="row.submit_status === 'queued' || row.submit_status === 'submitting'" @click="openResubmit(row)">改投</request-button>
               </div>
             </template>
           </el-table-column>
@@ -170,7 +170,7 @@
         </div>
         <el-form-item label="备注"><el-input v-model="botForm.remark" type="textarea" :rows="2" placeholder="记录机器人提交规则或使用限制" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="botDialogVisible = false">取消</el-button><el-button type="primary" :loading="savingBot" @click="saveBot">保存</el-button></template>
+      <template #footer><request-button @click="botDialogVisible = false">取消</request-button><request-button type="primary" :loading="savingBot" @click="saveBot">保存</request-button></template>
     </el-dialog>
 
     <el-dialog
@@ -249,9 +249,9 @@
               <span v-else>登记你在 Telegram 手动授予的权限，系统会标记为“人工登记、未验证”。</span>
             </div>
             <el-button-group>
-              <el-button size="small" @click="applyPermissionPreset('minimal')">最小权限</el-button>
-              <el-button size="small" @click="applyPermissionPreset('common')">常用权限</el-button>
-              <el-button size="small" @click="applyPermissionPreset('all')">全部权限</el-button>
+              <request-button size="small" @click="applyPermissionPreset('minimal')">最小权限</request-button>
+              <request-button size="small" @click="applyPermissionPreset('common')">常用权限</request-button>
+              <request-button size="small" @click="applyPermissionPreset('all')">全部权限</request-button>
             </el-button-group>
           </div>
 
@@ -283,7 +283,7 @@
           <el-form-item label="当前有效收录"><el-switch v-model="submitForm.is_current" :disabled="submitForm.block_status === 'blocked'" active-text="是" inactive-text="否" /></el-form-item>
         </div>
       </el-form>
-      <template #footer><el-button :disabled="submitting" @click="submitDialogVisible = false">取消</el-button><el-button type="primary" :loading="submitting" @click="submitChannel">{{ submitForm.submission_mode === "manual" ? "登记记录" : "立即提交" }}</el-button></template>
+      <template #footer><request-button :disabled="submitting" @click="submitDialogVisible = false">取消</request-button><request-button type="primary" :loading="submitting" @click="submitChannel">{{ submitForm.submission_mode === "manual" ? "登记记录" : "立即提交" }}</request-button></template>
     </el-dialog>
 
     <el-dialog
@@ -314,7 +314,7 @@
         <el-form-item label="当前有效收录"><el-switch v-model="statusForm.is_current" :disabled="statusForm.block_status === 'blocked'" active-text="是" inactive-text="否" /></el-form-item>
       </el-form>
       <el-alert v-if="statusForm.block_status === 'blocked'" type="warning" :closable="false" title="标记拉黑后，该记录会自动取消“当前有效”；保存后可点击“改投”选择其他可用机器人。" />
-      <template #footer><el-button @click="statusDialogVisible = false">取消</el-button><el-button type="primary" :loading="savingStatus" @click="saveSubmissionStatus">保存状态</el-button></template>
+      <template #footer><request-button @click="statusDialogVisible = false">取消</request-button><request-button type="primary" :loading="savingStatus" @click="saveSubmissionStatus">保存状态</request-button></template>
     </el-dialog>
 
     <el-dialog
@@ -349,9 +349,9 @@
               <span>只显示当前频道类型可使用的权限。</span>
             </div>
             <el-button-group>
-              <el-button size="small" @click="applyAdjustmentPreset('minimal')">最小权限</el-button>
-              <el-button size="small" @click="applyAdjustmentPreset('common')">常用权限</el-button>
-              <el-button size="small" @click="applyAdjustmentPreset('all')">全部权限</el-button>
+              <request-button size="small" @click="applyAdjustmentPreset('minimal')">最小权限</request-button>
+              <request-button size="small" @click="applyAdjustmentPreset('common')">常用权限</request-button>
+              <request-button size="small" @click="applyAdjustmentPreset('all')">全部权限</request-button>
             </el-button-group>
           </div>
           <div v-for="section in adjustmentPermissionSections" :key="section.title" class="permission-section">
@@ -364,14 +364,16 @@
         </div>
       </el-form>
       <template #footer>
-        <el-button :disabled="savingPermissions" @click="permissionDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="savingPermissions" @click="savePermissions">应用并回查</el-button>
+        <request-button :disabled="savingPermissions" @click="permissionDialogVisible = false">取消</request-button>
+        <request-button type="primary" :loading="savingPermissions" @click="savePermissions">应用并回查</request-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, onMounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { Plus, Refresh, Search } from "@element-plus/icons-vue"
@@ -391,10 +393,12 @@ import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   accounts: { type: Array, default: () => [] },
   accountsLoading: { type: Boolean, default: false },
 })
-const emit = defineEmits(["submission-changed"])
+const rawEmit = defineEmits(["submission-changed"])
+const emit = useRequestEmit(rawEmit, props)
 const panelView = ref("bots")
 const bots = ref([])
 const channels = ref([])
@@ -583,9 +587,9 @@ function openSubmitForChannel(channel) {
   submitDialogVisible.value = true
 }
 function openResubmit(row) { Object.assign(submitForm, emptySubmitForm(), { my_channel_id: row.my_channel_id, admin_rights: { ...emptyAdminRights(), ...(row.admin_rights || {}) } }); resetManualAccountSource(); submitDialogVisible.value = true }
-async function submitChannel() { if (!(await submitFormRef.value?.validate().catch(() => false))) return; const channel = selectedChannel.value; const bot = selectedSubmitBot.value; if (!channel?.group_name) return ElMessage.warning("频道未设置分组，请先编辑频道"); if (submitForm.submission_mode === "queue" && !submitForm.account_id && !bot?.account_id) return ElMessage.warning("请选择操作账号，或先为搜索机器人配置默认操作账号"); submitting.value = true; try { const response = await createSearchBotSubmission(submitForm); const item = response.data?.item; if (item?.submit_status === "failed") throw new Error(item.last_error || "添加失败"); ElMessage.success(submitForm.submission_mode === "manual" ? "手动提交记录已登记" : "搜索机器人已添加到频道"); submitDialogVisible.value = false; panelView.value = "submissions"; await Promise.all([loadBots(), loadSubmissions()]); emit("submission-changed") } catch (error) { ElMessage.error(readError(error, "提交失败")) } finally { submitting.value = false } }
+async function submitChannel() { if (!(await submitFormRef.value?.validate().catch(() => false))) return; const channel = selectedChannel.value; const bot = selectedSubmitBot.value; if (!channel?.group_name) return ElMessage.warning("频道未设置分组，请先编辑频道"); if (submitForm.submission_mode === "queue" && !submitForm.account_id && !bot?.account_id) return ElMessage.warning("请选择操作账号，或先为搜索机器人配置默认操作账号"); submitting.value = true; try { const response = await createSearchBotSubmission(submitForm); const item = response.data?.item; if (item?.submit_status === "failed") throw new Error(item.last_error || "添加失败"); ElMessage.success(submitForm.submission_mode === "manual" ? "手动提交记录已登记" : "搜索机器人已添加到频道"); submitDialogVisible.value = false; panelView.value = "submissions"; await Promise.all([loadBots(), loadSubmissions()]); await emit("submission-changed") } catch (error) { ElMessage.error(readError(error, "提交失败")) } finally { submitting.value = false } }
 function openSubmissionEdit(row) { editingSubmission.value = row; Object.assign(statusForm, { review_status: row.review_status || "unknown", collection_status: row.collection_status || "unknown", block_status: row.block_status || "unknown", is_current: Boolean(row.is_current) }); statusDialogVisible.value = true }
-async function saveSubmissionStatus() { savingStatus.value = true; try { await updateSearchBotSubmission(editingSubmission.value.id, statusForm); ElMessage.success("提交状态已更新"); statusDialogVisible.value = false; await Promise.all([loadBots(), loadSubmissions()]); emit("submission-changed") } catch (error) { ElMessage.error(readError(error, "保存状态失败")) } finally { savingStatus.value = false } }
+async function saveSubmissionStatus() { savingStatus.value = true; try { await updateSearchBotSubmission(editingSubmission.value.id, statusForm); ElMessage.success("提交状态已更新"); statusDialogVisible.value = false; await Promise.all([loadBots(), loadSubmissions()]); await emit("submission-changed") } catch (error) { ElMessage.error(readError(error, "保存状态失败")) } finally { savingStatus.value = false } }
 function openPermissionEdit(row) {
   permissionEditingSubmission.value = row
   Object.assign(permissionForm, {
@@ -609,7 +613,7 @@ async function savePermissions() {
     ElMessage.success("机器人频道权限已更新并通过回查")
     permissionDialogVisible.value = false
     await Promise.all([loadBots(), loadSubmissions()])
-    emit("submission-changed")
+    await emit("submission-changed")
   } catch (error) {
     ElMessage.error(readError(error, "调整权限失败"))
   } finally {

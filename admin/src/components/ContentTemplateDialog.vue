@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="visible"
-    @update:model-value="$emit('update:visible', $event)"
+    @update:model-value="emit('update:visible', $event)"
     :title="isEdit ? '编辑内容规则模板' : '添加内容规则模板'"
     width="780px"
   >
@@ -102,9 +102,9 @@
                 controls-position="right"
                 class="weight-input"
               />
-              <el-button type="danger" text @click="removeItem(index)">
+              <request-button type="danger" text @click="removeItem(index)">
                 删除
-              </el-button>
+              </request-button>
             </div>
           </div>
 
@@ -116,19 +116,19 @@
                 :content="action.label"
                 placement="top"
               >
-                <el-button
+                <request-button
                   size="small"
                   @click="applyFormat(index, action)"
                 >
                   {{ action.shortLabel }}
-                </el-button>
+                </request-button>
               </el-tooltip>
             </el-button-group>
 
             <el-dropdown trigger="click" @command="(key) => applyFormatByKey(index, key)">
-              <el-button size="small">
+              <request-button size="small">
                 更多格式
-              </el-button>
+              </request-button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item
@@ -142,9 +142,9 @@
               </template>
             </el-dropdown>
 
-            <el-button size="small" @click="clearHtmlTags(index)">
+            <request-button size="small" @click="clearHtmlTags(index)">
               清除格式
-            </el-button>
+            </request-button>
           </div>
 
           <el-input
@@ -157,29 +157,33 @@
         </div>
       </div>
 
-      <el-button v-if="!['link', 'contact'].includes(localForm.type)" class="add-content-button" @click="addItem">
+      <request-button v-if="!['link', 'contact'].includes(localForm.type)" class="add-content-button" @click="addItem">
         添加一条{{ localForm.type === "filter" ? "关键词组" : "内容" }}
-      </el-button>
+      </request-button>
     </el-form>
 
     <template #footer>
-      <el-button @click="$emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" @click="submit">保存规则</el-button>
+      <request-button @click="emit('update:visible', false)">取消</request-button>
+      <request-button type="primary" @click="submit">保存规则</request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, nextTick, reactive, ref, watch } from "vue"
 import { CONTENT_RULE_TYPE_META } from "../config/contentRuleSections"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: Boolean,
   form: Object,
   isEdit: Boolean,
 })
 
-const emit = defineEmits(["update:visible", "submit"])
+const rawEmit = defineEmits(["update:visible", "submit"])
+const emit = useRequestEmit(rawEmit, props)
 const ruleTypeOptions = Object.entries(CONTENT_RULE_TYPE_META).map(([value, meta]) => ({ value, label: meta.label }))
 
 let localKeySeed = 1
@@ -430,7 +434,7 @@ function submit() {
         weight: toPositiveNumber(item.weight, 1),
       }))
 
-  emit("submit", {
+  return emit("submit", {
     id: localForm.id,
     name: (localForm.name || "").trim(),
     type: localForm.type,

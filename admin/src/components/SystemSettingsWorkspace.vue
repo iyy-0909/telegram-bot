@@ -3,7 +3,7 @@
     <SendSettingsPanel
       :settings="settings"
       :saving="settingsSaving"
-      @submit="emit('save-settings', $event)"
+      :request-actions="{ 'submit': ($event) => (emit('save-settings', $event)) }"
     />
 
     <section class="rules-workspace">
@@ -27,10 +27,8 @@
             :rules="groupRules"
             :loading="loading"
             :toggling-id="togglingId"
-            @add="emit('add', $event)"
-            @edit="emit('edit', $event)"
-            @delete="emit('delete', $event)"
-            @toggle="(row, value) => emit('toggle', row, value)"
+            :request-actions="{ 'add': ($event) => (emit('add', $event)), 'edit': ($event) => (emit('edit', $event)), 'delete': ($event) => (emit('delete', $event)), 'toggle': (row, value) => emit('toggle', row, value) }"
+
           />
         </el-tab-pane>
       </el-tabs>
@@ -39,12 +37,15 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, ref, watch } from "vue"
 import SendSettingsPanel from "./SendSettingsPanel.vue"
 import RuleSectionPanel from "./RuleSectionPanel.vue"
 import { CONTENT_RULE_SECTIONS, knownContentRuleTypes } from "../config/contentRuleSections"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   settings: { type: Object, required: true },
   templates: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
@@ -52,7 +53,8 @@ const props = defineProps({
   togglingId: { type: Number, default: null },
 })
 
-const emit = defineEmits(["save-settings", "add", "edit", "delete", "toggle"])
+const rawEmit = defineEmits(["save-settings", "add", "edit", "delete", "toggle"])
+const emit = useRequestEmit(rawEmit, props)
 const activeSection = ref(CONTENT_RULE_SECTIONS[0]?.key || "")
 
 const groupRules = computed(() => props.templates

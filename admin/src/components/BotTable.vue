@@ -11,10 +11,10 @@
           <div class="header-actions">
             <el-tag type="success" effect="plain">启用 {{ enabledCount }}</el-tag>
             <el-tag type="info" effect="plain">全部 {{ bots.length }}</el-tag>
-            <el-button type="primary" @click="emit('add')">
+            <request-button type="primary" @click="emit('add')">
               <el-icon><Plus /></el-icon>
               新增 Bot
-            </el-button>
+            </request-button>
           </div>
         </div>
       </template>
@@ -70,41 +70,44 @@
           <template #default="{ row }">
             <div class="action-buttons">
               <el-tooltip content="编辑" placement="top">
-                <el-button size="small" circle @click="emit('edit', row)">
+                <request-button size="small" circle aria-label="编辑 Bot" @click="emit('edit', row)">
                   <el-icon><Edit /></el-icon>
-                </el-button>
+                </request-button>
               </el-tooltip>
               <el-tooltip content="测试 Bot" placement="top">
-                <el-button
+                <request-button
                   size="small"
                   type="primary"
                   plain
                   circle
+                  aria-label="测试 Bot"
                   @click="emit('test', row)"
                 >
                   <el-icon><CircleCheck /></el-icon>
-                </el-button>
+                </request-button>
               </el-tooltip>
               <el-tooltip :content="row.enabled ? '停用' : '启用'" placement="top">
-                <el-button
+                <request-button
                   size="small"
                   :type="row.enabled ? 'warning' : 'success'"
                   plain
                   circle
+                  :aria-label="row.enabled ? '停用 Bot' : '启用 Bot'"
                   @click="emit('toggle', row, !row.enabled)"
                 >
                   <el-icon><SwitchButton /></el-icon>
-                </el-button>
+                </request-button>
               </el-tooltip>
               <el-tooltip content="删除" placement="top">
-                <el-button
+                <request-button
                   size="small"
                   type="danger"
                   circle
+                  aria-label="删除 Bot"
                   @click="emit('delete', row.id)"
                 >
                   <el-icon><Delete /></el-icon>
-                </el-button>
+                </request-button>
               </el-tooltip>
             </div>
           </template>
@@ -115,6 +118,8 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed } from "vue"
 import { CircleCheck, Delete, Edit, Plus, SwitchButton } from "@element-plus/icons-vue"
 import CopyText from "./CopyText.vue"
@@ -122,6 +127,7 @@ import ErrorText from "./ErrorText.vue"
 import StatusTag from "./StatusTag.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   bots: {
     type: Array,
     required: true,
@@ -132,13 +138,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "add",
   "edit",
   "delete",
   "toggle",
   "test",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const enabledCount = computed(() => props.bots.filter((bot) => bot.enabled).length)
 

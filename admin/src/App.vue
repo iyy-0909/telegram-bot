@@ -21,8 +21,8 @@
         :description="authError || '请检查网络后重试。你的登录状态仍已保留。'"
       />
       <div class="auth-resolving__actions">
-        <el-button type="primary" @click="retryCurrentUser">重新加载</el-button>
-        <el-button :loading="loggingOut" @click="handleLogout">退出登录</el-button>
+        <request-button type="primary" @click="retryCurrentUser">重新加载</request-button>
+        <request-button :loading="loggingOut" @click="handleLogout">退出登录</request-button>
       </div>
     </el-card>
   </main>
@@ -30,7 +30,7 @@
   <LoginPanel
     v-else-if="!isAuthenticated"
     :initial-error="authError"
-    @login="handleLogin"
+    :request-actions="{ 'login': handleLogin }"
   />
 
   <div v-else>
@@ -40,8 +40,8 @@
       :allowed-menus="availableMenus"
       :current-user="currentUser"
       :logging-out="loggingOut"
-      @change-menu="handleMenuChange"
-      @logout="handleLogout"
+      :request-actions="{ 'change-menu': handleMenuChange, 'logout': handleLogout }"
+
     >
     <el-alert
       v-if="menuLoadError"
@@ -53,9 +53,9 @@
     >
       <div class="menu-load-error__content">
         <span>{{ menuLoadError }}</span>
-        <el-button link type="primary" :loading="menuRetrying" @click="retryActiveMenu">
+        <request-button link type="primary" :loading="menuRetrying" @click="retryActiveMenu">
           重新加载
-        </el-button>
+        </request-button>
       </div>
     </el-alert>
 
@@ -63,7 +63,7 @@
       <RuntimeDashboard
         :dashboard="runtimeDashboard"
         :loading="pageLoading.runtime"
-        @refresh="loadRuntimeDashboard"
+        :request-actions="{ 'refresh': loadRuntimeDashboard }"
       />
     </div>
 
@@ -75,13 +75,15 @@
         :events="listenerTaskLogs"
         :loading="pageLoading.listenerTasks"
         :logs-loading="pageLoading.listenerLogs"
-        @add="openAddListenerTaskDialog"
-        @edit="openEditListenerTaskDialog"
-        @delete="deleteListenerTaskHandler"
-        @start="startListenerTaskHandler"
-        @stop="stopListenerTaskHandler"
-        @catchup="checkListenerCatchupHandlerV2"
-        @refresh-logs="loadListenerTaskLogs"
+        :catchup-checking-id="catchupCheckingId"
+        :catchup-busy="catchupVisible || catchupCheckingId !== null"
+        :request-actions="{ 'add': openAddListenerTaskDialog, 'edit': openEditListenerTaskDialog, 'delete': deleteListenerTaskHandler, 'start': startListenerTaskHandler, 'stop': stopListenerTaskHandler, 'catchup': checkListenerCatchupHandlerV2, 'refresh-logs': loadListenerTaskLogs }"
+
+
+
+
+
+
       />
     </div>
 
@@ -92,11 +94,11 @@
         :loading="pageLoading.templates"
         :settings-saving="settingsSaving"
         :toggling-id="templateTogglingId"
-        @save-settings="saveSendSettings"
-        @add="openAddContentTemplateDialog"
-        @edit="openEditContentTemplateDialog"
-        @delete="deleteContentTemplateHandler"
-        @toggle="toggleContentTemplateHandler"
+        :request-actions="{ 'save-settings': saveSendSettings, 'add': openAddContentTemplateDialog, 'edit': openEditContentTemplateDialog, 'delete': deleteContentTemplateHandler, 'toggle': toggleContentTemplateHandler }"
+
+
+
+
       />
     </div>
 
@@ -109,12 +111,12 @@
         :loading="pageLoading.aiPrompts"
         :deleting-id="aiPromptDeletingId"
         :defaulting-id="aiPromptDefaultingId"
-        @refresh="refreshAiConfig"
-        @save-settings="saveAiSettings"
-        @add-prompt="openAddAiPromptDialog"
-        @edit-prompt="openEditAiPromptDialog"
-        @delete-prompt="deleteAiPromptHandler"
-        @set-default-prompt="setDefaultAiPromptHandler"
+        :request-actions="{ 'refresh': refreshAiConfig, 'save-settings': saveAiSettings, 'add-prompt': openAddAiPromptDialog, 'edit-prompt': openEditAiPromptDialog, 'delete-prompt': deleteAiPromptHandler, 'set-default-prompt': setDefaultAiPromptHandler }"
+
+
+
+
+
       />
     </div>
 
@@ -127,7 +129,7 @@
         :title="accessNotice"
         class="access-notice"
       />
-      <UserGuide @navigate="handleMenuChange" />
+      <UserGuide :request-actions="{ 'navigate': handleMenuChange }" />
     </div>
 
     <div v-if="activeMenu === 'user-access'">
@@ -139,12 +141,12 @@
         :accounts="accounts"
         :loading="pageLoading.accounts"
         :default-setting-id="defaultAccountSettingId"
-        @login="openAccountLoginDialog"
-        @relogin="openAccountReloginDialog"
-        @edit="openEditAccountDialog"
-        @delete="deleteAccount"
-        @toggle="saveAccount"
-        @set-default="setDefaultAccount"
+        :request-actions="{ 'login': openAccountLoginDialog, 'relogin': openAccountReloginDialog, 'edit': openEditAccountDialog, 'delete': deleteAccount, 'toggle': saveAccount, 'set-default': setDefaultAccount }"
+
+
+
+
+
       />
     </div>
 
@@ -153,18 +155,18 @@
     </div>
 
     <div v-if="activeMenu === 'alerts'">
-      <ControlAlertCenter @open-task="openTaskFromAlert" />
+      <ControlAlertCenter :request-actions="{ 'open-task': openTaskFromAlert }" />
     </div>
 
     <div v-if="activeMenu === 'bots'" class="bot-page">
       <BotTable
         :bots="bots"
         :loading="pageLoading.bots"
-        @add="openAddBotDialog"
-        @edit="openEditBotDialog"
-        @delete="deleteBotHandler"
-        @toggle="saveBotStatus"
-        @test="testBotHandler"
+        :request-actions="{ 'add': openAddBotDialog, 'edit': openEditBotDialog, 'delete': deleteBotHandler, 'toggle': saveBotStatus, 'test': testBotHandler }"
+
+
+
+
       />
 
       <!-- 目标频道绑定已废弃：现在在克隆/监听任务中直接选择分发 Bot。
@@ -203,15 +205,15 @@
         :task-logs="cloneTaskLogs"
         :loading="pageLoading.cloneTasks"
         :logs-loading="pageLoading.cloneLogs"
-        @add="openAddCloneTaskDialog"
-        @edit="openEditCloneTaskDialog"
-        @delete="removeCloneTaskHandler"
-        @start="startCloneTaskHandler"
-        @pause="pauseCloneTaskHandler"
-        @resume="resumeCloneTaskHandler"
-        @stop="handleStopCloneTask"
-        @toggle-listener="handleToggleCloneListener"
-        @refresh-logs="loadCloneTaskLogs"
+        :request-actions="{ 'add': openAddCloneTaskDialog, 'edit': openEditCloneTaskDialog, 'delete': removeCloneTaskHandler, 'start': startCloneTaskHandler, 'pause': pauseCloneTaskHandler, 'resume': resumeCloneTaskHandler, 'stop': handleStopCloneTask, 'toggle-listener': handleToggleCloneListener, 'refresh-logs': loadCloneTaskLogs }"
+
+
+
+
+
+
+
+
       />
     </div>
 
@@ -227,7 +229,7 @@
       :content-processing-enabled="contentProcessingEnabled"
       :channel-options-enabled="hasFeature('channels')"
       @update:visible="listenerTaskDialogVisible = $event"
-      @submit="submitListenerTask"
+      :request-actions="{ 'submit': submitListenerTask }"
     />
 
     <AccountDialog
@@ -236,14 +238,14 @@
       :is-edit="isAccountEdit"
       :saving="accountSaving"
       @update:visible="accountDialogVisible = $event"
-      @submit="submitAccount"
+      :request-actions="{ 'submit': submitAccount }"
     />
 
     <AccountLoginDialog
       :visible="accountLoginDialogVisible"
       :account="loginAccountTarget"
       @update:visible="accountLoginDialogVisible = $event"
-      @success="handleAccountLoginSuccess"
+      :request-actions="{ 'success': handleAccountLoginSuccess }"
     />
 
     <BotDialog
@@ -252,7 +254,7 @@
       :is-edit="isBotEdit"
       :saving="botSaving"
       @update:visible="botDialogVisible = $event"
-      @submit="submitBot"
+      :request-actions="{ 'submit': submitBot }"
     />
 
     <BotBindingDialog
@@ -261,7 +263,7 @@
       :bots="bots"
       :is-edit="isBotBindingEdit"
       @update:visible="botBindingDialogVisible = $event"
-      @submit="submitBotBinding"
+      :request-actions="{ 'submit': submitBotBinding }"
     />
 
     <ContentTemplateDialog
@@ -269,8 +271,31 @@
       :form="currentContentTemplate"
       :is-edit="isContentTemplateEdit"
       @update:visible="contentTemplateDialogVisible = $event"
-      @submit="submitContentTemplate"
+      :request-actions="{ 'submit': submitContentTemplate }"
     />
+    <el-dialog
+      v-model="catchupVisible" title="一键补齐" width="min(520px, calc(100vw - 24px))"
+      :close-on-click-modal="false" :close-on-press-escape="!catchupSubmitting"
+      :show-close="!catchupSubmitting" destroy-on-close
+    >
+      <p>任务：{{ catchupPlan.task_name || '当前监听任务' }}</p>
+      <p>检测到可补齐 {{ catchupPlan.catchup_count }} 条内容，仅发送各目标缺少的内容。</p>
+      <el-form ref="catchupFormRef" :model="catchupForm" label-position="top" :disabled="catchupSubmitting">
+        <el-form-item label="补齐条数" prop="limit" :rules="[{ required: true, type: 'integer', min: 1, max: catchupPlan.catchup_count, message: '请输入可补齐范围内的整数', trigger: 'change' }]">
+          <el-input-number v-model="catchupForm.limit" :min="1" :max="catchupPlan.catchup_count" :precision="0" controls-position="right" aria-label="补齐条数" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="内容间隔（秒）" prop="interval_seconds" :rules="[{ required: true, type: 'integer', min: 1, max: 86400, message: '请输入 1 至 86400 秒的整数', trigger: 'change' }]">
+          <el-input-number v-model="catchupForm.interval_seconds" :min="1" :max="86400" :precision="0" controls-position="right" aria-label="内容间隔（秒）" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="首条直接进入队列；每条发送完成后，等待设定间隔再处理下一条。相册按一条内容计算，全局发送限流仍生效。" />
+      <el-alert v-if="catchupError" type="error" :closable="false" show-icon :title="catchupError" style="margin-top: 12px" />
+      <template #footer>
+        <request-button :disabled="catchupSubmitting" @click="catchupVisible = false">取消</request-button>
+        <request-button type="primary" :loading="catchupSubmitting" @click="submitListenerCatchup">加入队列</request-button>
+      </template>
+    </el-dialog>
+
     </MainLayout>
 
     <CloneTaskDialog
@@ -284,7 +309,7 @@
       :content-processing-enabled="contentProcessingEnabled"
       :channel-options-enabled="hasFeature('channels')"
       @update:visible="cloneTaskDialogVisible = $event"
-      @submit="submitCloneTask"
+      :request-actions="{ 'submit': submitCloneTask }"
     />
 
     <AiPromptDialog
@@ -293,7 +318,7 @@
       :is-edit="isAiPromptEdit"
       :saving="aiPromptSaving"
       @update:visible="aiPromptDialogVisible = $event"
-      @submit="submitAiPrompt"
+      :request-actions="{ 'submit': submitAiPrompt }"
     />
   </div>
 </template>
@@ -1897,86 +1922,59 @@ async function checkListenerCatchupHandlerV2Legacy(id) {
 // 旧监听规则兼容
 // =========================
 
+const catchupVisible = ref(false)
+const catchupCheckingId = ref(null)
+const catchupSubmitting = ref(false)
+const catchupTaskId = ref(null)
+const catchupPlan = ref({ catchup_count: 1 })
+const catchupFormRef = ref(null)
+const catchupForm = reactive({ limit: 1, interval_seconds: 60 })
+const catchupError = ref("")
+
 async function checkListenerCatchupHandlerV2(id) {
+  if (catchupCheckingId.value !== null || catchupVisible.value) return
+  catchupCheckingId.value = id
   try {
-    const planRes = await checkListenerCatchup(id)
-    const plan = planRes.data || {}
-
-    if (!plan.ok) {
-      ElMessage.error(plan.message || "补齐检测失败")
-      return
-    }
-
-    const catchupCount = Number(plan.catchup_count || 0)
-
-    if (catchupCount <= 0) {
+    const res = await checkListenerCatchup(id)
+    const plan = res.data || {}
+    if (!plan.ok) throw new Error(plan.message || "补齐检测失败")
+    if (!plan.catchup_count) {
       ElMessage.success(plan.message || "未检测到需要补齐的内容")
-      await loadListenerTaskLogs()
       return
     }
-
-    const targetLines = (plan.targets || [])
-      .map((item) => {
-        const lastId = item.last_source_message_id || "无记录"
-        return `${item.target}：最后成功源消息 ${lastId}`
-      })
-      .join("\n")
-
-    await ElMessageBox.confirm(
-      [
-        `检测到可补齐 ${catchupCount} 条内容。`,
-        `任务：${plan.task_name || `#${id}`}`,
-        `源频道：${plan.source_channel || "-"}`,
-        targetLines ? `目标进度：\n${targetLines}` : "",
-        "补齐会进入首页排队任务列表，并按全局发送限流逐条发送。",
-      ].filter(Boolean).join("\n\n"),
-      "确认一键补齐",
-      {
-        type: "warning",
-        confirmButtonText: "开始补齐",
-        cancelButtonText: "取消",
-      },
-    )
-
-    const { value } = await ElMessageBox.prompt(
-      "请输入本次需要补齐的内容条数。",
-      "补齐条数",
-      {
-        type: "warning",
-        inputValue: String(catchupCount),
-        inputPattern: /^[1-9]\d*$/,
-        inputErrorMessage: "请输入大于 0 的整数",
-        confirmButtonText: "加入队列",
-        cancelButtonText: "取消",
-      },
-    )
-    const requestedLimit = Math.min(Math.max(Number(value || 1), 1), catchupCount)
-
-    const catchupRes = await catchupLatestListenerMessage(id, {
-      limit: requestedLimit,
-      background: true,
-    })
-    const catchupData = catchupRes.data || {}
-
-    if (catchupData.ok) {
-      ElMessage.success(catchupData.message || `已补齐发送 ${catchupData.sent_count || 0} 条`)
-    } else {
-      ElMessage.warning(catchupData.message || "补齐失败")
-    }
+    catchupTaskId.value = id
+    catchupPlan.value = plan
+    catchupForm.limit = plan.catchup_count
+    catchupForm.interval_seconds = 60
+    catchupError.value = ""
+    catchupVisible.value = true
   } catch (error) {
-    if (error !== "cancel" && error !== "close") {
-      ElMessage.error(
-        error?.response?.data?.message
-          || error?.message
-          || "补齐任务提交失败，请稍后重试",
-      )
-    }
-    await loadListenerTaskLogs()
-    return
+    ElMessage.error(error?.response?.data?.message || error?.message || "补齐检测失败，请重试")
+  } finally {
+    catchupCheckingId.value = null
   }
+}
 
-  await loadListenerTaskLogs()
-  await loadListenerTasks()
+async function submitListenerCatchup() {
+  if (catchupSubmitting.value) return
+  if (!await catchupFormRef.value?.validate().catch(() => false)) return
+  catchupSubmitting.value = true
+  catchupError.value = ""
+  try {
+    const res = await catchupLatestListenerMessage(catchupTaskId.value, {
+      background: true,
+      limit: catchupForm.limit,
+      interval_seconds: catchupForm.interval_seconds,
+    })
+    if (!res.data?.ok) throw new Error(res.data?.message || "补齐任务提交失败")
+    catchupVisible.value = false
+    ElMessage.success(`补齐任务已加入队列，内容间隔 ${catchupForm.interval_seconds} 秒`)
+  } catch (error) {
+    catchupError.value = error?.response?.data?.message || error?.message || "补齐任务提交失败，请重试"
+    return
+  } finally {
+    catchupSubmitting.value = false
+  }
   if (hasFeature("dashboard")) await loadRuntimeDashboard()
 }
 

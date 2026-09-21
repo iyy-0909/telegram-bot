@@ -1,7 +1,7 @@
 ﻿<template>
   <el-dialog
     :model-value="visible"
-    @update:model-value="$emit('update:visible', $event)"
+    @update:model-value="emit('update:visible', $event)"
     :title="isEdit ? '编辑监听任务' : '新增监听任务'"
     width="980px"
     class="task-dialog"
@@ -54,9 +54,9 @@
               <div class="field-label">
                 <span>源频道</span>
                 <el-tooltip content="添加源频道" placement="top">
-                  <el-button class="add-channel-button" type="primary" circle @click="addSourceChannel">
+                  <request-button class="add-channel-button" type="primary" circle @click="addSourceChannel">
                     <el-icon><Plus /></el-icon>
-                  </el-button>
+                  </request-button>
                 </el-tooltip>
               </div>
             </template>
@@ -71,9 +71,9 @@
                   placeholder="@channel / chat_id / t.me"
                   clearable
                 />
-                <el-button :disabled="sourceChannels.length <= 1" @click="removeSourceChannel(index)">
+                <request-button :disabled="sourceChannels.length <= 1" @click="removeSourceChannel(index)">
                   删除
-                </el-button>
+                </request-button>
               </div>
             </div>
           </el-form-item>
@@ -231,7 +231,7 @@
         <TemplateRulePanel
           :values="localForm"
           :templates="templates"
-          @update="updateTemplateField"
+          :request-actions="{ 'update': updateTemplateField }"
         />
       </section>
 
@@ -245,13 +245,15 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="$emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" @click="submit">保存</el-button>
+      <request-button @click="emit('update:visible', false)">取消</request-button>
+      <request-button type="primary" @click="submit">保存</request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, reactive, ref, watch } from "vue"
 import { Plus } from "@element-plus/icons-vue"
 import AccountSelect from "./AccountSelect.vue"
@@ -263,6 +265,7 @@ import ReplaceRulesEditor from "./ReplaceRulesEditor.vue"
 import TemplateRulePanel from "./TemplateRulePanel.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: Boolean,
   form: Object,
   isEdit: Boolean,
@@ -296,7 +299,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["update:visible", "submit"])
+const rawEmit = defineEmits(["update:visible", "submit"])
+const emit = useRequestEmit(rawEmit, props)
 
 const localForm = reactive({
   id: null,
@@ -544,7 +548,7 @@ function submit() {
       selected_footer_template_id: null,
     })
   }
-  emit("submit", payload)
+  return emit("submit", payload)
 }
 
 function enabledTemplateGroupsByType(type) {

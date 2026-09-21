@@ -1484,6 +1484,7 @@ class ListenerCatchupRequest(BaseModel):
     force: bool = True
     limit: int = 500
     background: bool = False
+    interval_seconds: int = Field(default=60, ge=1, le=86400, strict=True)
 
 
 class ListenerSourceSubscriptionCheckRequest(BaseModel):
@@ -4049,6 +4050,7 @@ async def api_listener_catchup_latest(
     force = bool(payload.force) if payload else True
     limit = payload.limit if payload else 500
     background = bool(payload.background) if payload else False
+    interval_seconds = payload.interval_seconds if payload else 60
 
     if background:
         if is_listener_catchup_running(task.id):
@@ -4069,6 +4071,7 @@ async def api_listener_catchup_latest(
             "message_type": "批量补齐",
             "reason": "正在检查可补齐内容",
             "requested_count": limit,
+            "interval_seconds": interval_seconds,
             "total_count": 0,
             "processed_count": 0,
             "sent_count": 0,
@@ -4081,6 +4084,7 @@ async def api_listener_catchup_latest(
             force=force,
             limit=limit,
             queue_item_id=queue_item_id,
+            interval_seconds=interval_seconds,
         )
         if worker is None:
             runtime_queue_state.cancel(queue_item_id, "已有补齐任务正在执行")
@@ -4094,9 +4098,12 @@ async def api_listener_catchup_latest(
             "message": "补齐任务已开始，发送进度会显示在首页排队任务列表",
             "background": True,
             "queue_item_id": queue_item_id,
+            "interval_seconds": interval_seconds,
         }
 
-    return await catchup_latest_listener_message(task, force=force, limit=limit)
+    return await catchup_latest_listener_message(
+        task, force=force, limit=limit, interval_seconds=interval_seconds,
+    )
 
 
 @app.get("/api/options/accounts")

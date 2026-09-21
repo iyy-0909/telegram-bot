@@ -37,9 +37,9 @@
             class="task-search"
             placeholder="搜索任务名 / 源频道 / 目标频道"
           />
-          <el-button type="primary" @click="emit('add')">
+          <request-button type="primary" @click="emit('add')">
             新增任务
-          </el-button>
+          </request-button>
         </div>
       </div>
     </template>
@@ -102,7 +102,7 @@
 
       <el-table-column label="监听" width="100" align="center">
         <template #default="{ row }">
-          <el-switch
+          <request-switch
             :model-value="row.enable_listener"
             size="small"
             active-text="开"
@@ -115,34 +115,34 @@
       <el-table-column label="操作" width="420" fixed="right">
         <template #default="{ row }">
           <div class="action-buttons">
-            <el-button
+            <request-button
               size="small"
               type="success"
               :disabled="row.worker_running"
               @click="emit('start', row.id)"
             >
               开始
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="warning"
               :disabled="!row.worker_running"
               @click="emit('pause', row.id)"
             >
               暂停
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="primary"
               :disabled="row.worker_running"
               @click="emit('resume', row.id)"
             >
               继续
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="danger"
               plain
@@ -150,23 +150,23 @@
               @click="emit('stop', row.id)"
             >
               停止
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               @click="emit('edit', row)"
             >
               编辑
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="danger"
               :disabled="row.worker_running"
               @click="emit('delete', row.id)"
             >
               删除
-            </el-button>
+            </request-button>
           </div>
         </template>
       </el-table-column>
@@ -191,9 +191,9 @@
             class="task-search"
             placeholder="搜索任务ID / 目标 / 消息 / 错误"
           />
-          <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+          <request-button :loading="logsLoading" @click="emit('refresh-logs')">
             刷新
-          </el-button>
+          </request-button>
         </div>
       </div>
     </template>
@@ -257,12 +257,15 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 import { matchesSearch } from "../utils/search"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   tasks: {
     type: Array,
     required: true,
@@ -341,7 +344,7 @@ const overview = computed(() => {
   }
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "add",
   "edit",
   "delete",
@@ -352,6 +355,7 @@ const emit = defineEmits([
   "toggle-listener",
   "refresh-logs",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const formatTargets = (value) => {
   if (!value) {

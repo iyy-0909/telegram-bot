@@ -87,7 +87,10 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   values: {
     type: Object,
     required: true,
@@ -98,9 +101,10 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "update",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const sections = [
   {

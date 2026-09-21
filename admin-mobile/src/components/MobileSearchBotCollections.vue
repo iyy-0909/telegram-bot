@@ -10,9 +10,9 @@
       >
         <el-option v-for="group in groupOptions" :key="group" :label="group" :value="group" />
       </el-select>
-      <el-button circle :loading="loading" :disabled="!selectedGroup" aria-label="刷新" @click="loadAll">
+      <request-button circle :loading="loading" :disabled="!selectedGroup" aria-label="刷新" @click="loadAll">
         <el-icon><Refresh /></el-icon>
-      </el-button>
+      </request-button>
     </div>
 
     <EmptyState

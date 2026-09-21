@@ -36,9 +36,9 @@
               class="task-search"
               placeholder="搜索任务名 / 源频道 / 目标频道"
             />
-            <el-button type="primary" @click="emit('add')">
+            <request-button type="primary" @click="emit('add')">
               新增任务
-            </el-button>
+            </request-button>
           </div>
         </div>
       </template>
@@ -113,40 +113,42 @@
         <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <div class="action-buttons">
-              <el-button
+              <request-button
                 size="small"
                 type="success"
                 :disabled="row.enabled"
                 @click="emit('start', row.id)"
               >
                 启动
-              </el-button>
-              <el-button
+              </request-button>
+              <request-button
                 size="small"
                 type="warning"
                 :disabled="!row.enabled"
                 @click="emit('stop', row.id)"
               >
                 停止
-              </el-button>
-              <el-button size="small" @click="emit('edit', row)">
+              </request-button>
+              <request-button size="small" @click="emit('edit', row)">
                 编辑
-              </el-button>
-              <el-button
+              </request-button>
+              <request-button
                 size="small"
                 type="primary"
                 plain
+                :loading="catchupCheckingId === row.id"
+                :disabled="catchupBusy"
                 @click="emit('catchup', row.id)"
               >
                 一键补齐
-              </el-button>
-              <el-button
+              </request-button>
+              <request-button
                 size="small"
                 type="danger"
                 @click="emit('delete', row.id)"
               >
                 删除
-              </el-button>
+              </request-button>
             </div>
           </template>
         </el-table-column>
@@ -181,9 +183,9 @@
               <el-option label="失败" value="failed" />
               <el-option label="账号异常" value="account_error" />
             </el-select>
-            <el-button :loading="logsLoading" @click="emit('refresh-logs')">
+            <request-button :loading="logsLoading" @click="emit('refresh-logs')">
               刷新
-            </el-button>
+            </request-button>
           </div>
         </div>
       </template>
@@ -248,12 +250,17 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 import { matchesSearch } from "../utils/search"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
+  catchupCheckingId: { type: Number, default: null },
+  catchupBusy: { type: Boolean, default: false },
   tasks: {
     type: Array,
     required: true,
@@ -272,7 +279,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup", "refresh-logs"])
+const rawEmit = defineEmits(["add", "edit", "delete", "start", "stop", "catchup", "refresh-logs"])
+const emit = useRequestEmit(rawEmit, props)
 const eventFilter = ref("")
 const eventKeyword = ref("")
 const keyword = ref("")

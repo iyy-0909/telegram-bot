@@ -50,24 +50,27 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="handleClose">
+      <request-button @click="handleClose">
         取消
-      </el-button>
+      </request-button>
 
-      <el-button
+      <request-button
         type="primary"
         @click="handleSubmit"
       >
         保存
-      </el-button>
+      </request-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { reactive, watch } from "vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   visible: {
     type: Boolean,
     default: false,
@@ -86,10 +89,11 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "update:visible",
   "submit",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const localForm = reactive({
   id: null,
@@ -122,7 +126,7 @@ const handleClose = () => {
 }
 
 const handleSubmit = () => {
-  emit("submit", {
+  return emit("submit", {
     id: localForm.id,
     target_channel: localForm.target_channel,
     bot_id: localForm.bot_id,

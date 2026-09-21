@@ -5,7 +5,7 @@
         <el-tag effect="plain">从准备到运行</el-tag>
         <h1>使用教程</h1>
         <p>采集账号读取 Telegram 源频道，内容经过过滤、替换、AI 改写和模板处理后，由官方 Bot 分发到目标频道。</p>
-        <div class="actions"><el-button type="primary" @click="jump('clone')">创建克隆任务</el-button><el-button @click="jump('listener')">配置实时监听</el-button></div>
+        <div class="actions"><request-button type="primary" @click="jump('clone')">创建克隆任务</request-button><request-button @click="jump('listener')">配置实时监听</request-button></div>
       </div>
       <img v-if="heroImage" :src="heroImage" alt="采集账号读取源频道，经内容处理后由 Bot 分发到目标频道的流程示意" />
       <div v-else class="flow-image"><span>采集账号</span><b>→</b><span>内容处理</span><b>→</b><span>分发 Bot</span><b>→</b><span>目标频道</span></div>
@@ -18,14 +18,14 @@
       <div class="prep-grid">
         <article v-for="item in preparations" :key="item.no" class="prep-card">
           <i>{{ item.no }}</i><div><h3>{{ item.title }}</h3><p>{{ item.desc }}</p><strong>配置位置：{{ item.location }}</strong></div>
-          <el-button link type="primary" @click="navigate(item.menu)">去配置 →</el-button>
+          <request-button link type="primary" @click="navigate(item.menu)">去配置 →</request-button>
         </article>
       </div>
       <div class="checks"><b>上线前检查</b><span>账号状态正常且 session 有效</span><span>Bot Token 测试成功</span><span>Bot 已加入目标频道并可发帖</span></div>
     </section>
 
     <section id="clone" class="block">
-      <Heading eyebrow="功能 1" title="克隆任务：批量同步历史内容"><el-button type="primary" @click="navigate('clone')">打开克隆任务</el-button></Heading>
+      <Heading eyebrow="功能 1" title="克隆任务：批量同步历史内容"><request-button type="primary" @click="navigate('clone')">打开克隆任务</request-button></Heading>
       <p class="lead">适合搬运源频道已经发布的历史消息。可用开始/结束消息链接限定范围，并按原顺序发送到一个或多个目标频道。</p>
       <LocationMap mode="clone" />
       <ol class="steps">
@@ -45,11 +45,11 @@
         <article v-for="item in processing" :key="item.title"><h3>{{ item.title }}</h3><p>{{ item.use }}</p><div><b>怎么配：</b>{{ item.how }}</div><small>{{ item.note }}</small></article>
       </div>
       <div class="sequence"><b>执行顺序</b><span>条件筛选</span><i>→</i><span>过滤清洗</span><i>→</i><span>替换</span><i>→</i><span>AI 改写</span><i>→</i><span>Head / Body / Footer</span></div>
-      <div class="actions"><el-button @click="navigate('settings')">配置内容模板与全局规则</el-button><el-button @click="navigate('ai-settings')">配置 AI 密钥与提示词</el-button></div>
+      <div class="actions"><request-button @click="navigate('settings')">配置内容模板与全局规则</request-button><request-button @click="navigate('ai-settings')">配置 AI 密钥与提示词</request-button></div>
     </section>
 
     <section id="listener" class="block">
-      <Heading eyebrow="功能 2" title="监听任务：持续同步新内容"><el-button type="primary" @click="navigate('rules')">打开监听任务</el-button></Heading>
+      <Heading eyebrow="功能 2" title="监听任务：持续同步新内容"><request-button type="primary" @click="navigate('rules')">打开监听任务</request-button></Heading>
       <p class="lead">监听任务只处理创建并启用之后出现的新消息。它必须搭载采集账号读取内容，并搭载分发 Bot 把内容发出去。</p>
       <LocationMap mode="listener" />
       <div class="deps"><div><b>① 采集账号</b><span>能访问源频道，session 有效</span></div><strong>＋</strong><div><b>② 分发 Bot</b><span>在目标频道且可发帖</span></div><strong>＋</strong><div><b>③ 目标频道</b><span>接收监听到的新内容</span></div></div>
@@ -71,9 +71,14 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
+const requestProps = defineProps({ requestActions: { type: Object, default: () => ({}) } })
+
 import { defineComponent, h } from "vue"
 import heroImage from "../assets/guide/system-flow.png"
-const emit = defineEmits(["navigate"])
+const rawEmit = defineEmits(["navigate"])
+const emit = useRequestEmit(rawEmit, requestProps)
 const preparations = [
   { no: 1, title: "采集账号", desc: "Telegram 用户号，负责读取源频道历史消息和实时新消息。", location: "账号管理 → 登录账号", menu: "accounts" },
   { no: 2, title: "分发 Bot", desc: "官方 Bot API 账号，负责把处理后的内容发送到目标频道。", location: "Bot 管理 → 新增 Bot → 测试", menu: "bots" },
@@ -88,7 +93,7 @@ const processing = [
 const Heading = defineComponent({ props: { eyebrow:String,title:String,text:String }, setup(p,{slots}) { return()=>h("div",{class:"heading"},[h("div",[h("span",p.eyebrow),h("h2",p.title)]),p.text?h("p",p.text):slots.default?.()]) } })
 const pins = { clone:[["1","基础信息","账号与历史范围"],["2","频道与分发","源频道、Bot、目标频道"],["3","内容处理与 AI","过滤、替换、改写、模板"],["4","任务开关","启用与自动监听"]], listener:[["1","基础信息","监听账号与分发 Bot"],["2","频道与分发","源频道、目标频道"],["3","内容处理与 AI","只监听内容与加工规则"],["4","任务开关","保存后保持启用"]] }
 const LocationMap = defineComponent({ props:{mode:String},setup(p){return()=>h("div",{class:"location-map"},[h("aside",[h("b","后台菜单"),h("span",{class:"active"},p.mode==="clone"?"克隆任务":"监听任务")]),h("main",[h("header",[h("b",p.mode==="clone"?"克隆任务":"监听任务"),h("em","＋ 新增任务")]),h("section",pins[p.mode].map(x=>h("div",{class:"pin"},[h("i",x[0]),h("div",[h("b",x[1]),h("small",x[2])])])) )])])}})
-function navigate(menu){emit("navigate",menu)}
+function navigate(menu){return emit("navigate",menu)}
 function jump(id){document.getElementById(id)?.scrollIntoView({behavior:"smooth",block:"start"})}
 </script>
 

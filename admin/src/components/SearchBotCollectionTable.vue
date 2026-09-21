@@ -11,10 +11,10 @@
       >
         <el-option v-for="group in groupOptions" :key="group" :label="group" :value="group" />
       </el-select>
-      <el-button :loading="loading" :disabled="!selectedGroup" @click="loadAll">
+      <request-button :loading="loading" :disabled="!selectedGroup" @click="loadAll">
         <el-icon><Refresh /></el-icon>
         刷新
-      </el-button>
+      </request-button>
     </div>
 
     <el-empty

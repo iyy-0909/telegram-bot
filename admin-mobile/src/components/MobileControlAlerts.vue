@@ -1,8 +1,8 @@
 <template>
   <div class="mobile-alerts">
     <div class="page-actions">
-      <el-button plain @click="$emit('back')">返回</el-button>
-      <el-button :icon="Refresh" :loading="loading" @click="loadAlerts">刷新</el-button>
+      <request-button plain @click="emit('back')">返回</request-button>
+      <request-button :icon="Refresh" :loading="loading" @click="loadAlerts">刷新</request-button>
     </div>
 
     <el-alert
@@ -36,7 +36,7 @@
     </div>
 
     <el-alert v-if="error" type="error" show-icon :closable="false" :title="error">
-      <el-button link type="primary" @click="loadAlerts">重新加载</el-button>
+      <request-button link type="primary" @click="loadAlerts">重新加载</request-button>
     </el-alert>
 
     <div v-else v-loading="loading" class="alert-list">
@@ -62,34 +62,38 @@
           </dl>
           <pre>{{ item.detail || "无详细信息" }}</pre>
           <div class="detail-actions">
-            <el-button
+            <request-button
               v-if="taskType(item)"
               plain
               :icon="Document"
               @click="openTask(item)"
-            >查看任务</el-button>
-            <el-button
+            >查看任务</request-button>
+            <request-button
               v-if="item.status === 'pending'"
               type="primary"
               :icon="CircleCheck"
               :loading="acknowledgingId === item.id"
               @click="acknowledge(item)"
-            >已读</el-button>
+            >已读</request-button>
           </div>
         </div>
       </article>
     </div>
 
-    <el-button
+    <request-button
       v-if="stats.pending"
       class="ack-all"
       :loading="acknowledgingAll"
       @click="acknowledgeAll"
-    >全部标记为已读</el-button>
+    >全部标记为已读</request-button>
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
+const requestProps = defineProps({ requestActions: { type: Object, default: () => ({}) } })
+
 import { onMounted, ref } from "vue"
 import { ArrowDownBold, ArrowUpBold, CircleCheck, Document, Refresh, Search } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
@@ -100,7 +104,8 @@ import {
 } from "../api"
 import { getErrorMessage } from "../api/client"
 
-const emit = defineEmits(["back", "open-task"])
+const rawEmit = defineEmits(["back", "open-task"])
+const emit = useRequestEmit(rawEmit, requestProps)
 
 const items = ref([])
 const stats = ref({})

@@ -29,10 +29,10 @@
         :closable="false"
         class="page-alert"
       />
-      <el-button type="primary" @click="openCreate">
+      <request-button type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
         新增客服 Bot
-      </el-button>
+      </request-button>
     </div>
 
     <el-card class="table-card">
@@ -104,21 +104,21 @@
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button size="small" @click="openEdit(row)">
+              <request-button size="small" @click="openEdit(row)">
                 <el-icon><Edit /></el-icon>
                 编辑
-              </el-button>
-              <el-button size="small" @click="testBot(row)">
+              </request-button>
+              <request-button size="small" @click="testBot(row)">
                 <el-icon><CircleCheck /></el-icon>
                 检测
-              </el-button>
-              <el-button size="small" @click="togglePolling(row)">
+              </request-button>
+              <request-button size="small" @click="togglePolling(row)">
                 {{ row.polling_enabled ? "停用" : "启用" }}
-              </el-button>
-              <el-button size="small" type="danger" plain @click="remove(row)">
+              </request-button>
+              <request-button size="small" type="danger" plain @click="remove(row)">
                 <el-icon><Delete /></el-icon>
                 删除
-              </el-button>
+              </request-button>
             </div>
           </template>
         </el-table-column>
@@ -201,16 +201,16 @@
                 :http-request="uploadWelcomeMedia"
                 :before-upload="beforeWelcomeMediaUpload"
               >
-                <el-button :loading="uploadingMedia">
+                <request-button :loading="uploadingMedia">
                   上传媒体
-                </el-button>
+                </request-button>
               </el-upload>
-              <el-button
+              <request-button
                 v-if="form.welcome_media_file_id"
                 @click="clearWelcomeMedia"
               >
                 清空媒体
-              </el-button>
+              </request-button>
             </div>
             <div class="field-tip">
               上传后 /start 时优先发送媒体，欢迎文本作为 caption。已配置：{{ welcomeMediaLabel }}
@@ -243,8 +243,8 @@
       </el-form>
 
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <request-button @click="dialogVisible = false">取消</request-button>
+        <request-button type="primary" :loading="saving" @click="save">保存</request-button>
       </template>
     </el-dialog>
   </div>

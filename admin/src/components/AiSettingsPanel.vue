@@ -6,9 +6,9 @@
           <div class="card-title">模型供应商</div>
           <div class="card-subtitle">集中查看密钥状态、默认模型，并指定新任务使用的默认 AI。</div>
         </div>
-        <el-button type="primary" :loading="saving" :disabled="loading" @click="save">
+        <request-button type="primary" :loading="saving" :disabled="loading" @click="save">
           保存模型配置
-        </el-button>
+        </request-button>
       </div>
     </template>
 
@@ -89,14 +89,14 @@
                 @confirm="clearKey(row.key)"
               >
                 <template #reference>
-                  <el-button
+                  <request-button
                     link
                     type="danger"
                     :loading="clearingKey === row.key"
                     :disabled="saving || !providerConfigured(row.key)"
                   >
                     清除密钥
-                  </el-button>
+                  </request-button>
                 </template>
               </el-popconfirm>
             </template>
@@ -108,15 +108,19 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { reactive, ref, watch } from "vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   settings: { type: Object, default: () => ({ providers: {}, default_provider: "grok" }) },
   saving: Boolean,
   loading: Boolean,
 })
 
-const emit = defineEmits(["submit"])
+const rawEmit = defineEmits(["submit"])
+const emit = useRequestEmit(rawEmit, props)
 
 const providerList = [
   { key: "grok", title: "Grok（xAI）", defaultModel: "grok-4.6" },
@@ -157,7 +161,8 @@ function providerConfigured(key) {
 }
 
 function save() {
-  emit("submit", {
+  if (props.saving || props.loading) return
+  return emit("submit", {
     default_provider: localForm.default_provider,
     grok_api_key: localForm.grok_api_key || undefined,
     grok_model: localForm.grok_model.trim() || "grok-4.6",
@@ -168,7 +173,7 @@ function save() {
 
 function clearKey(key) {
   clearingKey.value = key
-  emit("submit", { [`clear_${key}_api_key`]: true })
+  return emit("submit", { [`clear_${key}_api_key`]: true })
 }
 </script>
 

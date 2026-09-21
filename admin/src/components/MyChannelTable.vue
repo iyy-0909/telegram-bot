@@ -45,18 +45,18 @@
               <el-option label="审核中" value="reviewing" />
               <el-option label="未收录" value="not_collected" />
             </el-select>
-            <el-button @click="load">
+            <request-button @click="load">
               <el-icon><Refresh /></el-icon>
               刷新
-            </el-button>
-            <el-button @click="batchCheck">
+            </request-button>
+            <request-button @click="batchCheck">
               <el-icon><Connection /></el-icon>
               批量检测
-            </el-button>
-            <el-button type="primary" @click="openCreate">
+            </request-button>
+            <request-button type="primary" @click="openCreate">
               <el-icon><Plus /></el-icon>
               新增频道
-            </el-button>
+            </request-button>
           </div>
         </div>
 
@@ -122,23 +122,23 @@
             <el-table-column label="操作" width="382" :fixed="isNarrow ? false : 'right'">
               <template #default="{ row }">
                 <div class="row-actions">
-                  <el-button size="small" type="primary" :disabled="row.status === 'disabled'" @click="openChannelSubmit(row)">提交</el-button>
-                  <el-button size="small" type="info" plain @click="openChannelSubmissionStatus(row)">查看</el-button>
-                  <el-button size="small" @click="openEdit(row)">
+                  <request-button size="small" type="primary" :disabled="row.status === 'disabled'" @click="openChannelSubmit(row)">提交</request-button>
+                  <request-button size="small" type="info" plain @click="openChannelSubmissionStatus(row)">查看</request-button>
+                  <request-button size="small" @click="openEdit(row)">
                     <el-icon><Edit /></el-icon>
                     编辑
-                  </el-button>
-                  <el-button size="small" :loading="checkingId === row.id" @click="check(row)">
+                  </request-button>
+                  <request-button size="small" :loading="checkingId === row.id" @click="check(row)">
                     <el-icon><Connection /></el-icon>
                     检测
-                  </el-button>
-                  <el-button size="small" @click="toggle(row)">
+                  </request-button>
+                  <request-button size="small" @click="toggle(row)">
                     {{ row.status === "disabled" ? "启用" : "停用" }}
-                  </el-button>
-                  <el-button size="small" type="danger" plain @click="remove(row)">
+                  </request-button>
+                  <request-button size="small" type="danger" plain @click="remove(row)">
                     <el-icon><Delete /></el-icon>
                     删除
-                  </el-button>
+                  </request-button>
                 </div>
               </template>
             </el-table-column>
@@ -174,14 +174,14 @@
                 :value="group"
               />
             </el-select>
-            <el-button @click="loadCloneChannels">
+            <request-button @click="loadCloneChannels">
               <el-icon><Refresh /></el-icon>
               刷新
-            </el-button>
-            <el-button type="primary" @click="openCloneCreate">
+            </request-button>
+            <request-button type="primary" @click="openCloneCreate">
               <el-icon><Plus /></el-icon>
               新增克隆频道
-            </el-button>
+            </request-button>
           </div>
         </div>
 
@@ -207,14 +207,14 @@
             <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
                 <div class="row-actions">
-                  <el-button size="small" @click="openCloneEdit(row)">
+                  <request-button size="small" @click="openCloneEdit(row)">
                     <el-icon><Edit /></el-icon>
                     编辑
-                  </el-button>
-                  <el-button size="small" type="danger" plain @click="removeClone(row)">
+                  </request-button>
+                  <request-button size="small" type="danger" plain @click="removeClone(row)">
                     <el-icon><Delete /></el-icon>
                     删除
-                  </el-button>
+                  </request-button>
                 </div>
               </template>
             </el-table-column>
@@ -231,7 +231,7 @@
           ref="searchBotPanelRef"
           :accounts="accounts"
           :accounts-loading="accountsLoading"
-          @submission-changed="handleSubmissionChanged"
+          :request-actions="{ 'submission-changed': handleSubmissionChanged }"
         />
       </el-tab-pane>
     </el-tabs>
@@ -302,8 +302,8 @@
         <el-table-column label="操作" width="190" fixed="right" align="center">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button size="small" type="primary" plain @click="openChannelSubmissionEdit(row)">更新状态</el-button>
-              <el-button size="small" @click="openChannelPermissionEdit(row)">调整权限</el-button>
+              <request-button size="small" type="primary" plain @click="openChannelSubmissionEdit(row)">更新状态</request-button>
+              <request-button size="small" @click="openChannelPermissionEdit(row)">调整权限</request-button>
             </div>
           </template>
         </el-table-column>
@@ -313,19 +313,19 @@
               ? '该频道还没有搜索机器人提交记录'
               : '该频道未设置分组，完善分组后才能提交到搜索机器人'"
           >
-            <el-button
+            <request-button
               type="primary"
               :disabled="submissionStatusChannel?.status === 'disabled'"
               @click="submitFromStatusDialog"
             >
               {{ submissionStatusChannel?.group_name ? "提交到搜索机器人" : "先设置频道分组" }}
-            </el-button>
+            </request-button>
           </el-empty>
         </template>
       </el-table>
 
       <template #footer>
-        <el-button type="primary" @click="submissionStatusDialogVisible = false">关闭</el-button>
+        <request-button type="primary" @click="submissionStatusDialogVisible = false">关闭</request-button>
       </template>
     </el-dialog>
 
@@ -381,7 +381,7 @@
           <div v-if="editReviewLoading" role="status">正在加载收录审核信息…</div>
           <div v-else-if="editReviewError" role="alert">
             <el-alert :title="editReviewError" type="error" :closable="false" show-icon />
-            <el-button text type="primary" @click="loadEditReviews(editing.id)">重新加载</el-button>
+            <request-button text type="primary" @click="loadEditReviews(editing.id)">重新加载</request-button>
           </div>
           <dl v-else class="review-details">
             <template v-for="group in reviewGroups" :key="group.status">
@@ -423,8 +423,8 @@
         <el-descriptions-item label="最近错误" :span="2">{{ editing?.last_error || "-" }}</el-descriptions-item>
       </el-descriptions>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存并检测</el-button>
+        <request-button @click="dialogVisible = false">取消</request-button>
+        <request-button type="primary" :loading="saving" @click="save">保存并检测</request-button>
       </template>
     </el-dialog>
 
@@ -447,8 +447,8 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="cloneDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="cloneSaving" @click="saveClone">保存</el-button>
+        <request-button @click="cloneDialogVisible = false">取消</request-button>
+        <request-button type="primary" :loading="cloneSaving" @click="saveClone">保存</request-button>
       </template>
     </el-dialog>
 
@@ -488,13 +488,15 @@
         <el-descriptions-item label="最近错误" :span="2">{{ checkInfo.last_error || "-" }}</el-descriptions-item>
       </el-descriptions>
       <template #footer>
-        <el-button type="primary" @click="checkDialogVisible = false">关闭</el-button>
+        <request-button type="primary" @click="checkDialogVisible = false">关闭</request-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import {
@@ -525,6 +527,7 @@ import SearchBotPanel from "./SearchBotPanel.vue"
 import SearchBotCollectionTable from "./SearchBotCollectionTable.vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   bots: {
     type: Array,
     default: () => [],
@@ -543,7 +546,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["update:active-tab"])
+const rawEmit = defineEmits(["update:active-tab"])
+const emit = useRequestEmit(rawEmit, props)
 const currentTab = computed({
   get: () => props.activeTab,
   set: (value) => emit("update:active-tab", value),
@@ -662,7 +666,7 @@ function openChannelSubmit(row) {
     return
   }
 
-  searchBotPanelRef.value.openSubmitForChannel(row)
+  return searchBotPanelRef.value.openSubmitForChannel(row)
 }
 
 async function openChannelSubmissionStatus(row) {
@@ -687,10 +691,9 @@ function submitFromStatusDialog() {
   if (!channel) return
   if (!channel.group_name) {
     ElMessage.warning("请先设置频道分组，再提交到搜索机器人")
-    openEdit(channel)
-    return
+    return openEdit(channel)
   }
-  openChannelSubmit(channel)
+  return openChannelSubmit(channel)
 }
 
 function openChannelSubmissionEdit(row) {
@@ -840,7 +843,7 @@ function openEdit(row) {
     tags: row.tags || "[]",
   })
   dialogVisible.value = true
-  loadEditReviews(row.id)
+  return loadEditReviews(row.id)
 }
 
 async function loadEditReviews(channelId) {

@@ -97,14 +97,16 @@
         <li>版本、期限或状态变更会立即生效，无需重新注册账号。</li>
       </ol>
       <div class="access-actions">
-        <el-button type="primary" :loading="refreshing" @click="$emit('refresh')">刷新授权</el-button>
-        <el-button @click="$emit('logout')">退出登录</el-button>
+        <request-button type="primary" :loading="refreshing" @click="emit('refresh')">刷新授权</request-button>
+        <request-button @click="emit('logout')">退出登录</request-button>
       </div>
     </section>
   </div>
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed } from "vue"
 import {
   FEATURE_DEFINITIONS,
@@ -116,11 +118,13 @@ import {
 } from "../utils/access"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   user: { type: Object, default: null },
   refreshing: { type: Boolean, default: false },
 })
 
-defineEmits(["refresh", "logout"])
+const rawEmit = defineEmits(["refresh", "logout"])
+const emit = useRequestEmit(rawEmit, props)
 
 const visibleFeatures = computed(() => {
   const enabled = new Set(userFeatureKeys(props.user))

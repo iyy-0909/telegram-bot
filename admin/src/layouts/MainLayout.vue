@@ -2,7 +2,7 @@
   <el-container class="layout">
     <el-aside width="220px" class="aside">
       <div class="logo">校长克隆机器人</div>
-      <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" @select="handleSelect" />
+      <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" :request-actions="{ 'select': handleSelect }" />
     </el-aside>
 
     <el-container class="content-shell">
@@ -22,13 +22,13 @@
               <span>{{ roleLabel }} · {{ accessValidityLabel }}</span>
             </div>
             <el-tag :type="roleTagType" size="small" effect="plain">{{ roleLabel }}</el-tag>
-            <el-button size="small" plain :loading="loggingOut" @click="$emit('logout')">退出</el-button>
+            <request-button size="small" plain :loading="loggingOut" @click="emit('logout')">退出</request-button>
           </div>
         </div>
       </el-header>
 
       <div class="mobile-menu">
-        <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" @select="handleSelect" />
+        <AppMenu :active-menu="activeMenu" :items="visibleMenuItems" :request-actions="{ 'select': handleSelect }" />
       </div>
 
       <el-main class="main">
@@ -39,6 +39,8 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, defineComponent, h, resolveComponent } from "vue"
 import {
   Bell,
@@ -58,6 +60,7 @@ import {
 } from "@element-plus/icons-vue"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   status: {
     type: String,
     default: "unknown",
@@ -80,7 +83,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(["change-menu", "logout"])
+const rawEmit = defineEmits(["change-menu", "logout"])
+const emit = useRequestEmit(rawEmit, props)
 
 const menuItems = [
   ["home", "首页", House],
@@ -115,11 +119,12 @@ const accessValidityLabel = computed(() => {
   return days <= 1 ? "不足 1 天" : `剩余 ${days} 天`
 })
 const handleSelect = (menu) => {
-  emit("change-menu", menu)
+  return emit("change-menu", menu)
 }
 
 const AppMenu = defineComponent({
   props: {
+    requestActions: { type: Object, default: () => ({}) },
     activeMenu: {
       type: String,
       default: "rules",
@@ -130,14 +135,15 @@ const AppMenu = defineComponent({
     },
   },
   emits: ["select"],
-  setup(props, { emit: componentEmit }) {
+  setup(props, { emit: rawEmit }) {
+    const emit = useRequestEmit(rawEmit, props)
     return () => h(resolveComponent("el-menu"), {
       defaultActive: props.activeMenu,
       class: "menu",
       backgroundColor: "#111827",
       textColor: "#cbd5e1",
       activeTextColor: "#ffffff",
-      onSelect: (menu) => componentEmit("select", menu),
+      onSelect: (menu) => emit("select", menu),
     }, () => props.items.map(([index, label, icon]) => h(resolveComponent("el-menu-item"), {
       index,
       key: index,

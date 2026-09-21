@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import time
 
 from bot.listener_catchup import (
     MAX_AUTO_CATCHUP_ITEMS,
@@ -21,7 +22,7 @@ def is_listener_catchup_running(task_id):
     return bool(worker and not worker.done())
 
 
-def start_listener_catchup_background(task, *, force, limit, queue_item_id):
+def start_listener_catchup_background(task, *, force, limit, queue_item_id, interval_seconds=60):
     task_id = int(task.id)
     if is_listener_catchup_running(task_id):
         return None
@@ -32,6 +33,7 @@ def start_listener_catchup_background(task, *, force, limit, queue_item_id):
             force=force,
             limit=limit,
             queue_item_id=queue_item_id,
+            interval_seconds=interval_seconds,
         )
     )
     _active_catchup_tasks[task_id] = worker
@@ -76,6 +78,7 @@ async def catchup_latest_listener_message(
     force=True,
     limit=MAX_AUTO_CATCHUP_ITEMS,
     queue_item_id=None,
+    interval_seconds=60,
 ):
     plan = await build_listener_catchup_plan(task, limit=limit or MAX_AUTO_CATCHUP_ITEMS)
 
@@ -123,8 +126,30 @@ async def catchup_latest_listener_message(
     skipped_count = 0
     results = []
     force_send = False
+    next_content_at = 0
 
     for index, item in enumerate(content_items, start=1):
+        # Wait outside the global send queue so other tasks remain free to send.
+        remaining = max(next_content_at - time.monotonic(), 0)
+        if remaining > 0:
+            update_catchup_progress(
+                queue_item_id, status="waiting",
+                reason=f"内容间隔等待：每条间隔 {interval_seconds} 秒",
+                total_count=total_count, processed_count=index - 1,
+                sent_count=sent_count, skipped_count=skipped_count,
+                failed_count=failed_count,
+            )
+            if queue_item_id:
+                runtime_queue_state.update_waiting(
+                    queue_item_id, estimated_send_remaining_seconds=remaining,
+                )
+            await asyncio.sleep(remaining)
+        if queue_item_id:
+            runtime_queue_state.update_waiting(
+                queue_item_id, status="running", reason="正在处理下一条补齐内容",
+                estimated_send_remaining_seconds=None, estimated_send_at="",
+                _estimated_send_monotonic=None,
+            )
         messages = item["_messages"]
         source_message_id = item["source_message_id"]
         grouped_id = item["_grouped_id"]
@@ -178,6 +203,7 @@ async def catchup_latest_listener_message(
 
             if sent:
                 sent_count += 1
+                next_content_at = time.monotonic() + interval_seconds
             else:
                 skipped_count += 1
 
@@ -228,6 +254,7 @@ async def catchup_latest_listener_message(
             else f"补齐完成：成功 {sent_count} 条，未发送 {skipped_count} 条，失败 {failed_count} 条"
         ),
         "requested": requested_limit,
+        "interval_seconds": interval_seconds,
         "processed": len(content_items),
         "sent_count": sent_count,
         "failed_count": failed_count,
@@ -245,13 +272,14 @@ async def catchup_latest_listener_message(
     return result
 
 
-async def run_listener_catchup_background(task, *, force, limit, queue_item_id):
+async def run_listener_catchup_background(task, *, force, limit, queue_item_id, interval_seconds=60):
     try:
         return await catchup_latest_listener_message(
             task,
             force=force,
             limit=limit,
             queue_item_id=queue_item_id,
+            interval_seconds=interval_seconds,
         )
     except asyncio.CancelledError:
         runtime_queue_state.cancel(queue_item_id, "补齐任务被取消")

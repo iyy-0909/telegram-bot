@@ -7,9 +7,9 @@
           <div class="card-subtitle">配置每个目标频道使用哪个 Bot 分发</div>
         </div>
 
-        <el-button type="primary" @click="emit('add')">
+        <request-button type="primary" @click="emit('add')">
           新增绑定
-        </el-button>
+        </request-button>
       </div>
     </template>
 
@@ -33,7 +33,7 @@
 
       <el-table-column label="启用" width="100" align="center">
         <template #default="{ row }">
-          <el-switch
+          <request-switch
             :model-value="row.enabled"
             size="small"
             @change="value => emit('toggle', row, value)"
@@ -46,20 +46,20 @@
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <div class="action-buttons">
-            <el-button
+            <request-button
               size="small"
               @click="emit('edit', row)"
             >
               编辑
-            </el-button>
+            </request-button>
 
-            <el-button
+            <request-button
               size="small"
               type="danger"
               @click="emit('delete', row.id)"
             >
               删除
-            </el-button>
+            </request-button>
           </div>
         </template>
       </el-table-column>
@@ -68,7 +68,10 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   bindings: {
     type: Array,
     required: true,
@@ -79,12 +82,13 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits([
+const rawEmit = defineEmits([
   "add",
   "edit",
   "delete",
   "toggle",
 ])
+const emit = useRequestEmit(rawEmit, props)
 
 const getBotName = (botId) => {
   const bot = props.bots.find(item => item.id === botId)

@@ -5,7 +5,7 @@
         <h2>后台管理</h2>
         <p>管理登录账号版本、使用期限，以及免费版每日广告。</p>
       </div>
-      <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
+      <request-button :icon="Refresh" :loading="loading" @click="loadData">刷新</request-button>
     </header>
 
     <el-alert
@@ -35,7 +35,7 @@
 
       <el-alert v-if="loadError" type="error" show-icon :closable="false" class="load-error">
         <template #title>{{ loadError }}</template>
-        <el-button link type="primary" @click="loadData">重新加载</el-button>
+        <request-button link type="primary" @click="loadData">重新加载</request-button>
       </el-alert>
 
       <el-table v-else v-loading="loading" :data="pagedUsers" border height="500" row-key="id" empty-text="当前筛选条件下没有账号。">
@@ -69,7 +69,7 @@
         </el-table-column>
         <el-table-column label="最后登录" width="168"><template #default="{ row }">{{ formatTime(row.last_login_at) }}</template></el-table-column>
         <el-table-column label="操作" width="116" fixed="right">
-          <template #default="{ row }"><el-button link type="primary" @click="openDrawer(row)">{{ row.role === "admin" ? "查看" : "配置" }}</el-button></template>
+          <template #default="{ row }"><request-button link type="primary" @click="openDrawer(row)">{{ row.role === "admin" ? "查看" : "配置" }}</request-button></template>
         </el-table-column>
       </el-table>
 
@@ -119,7 +119,7 @@
             </el-radio-group>
             <template v-if="expiryMode === 'custom'">
               <div class="quick-days">
-                <el-button v-for="days in quickDayOptions" :key="days" size="small" :disabled="saving" @click="setQuickDays(days)">{{ days === 365 ? "1 年" : `${days} 天` }}</el-button>
+                <request-button v-for="days in quickDayOptions" :key="days" size="small" :disabled="saving" @click="setQuickDays(days)">{{ days === 365 ? "1 年" : `${days} 天` }}</request-button>
               </div>
               <el-date-picker v-model="form.access_expires_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" format="YYYY-MM-DD HH:mm" placeholder="选择到期日期和时间" :disabled="isSelectedAdmin || saving" :disabled-date="disablePastDate" class="expiry-picker" />
               <div v-if="dateError" class="field-error">{{ dateError }}</div>
@@ -130,8 +130,8 @@
 
       <template #footer>
         <div class="drawer-footer">
-          <el-button :disabled="saving" @click="drawerVisible = false">关闭</el-button>
-          <el-button v-if="!isSelectedAdmin" type="primary" :loading="saving" @click="saveAccess">保存配置</el-button>
+          <request-button :disabled="saving" @click="drawerVisible = false">关闭</request-button>
+          <request-button v-if="!isSelectedAdmin" type="primary" :loading="saving" @click="saveAccess">保存配置</request-button>
         </div>
       </template>
     </el-drawer>

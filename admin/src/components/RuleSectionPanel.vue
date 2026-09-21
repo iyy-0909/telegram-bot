@@ -13,9 +13,9 @@
             :prefix-icon="Search"
             placeholder="搜索配置名称或内容"
           />
-          <el-button type="primary" :icon="Plus" @click="emit('add', activeType)">
+          <request-button type="primary" :icon="Plus" @click="emit('add', activeType)">
             新增
-          </el-button>
+          </request-button>
         </div>
       </div>
     </template>
@@ -41,17 +41,17 @@
               <strong>{{ row.name || `${typeMeta(row.type).label}配置` }}</strong>
               <span>{{ ruleSummary(row) }}</span>
             </div>
-            <el-switch
+            <request-switch
               :model-value="row.enabled"
               :loading="togglingId === row.id"
               @change="value => emit('toggle', row, value)"
             />
           </div>
           <div class="compact-rule-actions">
-            <el-button size="small" :icon="EditPen" @click="emit('edit', row)">
+            <request-button size="small" :icon="EditPen" @click="emit('edit', row)">
               编辑
-            </el-button>
-            <el-button
+            </request-button>
+            <request-button
               size="small"
               type="danger"
               plain
@@ -59,7 +59,7 @@
               @click="emit('delete', row.id)"
             >
               删除
-            </el-button>
+            </request-button>
           </div>
         </article>
       </div>
@@ -88,7 +88,7 @@
       </el-table-column>
       <el-table-column label="启用" width="72" align="center">
         <template #default="{ row }">
-          <el-switch
+          <request-switch
             :model-value="row.enabled"
             :loading="togglingId === row.id"
             @change="value => emit('toggle', row, value)"
@@ -98,10 +98,10 @@
       <el-table-column label="操作" width="176" align="center">
         <template #default="{ row }">
           <div class="row-actions">
-            <el-button size="small" :icon="EditPen" @click="emit('edit', row)">
+            <request-button size="small" :icon="EditPen" @click="emit('edit', row)">
               编辑
-            </el-button>
-            <el-button
+            </request-button>
+            <request-button
               size="small"
               type="danger"
               plain
@@ -109,7 +109,7 @@
               @click="emit('delete', row.id)"
             >
               删除
-            </el-button>
+            </request-button>
           </div>
         </template>
       </el-table-column>
@@ -118,11 +118,14 @@
 </template>
 
 <script setup>
+import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+
 import { computed, ref, watch } from "vue"
 import { Delete, EditPen, Plus, Search } from "@element-plus/icons-vue"
 import { CONTENT_RULE_TYPE_META } from "../config/contentRuleSections"
 
 const props = defineProps({
+  requestActions: { type: Object, default: () => ({}) },
   title: { type: String, required: true },
   subtitle: { type: String, default: "" },
   rules: { type: Array, default: () => [] },
@@ -132,7 +135,8 @@ const props = defineProps({
   togglingId: { type: Number, default: null },
 })
 
-const emit = defineEmits(["add", "edit", "delete", "toggle"])
+const rawEmit = defineEmits(["add", "edit", "delete", "toggle"])
+const emit = useRequestEmit(rawEmit, props)
 const activeType = ref(props.types[0] || "")
 const keyword = ref("")
 
