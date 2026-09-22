@@ -994,7 +994,7 @@ function openEdit(type, row) {
   editVisible.value = true
 }
 
-function openCreate(type, templateType = "") {
+async function openCreate(type, templateType = "") {
   if (["listener", "clone"].includes(type)) {
     const hasAccount = accounts.value.some((account) => account.enabled !== false)
     const hasBot = bots.value.some((bot) => bot.enabled !== false)
@@ -1003,6 +1003,14 @@ function openCreate(type, templateType = "") {
       const missing = [!hasAccount ? "可用 Telegram 账号" : "", !hasBot ? "已启用 Bot" : ""].filter(Boolean)
       ElMessage.warning(`新增${taskName}任务前，请先配置：${missing.join("、")}`)
       return
+    }
+    const canConfigureContent = currentUser.value?.role === "admin" || currentUser.value?.plan_tier === "paid"
+    if (canConfigureContent && !templates.value.some((template) => template.type === "filter" && template.enabled)) {
+      try {
+        await loadTemplates()
+      } catch {
+        // Request feedback is handled by the shared API layer; the form can still open.
+      }
     }
   }
   editType.value = type
@@ -1034,6 +1042,7 @@ function defaultForm(type) {
       replace_words: "{}",
       remove_contact_lines: true,
       selected_contact_template_group_id: null,
+      selected_filter_template_group_id: defaultFilterTemplateGroupId(),
       filter_qr_code: true,
       album_wait_seconds: 3,
       ai_rewrite_enabled: false,
@@ -1061,6 +1070,7 @@ function defaultForm(type) {
       replace_words: "{}",
       remove_contact_lines: true,
       selected_contact_template_group_id: null,
+      selected_filter_template_group_id: defaultFilterTemplateGroupId(),
       filter_qr_code: true,
       status: "idle",
       ai_rewrite_enabled: false,
@@ -1135,6 +1145,16 @@ function defaultForm(type) {
     },
   }
   return map[type] || {}
+}
+
+function defaultFilterTemplateGroupId() {
+  const candidates = templates.value.filter(
+    (template) => template.type === "filter" && template.enabled && !template.parent_id,
+  )
+  const preferred = candidates.find((template) =>
+    String(template.name || "").includes("通用过滤"),
+  )
+  return preferred?.id || candidates[0]?.id || null
 }
 
 function payloadFor(type) {
@@ -1270,6 +1290,43 @@ function normalizeTelegramUsername(value) {
   return `@${username.toLowerCase()}`
 }
 
+function normalizeTaskChannelKey(value) {
+  let text = String(value || "").trim()
+  if (!text) return ""
+  if (/^-?\d+$/.test(text)) return text
+
+  text = text.replace(/^https?:\/\//i, "").replace(/^telegram\.me\//i, "t.me/")
+  if (/^t\.me\//i.test(text)) {
+    const parts = text.replace(/^t\.me\//i, "").split(/[/?#]/).filter(Boolean)
+    if (parts[0]?.toLowerCase() === "c" && /^\d+$/.test(parts[1] || "")) {
+      return `-100${parts[1]}`
+    }
+    text = parts[0] || ""
+  }
+
+  return text.replace(/^@/, "").split("/", 1)[0].trim().toLowerCase()
+}
+
+function parseTaskChannels(value) {
+  if (Array.isArray(value)) return value
+  const text = String(value || "").trim()
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : [parsed]
+  } catch {
+    return text.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)
+  }
+}
+
+function findListenerChannelConflict(sourceChannel, targetChannels) {
+  const sourceKey = normalizeTaskChannelKey(sourceChannel)
+  if (!sourceKey) return ""
+  return parseTaskChannels(targetChannels).find(
+    (target) => normalizeTaskChannelKey(target) === sourceKey,
+  ) || ""
+}
+
 function buildMobileSubscriptionWarning(results) {
   return [
     "检测到源频道订阅风险：",
@@ -1328,6 +1385,12 @@ async function saveEdit() {
   saving.value = true
   try {
     const payload = payloadFor(editType.value)
+    if (editType.value === "listener") {
+      const conflict = findListenerChannelConflict(payload.source_channel, payload.target_channels)
+      if (conflict) {
+        throw new Error(`监听任务的源频道不能同时作为目标频道：${conflict}`)
+      }
+    }
     if (editType.value === "account") {
       if (!String(payload.name || "").trim() || (!editForm.id && !String(payload.session_path || "").trim())) {
         throw new Error(editForm.id ? "账号名称不能为空" : "账号名称和 Session 路径不能为空")
@@ -2420,6 +2483,7 @@ const EditForm = defineComponent({
                 h(resolve("el-form-item"), {
                   key: field.key,
                   label: field.label,
+                  error: formFieldError(props.type, field, props.form),
                 }, () => fieldRender(props, emit, field)),
               )),
           ]),
@@ -2465,6 +2529,7 @@ const EditForm = defineComponent({
               h(resolve("el-form-item"), {
                 key: field.key,
                 label: field.label,
+                error: formFieldError(props.type, field, props.form),
               }, () => fieldRender(props, emit, field)),
             )),
           ]),
@@ -2493,6 +2558,12 @@ function mobileStepTitle(section) {
     advanced: "高级",
   }
   return labels[section?.key] || section?.title || ""
+}
+
+function formFieldError(type, field, form) {
+  if (type !== "listener" || field?.key !== "target_channels") return ""
+  const conflict = findListenerChannelConflict(form?.source_channel, form?.target_channels)
+  return conflict ? `源频道不能同时作为目标频道：${conflict}` : ""
 }
 
 const AccountLoginForm = defineComponent({
@@ -2680,6 +2751,13 @@ function validateWizardStep(type, section, form) {
   for (const [key, message] of rules) {
     if (!String(form?.[key] || "").trim()) {
       ElMessage.warning(message)
+      return false
+    }
+  }
+  if (type === "listener" && section?.key === "basic") {
+    const conflict = findListenerChannelConflict(form.source_channel, form.target_channels)
+    if (conflict) {
+      ElMessage.warning(`监听任务的源频道不能同时作为目标频道：${conflict}`)
       return false
     }
   }

@@ -2,6 +2,7 @@ import json
 
 from accounts.session_storage import generate_owner_session_path
 from auth.tenant import current_tenant_user_id
+from bot.channel_utils import is_same_channel_identifier
 from db.database import SessionLocal
 from utils.redaction import redact_sensitive_text
 from db.models import ChannelRule, Account
@@ -61,6 +62,9 @@ def create_rule(
     前端/接口里可以继续叫 blocked_keywords，
     但 channel_rules 表和 ChannelRule 模型里实际字段叫 keywords。
     """
+    if is_same_channel_identifier(source, target):
+        raise ValueError(f"监听规则的源频道不能同时作为目标频道：{target}")
+
     db = SessionLocal()
 
     try:
@@ -105,6 +109,11 @@ def update_rule(rule_id: int, data: dict):
 
         if not rule:
             return None
+
+        next_source = data.get("source", rule.source)
+        next_target = data.get("target", rule.target)
+        if is_same_channel_identifier(next_source, next_target):
+            raise ValueError(f"监听规则的源频道不能同时作为目标频道：{next_target}")
 
         for key, value in data.items():
             if key == "blocked_keywords":
@@ -232,7 +241,11 @@ def sync_clone_task_to_channel_rules(clone_task):
                 "created": 0,
             }
 
-        targets = parse_target_channels(clone_task.target_channels)
+        targets = [
+            target
+            for target in parse_target_channels(clone_task.target_channels)
+            if not is_same_channel_identifier(clone_task.source_channel, target)
+        ]
 
         if not targets:
             db.commit()

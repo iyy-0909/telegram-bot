@@ -78,7 +78,7 @@
             </div>
           </el-form-item>
 
-          <el-form-item label="目标频道">
+          <el-form-item label="目标频道" :error="channelConflictMessage">
             <ChannelSelect
               v-model="targetChannels"
               multiple
@@ -255,6 +255,7 @@
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
 import { computed, reactive, ref, watch } from "vue"
+import { ElMessage } from "element-plus"
 import { Plus } from "@element-plus/icons-vue"
 import AccountSelect from "./AccountSelect.vue"
 import AiPromptSelect from "./AiPromptSelect.vue"
@@ -346,6 +347,15 @@ const sourceChannels = ref([""])
 const targetChannels = ref([])
 const copyTaskId = ref(null)
 const copyableTasks = computed(() => props.existingTasks.filter((task) => task?.id))
+const channelConflictMessage = computed(() => {
+  const sourceKeys = new Set(
+    uniqueChannels(sourceChannels.value).map((channel) => channel.toLowerCase()),
+  )
+  const conflict = uniqueChannels(targetChannels.value).find(
+    (channel) => sourceKeys.has(channel.toLowerCase()),
+  )
+  return conflict ? `源频道不能同时作为目标频道：${conflict}` : ""
+})
 
 const blockedKeywordList = computed({
   get() {
@@ -473,6 +483,11 @@ function removeSourceChannel(index) {
 function submit() {
   const sources = uniqueChannels(sourceChannels.value)
   const targets = uniqueChannels(targetChannels.value)
+
+  if (channelConflictMessage.value) {
+    ElMessage.error(channelConflictMessage.value)
+    return
+  }
 
   const payload = {
     ...localForm,

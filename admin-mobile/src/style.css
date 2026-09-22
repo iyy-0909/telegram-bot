@@ -632,4 +632,31 @@ select {
   .el-drawer {
     width: 100% !important;
   }
+
+  .mobile-steps.el-steps--simple {
+    justify-content: space-between;
+    padding: 10px 8px;
+  }
+
+  .mobile-steps .el-step.is-simple {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .mobile-steps .el-step.is-simple .el-step__head {
+    padding-right: 4px;
+  }
+
+  .mobile-steps .el-step.is-simple .el-step__main {
+    min-width: 0;
+  }
+
+  .mobile-steps .el-step.is-simple .el-step__title {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .mobile-steps .el-step.is-simple .el-step__arrow {
+    display: none;
+  }
 }

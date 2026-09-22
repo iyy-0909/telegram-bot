@@ -1431,7 +1431,7 @@ function resetCurrentListenerTask() {
     selected_head_template_id: null,
     selected_body_template_id: null,
     selected_footer_template_id: null,
-    selected_filter_template_group_id: null,
+    selected_filter_template_group_id: defaultFilterTemplateGroupId(),
     selected_link_template_group_id: null,
     selected_contact_template_group_id: null,
     album_wait_seconds: 3,
@@ -1444,6 +1444,17 @@ function resetCurrentListenerTask() {
     ai_rewrite_ratio: 70,
     ai_rewrite_failure_mode: "fallback",
   })
+}
+
+
+function defaultFilterTemplateGroupId() {
+  const candidates = contentTemplates.value.filter(
+    (template) => template.type === "filter" && template.enabled && !template.parent_id,
+  )
+  const preferred = candidates.find((template) =>
+    String(template.name || "").includes("通用过滤"),
+  )
+  return normalizeTemplateId(preferred?.id || candidates[0]?.id)
 }
 
 
@@ -1577,6 +1588,16 @@ function normalizeChannelList(value) {
 }
 
 
+function findListenerChannelConflict(sourceChannels, targetChannels) {
+  const sourceKeys = new Set(
+    normalizeChannelList(sourceChannels).map((channel) => channel.toLowerCase()),
+  )
+  return normalizeChannelList(targetChannels).find(
+    (channel) => sourceKeys.has(channel.toLowerCase()),
+  ) || ""
+}
+
+
 function normalizeChannelInput(value) {
   let text = String(value || "").trim()
 
@@ -1702,6 +1723,7 @@ async function submitListenerTask(formData) {
       : currentListenerTask.source_channel,
   )
   const targetChannels = normalizeChannelList(currentListenerTask.target_channels)
+  const conflictingChannel = findListenerChannelConflict(sourceChannels, targetChannels)
 
   if (!currentListenerTask.name || !sourceChannels.length) {
     ElMessage.error("任务名称和源频道不能为空")
@@ -1710,6 +1732,11 @@ async function submitListenerTask(formData) {
 
   if (!targetChannels.length) {
     ElMessage.error("目标频道不能为空")
+    return
+  }
+
+  if (conflictingChannel) {
+    ElMessage.error(`监听任务的源频道不能同时作为目标频道：${conflictingChannel}`)
     return
   }
 
@@ -2525,7 +2552,7 @@ function resetCurrentCloneTask() {
     selected_head_template_id: null,
     selected_body_template_id: null,
     selected_footer_template_id: null,
-    selected_filter_template_group_id: null,
+    selected_filter_template_group_id: defaultFilterTemplateGroupId(),
     selected_link_template_group_id: null,
     selected_contact_template_group_id: null,
     enabled: true,

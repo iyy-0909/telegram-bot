@@ -3424,16 +3424,19 @@ def add_rule(rule: RuleCreate, request: Request):
                 status_code=400,
                 detail="Please add a Telegram account before creating a listener rule",
             )
-    new_rule = create_rule(
-        source=rule.source,
-        target=rule.target,
-        account_id=account.id,
-        enabled=rule.enabled,
-        blocked_keywords=rule.blocked_keywords,
-        replace_words=rule.replace_words,
-        footer=rule.footer,
-        remove_contact_lines=rule.remove_contact_lines,
-    )
+    try:
+        new_rule = create_rule(
+            source=rule.source,
+            target=rule.target,
+            account_id=account.id,
+            enabled=rule.enabled,
+            blocked_keywords=rule.blocked_keywords,
+            replace_words=rule.replace_words,
+            footer=rule.footer,
+            remove_contact_lines=rule.remove_contact_lines,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     reload_handlers()
 
@@ -3452,10 +3455,13 @@ def remove_rule(rule_id: int):
 
 @app.put("/api/rules/{rule_id}")
 def edit_rule(rule_id: int, data: RuleUpdate):
-    updated = update_rule(
-        rule_id,
-        data.dict(),
-    )
+    try:
+        updated = update_rule(
+            rule_id,
+            data.dict(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not updated:
         return {
@@ -3934,7 +3940,10 @@ def api_create_listener_task(data: ListenerTaskCreate, request: Request):
         normalize_task_channels(data.dict()),
         request,
     )
-    task = create_listener_task(task_data)
+    try:
+        task = create_listener_task(task_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     reload_handlers()
     return listener_task_to_dict(task)
 
@@ -3948,14 +3957,17 @@ def api_update_listener_task(task_id: int, data: ListenerTaskUpdate, request: Re
             "message": "listener task not found",
         }
     require_task_owner(existing_task, request)
-    task = update_listener_task(
-        task_id,
-        prepare_task_payload(
-            normalize_task_channels(data.dict(exclude_unset=True)),
-            request,
-            existing_task,
-        ),
-    )
+    try:
+        task = update_listener_task(
+            task_id,
+            prepare_task_payload(
+                normalize_task_channels(data.dict(exclude_unset=True)),
+                request,
+                existing_task,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not task:
         return {

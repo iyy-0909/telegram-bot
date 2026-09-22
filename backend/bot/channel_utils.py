@@ -44,6 +44,16 @@ def normalize_channel_identifier(value):
     return text
 
 
+def channel_identifier_key(value):
+    """Return a stable comparison key for channel usernames, links, and chat ids."""
+    return normalize_channel_identifier(value).casefold()
+
+
+def is_same_channel_identifier(left, right):
+    left_key = channel_identifier_key(left)
+    return bool(left_key) and left_key == channel_identifier_key(right)
+
+
 def normalize_channel_list(value):
     if isinstance(value, list):
         items = value

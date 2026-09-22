@@ -3,6 +3,7 @@ from datetime import datetime
 
 from db.database import SessionLocal
 from db.models import ListenerTask, ListenerSentMessage
+from bot.channel_utils import is_same_channel_identifier
 from db.crud_bot import normalize_target_channel
 from utils.redaction import redact_sensitive_text
 
@@ -66,6 +67,19 @@ def parse_target_channels(value):
         return []
 
     return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def find_listener_channel_conflict(source_channel, target_channels):
+    for target in parse_target_channels(target_channels):
+        if is_same_channel_identifier(source_channel, target):
+            return target
+    return ""
+
+
+def validate_listener_channel_separation(source_channel, target_channels):
+    conflict = find_listener_channel_conflict(source_channel, target_channels)
+    if conflict:
+        raise ValueError(f"监听任务的源频道不能同时作为目标频道：{conflict}")
 
 
 def normalize_task_data(data):
@@ -203,7 +217,12 @@ def create_listener_task(data: dict):
     db = SessionLocal()
 
     try:
-        task = ListenerTask(**normalize_task_data(data))
+        normalized = normalize_task_data(data)
+        validate_listener_channel_separation(
+            normalized.get("source_channel"),
+            normalized.get("target_channels"),
+        )
+        task = ListenerTask(**normalized)
         db.add(task)
         db.commit()
         db.refresh(task)
@@ -229,6 +248,10 @@ def update_listener_task(task_id: int, data: dict):
             **{key: getattr(task, key) for key in DEFAULT_TASK_VALUES},
             **data,
         })
+        validate_listener_channel_separation(
+            normalized.get("source_channel"),
+            normalized.get("target_channels"),
+        )
 
         for key, value in normalized.items():
             setattr(task, key, value)
@@ -346,13 +369,24 @@ def sync_clone_task_to_listener_tasks(clone_task):
             }
 
         targets = parse_target_channels(clone_task.target_channels)
+        skipped_targets = [
+            target
+            for target in targets
+            if is_same_channel_identifier(clone_task.source_channel, target)
+        ]
+        targets = [target for target in targets if target not in skipped_targets]
 
         if not targets:
             db.commit()
             return {
                 "ok": False,
-                "message": "target_channels empty",
+                "message": (
+                    "同源同目标可以执行克隆，但不能创建监听任务"
+                    if skipped_targets
+                    else "target_channels empty"
+                ),
                 "created": 0,
+                "skipped_same_channel_targets": skipped_targets,
             }
 
         task = ListenerTask(
@@ -403,8 +437,13 @@ def sync_clone_task_to_listener_tasks(clone_task):
 
         return {
             "ok": True,
-            "message": "listener task synced",
+            "message": (
+                "listener task synced; same-channel targets skipped"
+                if skipped_targets
+                else "listener task synced"
+            ),
             "created": 1,
+            "skipped_same_channel_targets": skipped_targets,
         }
 
     except Exception as e:
