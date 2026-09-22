@@ -2867,6 +2867,8 @@ def api_get_my_channels(
     group_name: str = "",
     collection_status: str = "",
     bot_id: Optional[int] = None,
+    managed_account_id: Optional[int] = None,
+    managed_role: Literal["", "creator", "administrator"] = "",
 ):
     channels = list_my_channels(
         keyword=keyword,
@@ -2889,15 +2891,44 @@ def api_get_my_channels(
             for channel in channels
             if collection_statuses.get(channel.id, "未收录") == expected_collection_status
         ]
+    from db.crud_managed_channels import enrich_channels
     return {
-        "items": [
+        "items": enrich_channels(channels, [
             my_channel_to_dict(
                 channel,
                 collection_status_override=collection_statuses.get(channel.id, "未收录"),
             )
             for channel in channels
-        ],
+        ], account_id=managed_account_id, role=managed_role, account_manager=account_manager),
     }
+
+
+class ManagedChannelImport(BaseModel):
+    chat_ids: List[str] = Field(min_length=1, max_length=200)
+
+
+@app.get("/api/my-channels/managed/discovery")
+def api_managed_channel_discovery():
+    from db.crud_managed_channels import discovery_data
+    return discovery_data(account_manager)
+
+
+@app.post("/api/my-channels/managed/sync/{account_id}")
+async def api_sync_managed_channels(account_id: int):
+    from bot.managed_channels import sync_account
+    try:
+        return await sync_account(account_id, account_manager)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/api/my-channels/managed/import")
+def api_import_managed_channels(data: ManagedChannelImport):
+    from db.crud_managed_channels import import_channels
+    try:
+        return import_channels(data.chat_ids, account_manager)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/search-bots")

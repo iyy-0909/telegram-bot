@@ -5,6 +5,18 @@ export function getMyChannels(params = {}) {
   return axios.get(`${API}/api/my-channels`, { params })
 }
 
+export function getManagedChannelDiscovery() {
+  return axios.get(`${API}/api/my-channels/managed/discovery`)
+}
+
+export function syncManagedAccountChannels(accountId) {
+  return axios.post(`${API}/api/my-channels/managed/sync/${accountId}`, {}, { timeout: 55000 })
+}
+
+export function importManagedChannels(chatIds) {
+  return axios.post(`${API}/api/my-channels/managed/import`, { chat_ids: chatIds })
+}
+
 export function createMyChannel(data) {
   return axios.post(`${API}/api/my-channels`, data)
 }

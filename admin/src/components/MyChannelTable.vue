@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <ManagedChannelSyncDialog v-model:visible="managedSyncVisible" @changed="refreshManagedChannels" />
     <el-tabs v-model="currentTab" class="channel-tabs">
       <el-tab-pane label="我的频道" name="targets">
         <div class="toolbar">
@@ -45,14 +46,23 @@
               <el-option label="审核中" value="reviewing" />
               <el-option label="未收录" value="not_collected" />
             </el-select>
+            <el-select v-model="filters.managed_account_id" clearable filterable placeholder="管理账号" aria-label="筛选管理账号" class="status-filter" @change="load">
+              <el-option v-for="account in managedAccounts" :key="account.id" :label="account.name" :value="account.id" />
+            </el-select>
+            <el-select v-model="filters.managed_role" clearable placeholder="账号身份" aria-label="筛选账号身份" class="status-filter" @change="load">
+              <el-option label="创建者" value="creator" />
+              <el-option label="管理员" value="administrator" />
+            </el-select>
             <request-button @click="load">
               <el-icon><Refresh /></el-icon>
               刷新
             </request-button>
+            <request-button @click="resetFilters">重置筛选</request-button>
             <request-button @click="batchCheck">
               <el-icon><Connection /></el-icon>
               批量检测
             </request-button>
+            <el-button @click="managedSyncVisible = true">同步账号频道</el-button>
             <request-button type="primary" @click="openCreate">
               <el-icon><Plus /></el-icon>
               新增频道
@@ -72,6 +82,9 @@
             empty-text="暂无频道，请点击“新增频道”添加你的目标频道。"
           >
             <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
+            <el-table-column label="管理账号 / 身份" min-width="220">
+              <template #default="{ row }"><ChannelAccountRoles :members="row.managed_accounts" :status="row.managed_accounts_status" /></template>
+            </el-table-column>
             <el-table-column label="更新状态" width="110">
               <template #default="{ row }">
                 <el-tooltip :content="activityDescription(row)" placement="top">
@@ -105,7 +118,7 @@
             </el-table-column>
             <el-table-column prop="status" label="状态" width="100">
               <template #default="{ row }">
-                <StatusTag :status="row.status" />
+                <StatusTag :status="row.status" :labels="{ pending: '待检测' }" />
               </template>
             </el-table-column>
             <el-table-column prop="delivery_status" label="投放状态" min-width="120" show-overflow-tooltip>
@@ -516,11 +529,14 @@ import {
   deleteMyChannel,
   getCloneChannels,
   getMyChannels,
+  getManagedChannelDiscovery,
   getSearchBotSubmissions,
   updateCloneChannel,
   updateMyChannel,
 } from "../api/myChannels"
 import BotSelect from "./BotSelect.vue"
+import ChannelAccountRoles from "./ChannelAccountRoles.vue"
+import ManagedChannelSyncDialog from "./ManagedChannelSyncDialog.vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 import SearchBotPanel from "./SearchBotPanel.vue"
@@ -553,6 +569,8 @@ const currentTab = computed({
   set: (value) => emit("update:active-tab", value),
 })
 const channels = ref([])
+const managedAccounts = ref([])
+const managedSyncVisible = ref(false)
 const cloneChannels = ref([])
 const dialogVisible = ref(false)
 const cloneDialogVisible = ref(false)
@@ -584,6 +602,8 @@ const submissionStatusLoading = ref(false)
 const submissionStatusChannel = ref(null)
 const channelSubmissionRows = ref([])
 const filters = reactive({
+  managed_account_id: null,
+  managed_role: "",
   keyword: "",
   group_name: "",
   status: "",
@@ -600,8 +620,23 @@ const groupOptions = computed(() => uniqueGroups(channels.value))
 const cloneGroupOptions = computed(() => uniqueGroups(cloneChannels.value))
 
 onMounted(async () => {
-  await Promise.all([load(), loadCloneChannels()])
+  await Promise.all([refreshManagedChannels(), loadCloneChannels()])
 })
+
+async function refreshManagedChannels() {
+  await load()
+  try {
+    const { data } = await getManagedChannelDiscovery()
+    managedAccounts.value = data.accounts || []
+  } catch (error) {
+    loadError.value ||= readError(error, "管理账号加载失败，请重试")
+  }
+}
+
+function resetFilters() {
+  Object.assign(filters, { keyword: "", group_name: "", status: "", collection_status: "", managed_account_id: null, managed_role: "" })
+  return refreshManagedChannels()
+}
 
 function emptyForm() {
   return {
@@ -641,7 +676,7 @@ async function load() {
   loading.value = true
   loadError.value = ""
   try {
-    const res = await getMyChannels(filters)
+    const res = await getMyChannels({ ...filters, managed_account_id: filters.managed_account_id || undefined, managed_role: filters.managed_role || "" })
     channels.value = res.data.items || []
   } catch (error) {
     loadError.value = readError(error, "加载频道失败，请点击刷新重试")

@@ -444,6 +444,10 @@ def find_nullable_owner_tables():
 
 
 def init_db(*, allow_legacy_unowned=False):
+    from migrate_managed_channels import migrate as migrate_managed_channels
+    managed_backup = migrate_managed_channels(engine)
+    if managed_backup:
+        print(f"Managed channels database backup: {managed_backup}")
     from migrate_channel_activity import migrate as migrate_channel_activity
     activity_backup = migrate_channel_activity(engine)
     if activity_backup:

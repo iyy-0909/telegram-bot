@@ -452,6 +452,37 @@ class MyChannel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AccountChannelSync(Base):
+    """Last complete managed-channel scan for an owner's Telegram account."""
+    __tablename__ = "account_channel_syncs"
+    __table_args__ = (UniqueConstraint("owner_user_id", "account_id", name="uq_account_channel_sync"),)
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, default="")
+
+
+class AccountManagedChannel(Base):
+    """Per-account channel roles; discovery does not automatically import targets."""
+    __tablename__ = "account_managed_channels"
+    __table_args__ = (UniqueConstraint("owner_user_id", "account_id", "chat_id", name="uq_account_managed_channel"),)
+
+    id = Column(Integer, primary_key=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    chat_id = Column(String, nullable=False, index=True)
+    title = Column(String, default="")
+    username = Column(String, default="")
+    telegram_user_id = Column(String, default="")
+    role = Column(String, nullable=False)
+    rights_json = Column(Text, default="{}")
+    active = Column(Boolean, default=True)
+    checked_at = Column(DateTime, nullable=False)
+
+
 class SearchBot(Base):
     """Telegram search bot managed by an operations group."""
 
