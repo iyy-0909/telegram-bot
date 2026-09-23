@@ -130,13 +130,14 @@
         title="部分旧发送记录没有保存 text/caption，Bot API 也不能反查频道历史内容，因此无法安全替换。新发送记录会从本次改造后开始保存可编辑信息。"
       />
 
+      <TableSearch v-model="previewKeyword" label="搜索预览结果" placeholder="搜索频道 / 消息ID / 正文 / 类型 / 状态" :count="filteredPreviewItems.length" :total="previewItems.length" />
       <el-table
-        :data="previewItems"
+        :data="filteredPreviewItems"
         v-loading="previewLoading"
         border
         stripe
         height="492"
-        empty-text="暂无命中记录，请选择频道并输入旧内容后扫描。"
+        :empty-text="previewKeyword.trim() ? '没有匹配的预览记录，请调整或清空搜索。' : '暂无命中记录，请选择频道并输入旧内容后扫描。'"
       >
         <el-table-column prop="source_type" label="来源" width="90" />
         <el-table-column prop="channel_title" label="频道" min-width="150" show-overflow-tooltip />
@@ -184,7 +185,8 @@
         </div>
       </template>
 
-      <el-table :data="jobResult.items || []" border stripe height="492">
+      <TableSearch v-model="resultKeyword" label="搜索批量执行结果" placeholder="搜索消息ID / 来源 / 类型 / 状态 / 错误" :count="filteredResultItems.length" :total="jobResult.items?.length || 0" />
+      <el-table :data="filteredResultItems" border stripe height="492" :empty-text="resultKeyword.trim() ? '没有匹配的执行结果，请调整或清空搜索。' : '暂无执行结果'">
         <el-table-column prop="source_type" label="来源" width="90" />
         <el-table-column prop="target_message_id" label="消息ID" width="100" />
         <el-table-column prop="message_type" label="类型" width="110" />
@@ -204,6 +206,7 @@ import { computed, reactive, ref } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import ChannelSelect from "./ChannelSelect.vue"
 import { executeBulkReplace, previewBulkReplace } from "../api/bulkReplace"
+import { searchRows } from "../utils/search"
 
 const defaultForm = () => ({
   channel_ids: [],
@@ -222,6 +225,10 @@ const unavailableCount = ref(0)
 const previewLoading = ref(false)
 const executeLoading = ref(false)
 const jobResult = ref(null)
+const previewKeyword = ref("")
+const resultKeyword = ref("")
+const filteredPreviewItems = computed(() => searchRows(previewItems.value, previewKeyword.value, "bulk", row => [row.can_edit ? '可编辑' : '不可编辑']))
+const filteredResultItems = computed(() => searchRows(jobResult.value?.items, resultKeyword.value, "bulk"))
 
 const editableItems = computed(() => previewItems.value.filter((item) => item.can_edit))
 

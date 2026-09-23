@@ -87,6 +87,10 @@ select {
   overflow-x: hidden;
 }
 
+.mobile-shell--detail {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 .top-bar {
   position: sticky;
   top: 0;

@@ -20,15 +20,16 @@
     />
 
     <el-form class="provider-form" :disabled="saving || loading" @submit.prevent="save">
+      <TableSearch v-model="keyword" label="搜索模型供应商" placeholder="搜索供应商 / 模型 / 配置状态" :count="filteredProviders.length" :total="providerList.length" />
       <div class="table-scroll-hint">可左右滑动查看密钥、模型和操作</div>
       <div class="provider-table-scroll">
         <el-table
           v-loading="loading"
-          :data="providerList"
+          :data="filteredProviders"
           class="provider-table"
           max-height="420"
           row-key="key"
-          empty-text="暂无可配置的模型供应商"
+          :empty-text="keyword.trim() ? '没有匹配的供应商，请调整或清空搜索。' : '暂无可配置的模型供应商'"
         >
           <el-table-column label="供应商" min-width="150">
             <template #default="{ row }">
@@ -110,7 +111,8 @@
 <script setup>
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
-import { reactive, ref, watch } from "vue"
+import { computed, reactive, ref, watch } from "vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -135,6 +137,10 @@ const localForm = reactive({
   deepseek_model: "deepseek-v4-flash",
 })
 const clearingKey = ref("")
+const keyword = ref("")
+const filteredProviders = computed(() => searchRows(providerList, keyword.value, ['key', 'title'], row => [
+  localForm[`${row.key}_model`], providerConfigured(row.key) ? '已配置' : '未配置', localForm.default_provider === row.key ? '当前默认' : '',
+]))
 
 watch(
   () => props.settings,

@@ -48,6 +48,7 @@ _OWNED_REFERENCE_RULES = {
     "BulkReplaceJobItem": (("job_id", "BulkReplaceJob"),),
     "TargetBotBinding": (("bot_id", "BotAccount"),),
     "MyChannel": (("bot_id", "BotAccount"),),
+    "TaskChannelLink": (("my_channel_id", "MyChannel"),),
     "AccountChannelSync": (("account_id", "Account"),),
     "AccountManagedChannel": (("account_id", "Account"),),
     "SearchBot": (("account_id", "Account"),),

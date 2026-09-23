@@ -44,13 +44,14 @@
         </div>
       </template>
 
+      <TableSearch v-model="keyword" label="搜索消息通知账号" placeholder="搜索账号名称 / 用户名 / ID / 主题 / 状态" :count="filteredRows.length" :total="rows.length" />
       <el-table
         class="desktop-table"
-        :data="rows"
+        :data="filteredRows"
         v-loading="loading"
         border
         height="492"
-        empty-text="暂无 Telegram 账号，请先到账号管理登录账号。"
+        :empty-text="keyword.trim() ? '没有匹配的账号，请调整或清空搜索。' : '暂无 Telegram 账号，请先到账号管理登录账号。'"
       >
         <el-table-column label="Telegram 账号" min-width="180">
           <template #default="{ row }">
@@ -151,10 +152,10 @@
 
       <div v-loading="loading" class="mobile-list">
         <el-empty
-          v-if="!loading && !rows.length"
-          description="暂无 Telegram 账号，请先到账号管理登录账号。"
+          v-if="!loading && !filteredRows.length"
+          :description="keyword.trim() ? '没有匹配的账号，请调整或清空搜索。' : '暂无 Telegram 账号，请先到账号管理登录账号。'"
         />
-        <section v-for="row in rows" :key="row.account_id" class="mobile-item">
+        <section v-for="row in filteredRows" :key="row.account_id" class="mobile-item">
           <div class="mobile-item__header">
             <div>
               <div class="account-name">{{ row.account_name }}</div>
@@ -227,6 +228,7 @@ import { computed, onMounted, ref } from "vue"
 import { Check, InfoFilled, MagicStick, Promotion, Refresh } from "@element-plus/icons-vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import StatusTag from "./StatusTag.vue"
+import { searchRows } from "../utils/search"
 import {
   getNotificationSettings,
   generateNotificationSetting,
@@ -235,6 +237,8 @@ import {
 } from "../api/notifications"
 
 const rows = ref([])
+const keyword = ref("")
+const filteredRows = computed(() => searchRows(rows.value, keyword.value, "notifications"))
 const loading = ref(false)
 const loadError = ref("")
 const savingId = ref(null)

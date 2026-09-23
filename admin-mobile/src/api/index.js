@@ -208,6 +208,10 @@ export function getMyChannels(params = {}) {
   return http.get("/api/my-channels", { params })
 }
 
+export function getMyChannelOverview(id) {
+  return http.get(`/api/my-channels/${id}/overview`)
+}
+
 export function createMyChannel(data) {
   return http.post("/api/my-channels", data)
 }

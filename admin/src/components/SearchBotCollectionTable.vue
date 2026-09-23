@@ -33,9 +33,10 @@
         <div><span>未提交机器人</span><strong>{{ summary.missingBots }}</strong></div>
       </div>
 
+      <TableSearch v-model="keyword" label="搜索分组机器人收录" placeholder="搜索机器人 / 已收录频道链接 / 提交状态" :count="filteredRows.length" :total="rows.length" />
       <el-table
         v-loading="loading"
-        :data="rows"
+        :data="filteredRows"
         row-key="id"
         border
         stripe
@@ -43,7 +44,7 @@
         style="width: 100%"
       >
         <template #empty>
-          <el-empty :image-size="72" description="当前分组暂无可展示的搜索机器人" />
+          <el-empty :image-size="72" :description="keyword.trim() ? '没有匹配的机器人，请调整或清空搜索。' : '当前分组暂无可展示的搜索机器人'" />
         </template>
         <el-table-column prop="name" label="机器人名称" min-width="150" show-overflow-tooltip />
         <el-table-column label="机器人 ID" min-width="165">
@@ -123,12 +124,18 @@ import {
 } from "../api/myChannels"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
+import { searchRows } from "../utils/search"
 
 const bots = ref([])
 const channels = ref([])
 const submissions = ref([])
 const selectedGroup = ref("")
 const loading = ref(false)
+const keyword = ref("")
+const filteredRows = computed(() => searchRows(rows.value, keyword.value, "collections", row => [
+  row.submittedCount ? '已提交' : '未提交', row.collectedCount ? '已收录' : '未收录',
+  row.blockedCount ? '已拉黑' : '', row.pendingCount ? '处理中' : '', row.failedCount ? '失败' : '',
+]))
 
 const groupOptions = computed(() => Array.from(new Set(
   channels.value

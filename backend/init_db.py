@@ -444,6 +444,11 @@ def find_nullable_owner_tables():
 
 
 def init_db(*, allow_legacy_unowned=False):
+    from migrate_task_channel_links import migrate as migrate_task_channel_links
+
+    task_link_backup = migrate_task_channel_links(engine, backfill=False)
+    if task_link_backup:
+        print(f"Task channel links database backup: {task_link_backup}")
     from migrate_managed_channels import migrate as migrate_managed_channels
     managed_backup = migrate_managed_channels(engine)
     if managed_backup:
@@ -489,6 +494,8 @@ def init_db(*, allow_legacy_unowned=False):
             "检测到归属人字段仍允许为空，服务已拒绝启动；"
             "请先执行单一管理员归属迁移。涉及表：" + tables
         )
+
+    migrate_task_channel_links(engine)
 
     # Validate legacy ownership before querying or creating tenant defaults.
     ensure_defaults()

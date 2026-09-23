@@ -15,15 +15,16 @@
       </div>
     </template>
 
+    <TableSearch v-model="keyword" label="搜索内容规则模板" placeholder="搜索规则名称 / 类型 / 内容 / ID / 状态" :count="filteredRules.length" :total="rules.length" />
     <el-table
-      :data="rules"
+      :data="filteredRules"
       v-loading="loading"
       border
       stripe
       row-key="id"
       height="492"
       class="template-table"
-      empty-text="暂无内容规则模板，请点击添加规则创建"
+      :empty-text="keyword.trim() ? '没有匹配的模板，请调整或清空搜索。' : '暂无内容规则模板，请点击添加规则创建'"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -79,7 +80,8 @@
 <script setup>
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
-import { computed } from "vue"
+import { computed, ref } from "vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -95,6 +97,8 @@ const props = defineProps({
 
 const rawEmit = defineEmits(["add", "edit", "delete", "toggle"])
 const emit = useRequestEmit(rawEmit, props)
+const keyword = ref("")
+const filteredRules = computed(() => searchRows(rules.value, keyword.value, "templates"))
 
 const rules = computed(() => {
   const groups = props.templates

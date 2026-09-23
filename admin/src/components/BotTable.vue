@@ -19,15 +19,16 @@
         </div>
       </template>
 
+      <TableSearch v-model="keyword" label="搜索 Bot" placeholder="搜索名称 / @用户名 / ID / 状态 / 备注" :count="filteredBots.length" :total="bots.length" />
       <el-table
-        :data="bots"
+        :data="filteredBots"
         v-loading="loading"
         border
         stripe
         size="large"
         height="492"
         style="width: 100%"
-        empty-text="暂无 Bot，请点击“新增 Bot”添加分发机器人。"
+        :empty-text="keyword.trim() ? '没有匹配的 Bot，请调整或清空搜索。' : '暂无 Bot，请点击“新增 Bot”添加分发机器人。'"
       >
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="name" label="Bot 名称" min-width="160" />
@@ -120,7 +121,8 @@
 <script setup>
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
-import { computed } from "vue"
+import { computed, ref } from "vue"
+import { searchRows } from "../utils/search"
 import { CircleCheck, Delete, Edit, Plus, SwitchButton } from "@element-plus/icons-vue"
 import CopyText from "./CopyText.vue"
 import ErrorText from "./ErrorText.vue"
@@ -148,6 +150,8 @@ const rawEmit = defineEmits([
 const emit = useRequestEmit(rawEmit, props)
 
 const enabledCount = computed(() => props.bots.filter((bot) => bot.enabled).length)
+const keyword = ref("")
+const filteredBots = computed(() => searchRows(props.bots, keyword.value, "bots"))
 
 const botUsername = (bot) => {
   const username = String(bot?.username || "").trim()

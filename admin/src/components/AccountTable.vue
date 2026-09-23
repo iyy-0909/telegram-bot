@@ -12,12 +12,13 @@
       </div>
     </template>
 
+    <TableSearch v-model="keyword" label="搜索采集账号" placeholder="搜索账号名称 / 用户名 / 手机号 / ID / 备注" :count="filteredAccounts.length" :total="accounts.length" />
     <el-table
-      :data="accounts"
+      :data="filteredAccounts"
       v-loading="loading"
       border
       height="492"
-      empty-text="暂无采集账号，请点击“登录账号”完成 Telegram 授权。"
+      :empty-text="keyword.trim() ? '没有匹配的账号，请调整或清空搜索。' : '暂无采集账号，请点击“登录账号”完成 Telegram 授权。'"
     >
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="name" label="账号名称" width="110" show-overflow-tooltip />
@@ -123,6 +124,8 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
+import { computed, ref } from "vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -149,6 +152,8 @@ const rawEmit = defineEmits([
   "set-default",
 ])
 const emit = useRequestEmit(rawEmit, props)
+const keyword = ref("")
+const filteredAccounts = computed(() => searchRows(props.accounts, keyword.value, "accounts", row => [row.is_default ? '全局默认' : '']))
 
 function formatUsername(username) {
   const value = String(username || "").trim()

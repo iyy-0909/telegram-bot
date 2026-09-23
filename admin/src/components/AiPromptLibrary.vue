@@ -24,11 +24,12 @@
     />
 
     <p v-if="compact" class="card-subtitle">左右滑动表格查看适用类型和操作。</p>
+    <TableSearch v-model="keyword" label="搜索提示词" placeholder="搜索提示词名称 / 类型 / 内容 / ID / 状态" :count="filteredPrompts.length" :total="prompts.length" />
     <el-table
-      :data="prompts"
+      :data="filteredPrompts"
       v-loading="loading"
       height="520"
-      empty-text="暂无提示词，请点击“新增提示词”创建。"
+      :empty-text="keyword.trim() ? '没有匹配的提示词，请调整或清空搜索。' : '暂无提示词，请点击“新增提示词”创建。'"
     >
       <el-table-column label="提示词名称" min-width="190">
         <template #default="{ row }">
@@ -97,6 +98,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { contentTypeLabel } from "../config/aiContentTypes"
 import AiCommonRulesEditor from "./AiCommonRulesEditor.vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -109,6 +111,8 @@ const props = defineProps({
 const rawEmit = defineEmits(["add", "edit", "delete", "set-default"])
 const emit = useRequestEmit(rawEmit, props)
 const defaultPrompt = computed(() => props.prompts.find((item) => item.is_default))
+const keyword = ref("")
+const filteredPrompts = computed(() => searchRows(props.prompts, keyword.value, "templates", row => [contentTypeLabel(row.content_type), row.is_default ? '系统默认' : '']))
 const compact = ref(false)
 const mediaQuery = window.matchMedia("(max-width: 900px)")
 const updateCompact = () => { compact.value = mediaQuery.matches }

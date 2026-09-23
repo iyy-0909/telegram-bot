@@ -30,8 +30,9 @@
         <div><span>未提交机器人</span><strong>{{ summary.missingBots }}</strong></div>
       </div>
 
+      <TableSearch v-model="keyword" label="搜索分组机器人收录" placeholder="搜索机器人 / 频道链接 / 收录状态" :count="filteredRows.length" :total="rows.length" />
       <div v-loading="loading" class="collection-list">
-        <article v-for="row in rows" :key="row.id" class="collection-card">
+        <article v-for="row in filteredRows" :key="row.id" class="collection-card">
           <div class="card-head">
             <div>
               <strong>{{ row.name }}</strong>
@@ -79,9 +80,9 @@
           </dl>
         </article>
         <EmptyState
-          v-if="!loading && !rows.length"
-          title="当前分组暂无搜索机器人"
-          text="请先在搜索机器人页添加机器人。"
+          v-if="!loading && !filteredRows.length"
+          :title="keyword.trim() ? '没有匹配的机器人' : '当前分组暂无搜索机器人'"
+          :text="keyword.trim() ? '请调整或清空搜索。' : '请先在搜索机器人页添加机器人。'"
         />
       </div>
     </template>
@@ -96,12 +97,18 @@ import { getMyChannels, getSearchBots, getSearchBotSubmissions } from "../api"
 import { getErrorMessage } from "../api/client"
 import EmptyState from "./EmptyState.vue"
 import StatusPill from "./StatusPill.vue"
+import { searchRows } from "../utils/search"
 
 const bots = ref([])
 const channels = ref([])
 const submissions = ref([])
 const selectedGroup = ref("")
 const loading = ref(false)
+const keyword = ref("")
+const filteredRows = computed(() => searchRows(rows.value, keyword.value, "collections", row => [
+  row.submittedCount ? '已提交' : '未提交', row.collectedCount ? '已收录' : '未收录',
+  row.blockedCount ? '已拉黑' : '', row.pendingCount ? '处理中' : '', row.failedCount ? '失败' : '',
+]))
 
 const groupOptions = computed(() => Array.from(new Set(
   channels.value.map((item) => String(item.group_name || "").trim()).filter(Boolean),

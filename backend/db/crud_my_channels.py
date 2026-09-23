@@ -4,6 +4,7 @@ from sqlalchemy import or_
 
 from db.crud_bot import normalize_target_channel
 from db.database import SessionLocal
+from db.channel_overview import collection_label, delete_channel_links, reconcile_owner_tasks
 from db.channel_activity import activity_fields
 from db.models import BotAccount, MyChannel, SearchBotChannelSubmission
 from db.search_utils import build_channel_search_terms
@@ -161,19 +162,21 @@ def get_channel_collection_status_map(channel_ids):
     result = {channel_id: "未收录" for channel_id in ids}
     db = SessionLocal()
     try:
-        reviewing_ids = db.query(SearchBotChannelSubmission.my_channel_id).filter(
+        rows = db.query(SearchBotChannelSubmission).filter(
             SearchBotChannelSubmission.my_channel_id.in_(ids),
-            SearchBotChannelSubmission.review_status == "reviewing",
-        ).distinct().all()
-        for (channel_id,) in reviewing_ids:
-            result[int(channel_id)] = "审核中"
-
-        collected_ids = db.query(SearchBotChannelSubmission.my_channel_id).filter(
-            SearchBotChannelSubmission.my_channel_id.in_(ids),
-            SearchBotChannelSubmission.collection_status == "collected",
-        ).distinct().all()
-        for (channel_id,) in collected_ids:
-            result[int(channel_id)] = "已收录"
+        ).order_by(SearchBotChannelSubmission.id.desc()).all()
+        latest = {}
+        for row in rows:
+            latest.setdefault((row.my_channel_id, row.search_bot_id), row)
+        by_channel = {}
+        for (channel_id, _), row in latest.items():
+            by_channel.setdefault(channel_id, []).append({
+                "collection_status": row.collection_status,
+                "review_status": row.review_status,
+                "block_status": row.block_status,
+            })
+        for channel_id, records in by_channel.items():
+            result[int(channel_id)] = collection_label(records)
         return result
     finally:
         db.close()
@@ -227,6 +230,8 @@ def create_my_channel(data):
         channel.created_at = now
         channel.updated_at = now
         db.add(channel)
+        db.flush()
+        reconcile_owner_tasks(db, channel.owner_user_id)
         db.commit()
         db.refresh(channel)
         return channel
@@ -260,6 +265,7 @@ def update_my_channel(channel_id, data):
             setattr(channel, key, value)
 
         channel.updated_at = datetime.utcnow()
+        reconcile_owner_tasks(db, channel.owner_user_id)
         db.commit()
         db.refresh(channel)
         return channel
@@ -276,6 +282,7 @@ def delete_my_channel(channel_id):
         if not channel:
             return False
 
+        delete_channel_links(db, channel)
         db.delete(channel)
         db.commit()
         return True

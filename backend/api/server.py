@@ -253,6 +253,7 @@ from db.crud_my_channels import (
     set_my_channel_check_result,
     update_my_channel,
 )
+from db.channel_overview import get_channel_overview
 from db.crud_search_bots import (
     create_search_bot,
     create_submission,
@@ -3188,6 +3189,31 @@ def api_get_my_channel(channel_id: int):
     return {
         "ok": True,
         "item": my_channel_to_dict(channel),
+    }
+
+
+@app.get("/api/my-channels/{channel_id}/overview")
+def api_get_my_channel_overview(channel_id: int, request: Request):
+    current_user = getattr(request.state, "current_user", None)
+    overview = get_channel_overview(
+        channel_id,
+        include_listener=user_has_feature(current_user, "listener_tasks"),
+        include_clone=user_has_feature(current_user, "clone_tasks"),
+    )
+    if overview is None:
+        raise HTTPException(status_code=404, detail="频道不存在或无权查看")
+    channel = get_my_channel(channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="频道不存在或无权查看")
+    for task in overview["tasks"]:
+        if task["type"] == "clone":
+            task["worker_running"] = clone_manager.is_running(task["id"])
+    return {
+        **overview,
+        "channel": my_channel_to_dict(
+            channel,
+            collection_status_override=overview["collection_status"],
+        ),
     }
 
 

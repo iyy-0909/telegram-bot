@@ -51,7 +51,7 @@
       stripe
       height="492"
       class="clone-table"
-      empty-text="暂无克隆任务，请点击“新增任务”创建历史克隆任务。"
+      :empty-text="keyword.trim() ? '没有匹配的任务，请调整或清空搜索。' : '暂无克隆任务，请点击“新增任务”创建历史克隆任务。'"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -204,7 +204,7 @@
         stripe
         height="492"
         class="clone-log-table"
-        empty-text="暂无发送结果，任务发送后会显示最近记录。"
+        :empty-text="logKeyword.trim() ? '没有匹配的发送记录，请调整或清空搜索。' : '暂无发送结果，任务发送后会显示最近记录。'"
       >
       <el-table-column prop="time" label="时间" width="160" />
 
@@ -262,7 +262,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
-import { matchesSearch } from "../utils/search"
+import { matchesRow } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -302,7 +302,7 @@ const filteredTasks = computed(() => {
       task.enable_listener ? "监听 开" : "监听 关",
     ]
 
-    return matchesSearch(values, keyword.value)
+    return matchesRow(task, keyword.value, "tasks", values)
   })
 })
 
@@ -327,7 +327,7 @@ const filteredTaskLogs = computed(() => {
       row.bot_name,
     ]
 
-    return matchesSearch(values, logKeyword.value)
+    return matchesRow(row, logKeyword.value, "events", values)
   })
 })
 

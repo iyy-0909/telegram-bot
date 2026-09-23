@@ -1,5 +1,6 @@
 from db.database import SessionLocal
 from db.models import Account, CloneTask
+from db.channel_overview import delete_task_links, reconcile_task_links
 
 
 NUMERIC_DEFAULTS = {
@@ -131,6 +132,8 @@ def create_clone_task(data: dict):
         task = CloneTask(**data)
 
         db.add(task)
+        db.flush()
+        reconcile_task_links(db, "clone", task)
         db.commit()
         db.refresh(task)
 
@@ -162,6 +165,7 @@ def update_clone_task(task_id: int, data: dict):
             if hasattr(task, key):
                 setattr(task, key, value)
 
+        reconcile_task_links(db, "clone", task)
         db.commit()
         db.refresh(task)
 
@@ -198,6 +202,7 @@ def delete_clone_task(task_id: int):
         ).first()
 
         if task:
+            delete_task_links(db, "clone", task_id, task.owner_user_id)
             db.delete(task)
             db.commit()
             return True

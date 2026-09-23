@@ -13,13 +13,14 @@
       </div>
     </template>
 
+    <TableSearch v-model="keyword" label="搜索频道绑定" placeholder="搜索频道 / Bot名称 / ID / 备注" :count="filteredBindings.length" :total="bindings.length" />
     <el-table
-      :data="bindings"
+      :data="filteredBindings"
       border
       stripe
       height="492"
       style="width: 100%"
-      empty-text="暂无绑定"
+      :empty-text="keyword.trim() ? '没有匹配的绑定，请调整或清空搜索。' : '暂无绑定'"
     >
       <el-table-column prop="id" label="ID" width="70" align="center" />
 
@@ -69,6 +70,8 @@
 
 <script setup>
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+import { computed, ref } from "vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -89,6 +92,8 @@ const rawEmit = defineEmits([
   "toggle",
 ])
 const emit = useRequestEmit(rawEmit, props)
+const keyword = ref("")
+const filteredBindings = computed(() => searchRows(props.bindings, keyword.value, "bindings", row => [getBotName(row.bot_id), props.bots.find(bot => bot.id === row.bot_id)?.username]))
 
 const getBotName = (botId) => {
   const bot = props.bots.find(item => item.id === botId)

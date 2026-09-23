@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from db.database import SessionLocal
+from db.channel_overview import delete_task_links, reconcile_task_links
 from db.models import ListenerTask, ListenerSentMessage
 from bot.channel_utils import is_same_channel_identifier
 from db.crud_bot import normalize_target_channel
@@ -224,6 +225,8 @@ def create_listener_task(data: dict):
         )
         task = ListenerTask(**normalized)
         db.add(task)
+        db.flush()
+        reconcile_task_links(db, "listener", task)
         db.commit()
         db.refresh(task)
         return task
@@ -257,6 +260,7 @@ def update_listener_task(task_id: int, data: dict):
             setattr(task, key, value)
 
         task.updated_at = datetime.utcnow()
+        reconcile_task_links(db, "listener", task)
         db.commit()
         db.refresh(task)
         return task
@@ -280,6 +284,7 @@ def delete_listener_task(task_id: int):
         db.query(ListenerSentMessage).filter(
             ListenerSentMessage.listener_task_id == task_id
         ).delete()
+        delete_task_links(db, "listener", task_id, task.owner_user_id)
         db.delete(task)
         db.commit()
         return True
@@ -299,6 +304,10 @@ def delete_listener_tasks_by_clone_task_id(clone_task_id: int):
         ]
 
         if task_ids:
+            for task_id in task_ids:
+                task = db.query(ListenerTask).filter(ListenerTask.id == task_id).first()
+                if task:
+                    delete_task_links(db, "listener", task_id, task.owner_user_id)
             db.query(ListenerSentMessage).filter(
                 ListenerSentMessage.listener_task_id.in_(task_ids)
             ).delete(synchronize_session=False)

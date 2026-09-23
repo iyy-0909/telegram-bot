@@ -36,13 +36,14 @@
     </div>
 
     <el-card class="table-card">
+      <TableSearch v-model="keyword" label="搜索客服机器人" placeholder="搜索名称 / 用户名 / 客服群ID / 状态 / 错误" :count="filteredItems.length" :total="items.length" />
       <el-table
-        :data="items"
+        :data="filteredItems"
         v-loading="loading"
         border
         stripe
         height="492"
-        empty-text="暂无客服 Bot，请点击“新增客服 Bot”创建客服接待配置。"
+        :empty-text="keyword.trim() ? '没有匹配的客服机器人，请调整或清空搜索。' : '暂无客服 Bot，请点击“新增客服 Bot”创建客服接待配置。'"
       >
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="price" label="价格" min-width="110" show-overflow-tooltip>
@@ -266,6 +267,7 @@ import BotSelect from "./BotSelect.vue"
 import CopyText from "./CopyText.vue"
 import ErrorText from "./ErrorText.vue"
 import StatusTag from "./StatusTag.vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   bots: {
@@ -275,6 +277,8 @@ const props = defineProps({
 })
 
 const items = ref([])
+const keyword = ref("")
+const filteredItems = computed(() => searchRows(items.value, keyword.value, "support", row => [props.bots.find(bot => bot.id === row.bot_id)?.name]))
 const dialogVisible = ref(false)
 const loading = ref(false)
 const saving = ref(false)

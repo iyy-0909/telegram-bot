@@ -100,8 +100,9 @@
         show-icon
         title="当前频道尚未设置分组，设置后才能提交到搜索机器人。"
       />
+      <TableSearch v-model="channelStatusKeyword" label="搜索频道提交状态" placeholder="搜索机器人 / 提交账号 / 收录状态" :count="filteredChannelStatusRecords.length" :total="channelStatusRecords.length" />
       <div v-loading="recordLoading" class="channel-status-list">
-        <article v-for="row in channelStatusRecords" :key="row.id" class="bot-card submission-card">
+        <article v-for="row in filteredChannelStatusRecords" :key="row.id" class="bot-card submission-card">
           <div class="card-head">
             <div class="card-title">
               <strong>{{ row.search_bot_name || row.search_bot_username }}</strong>
@@ -123,9 +124,9 @@
           </div>
         </article>
         <EmptyState
-          v-if="!recordLoading && !channelStatusRecords.length"
-          title="暂无提交记录"
-          description="可以登记手动提交，或由系统将搜索机器人添加为频道管理员。"
+          v-if="!recordLoading && !filteredChannelStatusRecords.length"
+          :title="channelStatusKeyword.trim() ? '没有匹配的提交记录' : '暂无提交记录'"
+          :text="channelStatusKeyword.trim() ? '请调整或清空搜索。' : '可以登记手动提交，或由系统将搜索机器人添加为频道管理员。'"
         />
       </div>
       <div class="drawer-actions">
@@ -235,7 +236,7 @@ import EmptyState from "./EmptyState.vue"
 import StatusPill from "./StatusPill.vue"
 import { checkSearchBot, createSearchBot, createSearchBotSubmission, deleteSearchBot, getAccountOptions, getMyChannels, getSearchBots, getSearchBotSubmissions, updateSearchBot, updateSearchBotSubmission, updateSearchBotSubmissionPermissions } from "../api"
 import { getErrorMessage } from "../api/client"
-import { matchesSearch } from "../utils/search"
+import { searchRows } from "../utils/search"
 
 const requestProps = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -249,6 +250,7 @@ const emit = useRequestEmit(rawEmit, requestProps)
 const view = ref("bots")
 const bots = ref([]), channels = ref([]), accounts = ref([]), records = ref([])
 const keyword = ref(""), recordKeyword = ref("")
+const channelStatusKeyword = ref("")
 const loading = ref(false), recordLoading = ref(false), checkingId = ref(null)
 const botDrawer = ref(false), submitDrawer = ref(false), statusDrawer = ref(false), permissionDrawer = ref(false), channelStatusDrawer = ref(false)
 const pendingSubmitOpen = ref(false)
@@ -290,9 +292,10 @@ const enabledChannels = computed(() => channels.value.filter((item) => item.stat
 const selectedSubmitBot = computed(() => bots.value.find((item) => Number(item.id) === Number(submitForm.search_bot_id)))
 const selectedSubmitChannel = computed(() => channels.value.find((item) => Number(item.id) === Number(submitForm.my_channel_id)))
 const availableBots = computed(() => bots.value.filter((item) => item.status === "enabled"))
-const visibleBots = computed(() => bots.value.filter((item) => matchesSearch([item.name, item.username, item.bot_link], keyword.value)))
-const visibleRecords = computed(() => records.value.filter((item) => matchesSearch([item.channel_title, item.channel_username, item.search_bot_name, item.search_bot_username, item.group_name], recordKeyword.value)))
+const visibleBots = computed(() => searchRows(bots.value, keyword.value, "searchBots"))
+const visibleRecords = computed(() => searchRows(records.value, recordKeyword.value, "submissions"))
 const channelStatusRecords = computed(() => records.value.filter((item) => Number(item.my_channel_id) === Number(channelStatusChannel.value?.id)))
+const filteredChannelStatusRecords = computed(() => searchRows(channelStatusRecords.value, channelStatusKeyword.value, "submissions"))
 const selectedAdminRightLabels = computed(() => allPermissionOptions.filter((item) => submitForm.admin_rights?.[item.key]).map((item) => item.label))
 const visibleSubmitPermissionSections = computed(() => permissionSectionsFor(selectedSubmitChannel.value?.channel_type))
 const visibleAdjustmentPermissionSections = computed(() => permissionSectionsFor(permissionRecord.value?.channel_type))
@@ -328,7 +331,7 @@ async function detect(bot) { checkingId.value = bot.id; try { const res = await 
 async function removeBot(bot) { try { await ElMessageBox.confirm(`确定删除“${bot.name}”？已有提交记录时只能停用。`, "删除机器人", { type: "warning" }); await deleteSearchBot(bot.id); ElMessage.success("已删除"); await loadAll() } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(getErrorMessage(error, "删除失败")) } }
 async function openSubmitForChannel(channel) { if (!channel?.id) return; channelStatusChannel.value = channel; if (!bots.value.length || !channels.value.length) await loadAll(); Object.assign(submitForm, emptySubmit(), { my_channel_id: channel.id }); resetManualAccountSource(); if (channelStatusDrawer.value) { pendingSubmitOpen.value = true; channelStatusDrawer.value = false; return } submitDrawer.value = true }
 function openPendingSubmit() { if (!pendingSubmitOpen.value) return; pendingSubmitOpen.value = false; submitDrawer.value = true }
-async function openChannelStatus(channel) { if (!channel?.id) return; channelStatusChannel.value = channel; channelStatusDrawer.value = true; await loadAll() }
+async function openChannelStatus(channel) { if (!channel?.id) return; channelStatusKeyword.value = ""; channelStatusChannel.value = channel; channelStatusDrawer.value = true; await loadAll() }
 async function submitChannel() { if (!(await submitFormRef.value?.validate().catch(() => false))) return; const bot = selectedSubmitBot.value; if (submitForm.submission_mode === "queue" && !submitForm.account_id && !bot?.account_id) return ElMessage.warning("请选择操作账号，或先为机器人配置默认操作账号"); submitting.value = true; try { const response = await createSearchBotSubmission(submitForm); const item = response.data?.item; if (item?.submit_status === "failed") throw new Error(item.last_error || "添加失败"); ElMessage.success(submitForm.submission_mode === "manual" ? "手动提交记录已登记" : "搜索机器人已添加到频道"); submitDrawer.value = false; await loadAll(); channelStatusDrawer.value = true; await emit("submission-changed") } catch (error) { ElMessage.error(getErrorMessage(error, "提交失败")) } finally { submitting.value = false } }
 function openStatus(row) { editingRecord.value = row; Object.assign(statusForm, { review_status: row.review_status || "unknown", collection_status: row.collection_status || "unknown", block_status: row.block_status || "unknown", is_current: Boolean(row.is_current) }); statusDrawer.value = true }
 async function saveStatus() { savingStatus.value = true; try { await updateSearchBotSubmission(editingRecord.value.id, statusForm); ElMessage.success("状态已更新"); statusDrawer.value = false; await loadAll(); await emit("submission-changed") } catch (error) { ElMessage.error(getErrorMessage(error, "保存状态失败")) } finally { savingStatus.value = false } }

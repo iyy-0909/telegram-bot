@@ -58,12 +58,16 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getManagedChannelDiscovery, syncManagedAccountChannels, importManagedChannels } from '../api/myChannels'
 import ChannelAccountRoles from './ChannelAccountRoles.vue'
+import { searchRows } from '../utils/search'
 const props = defineProps({ visible: Boolean })
 const emit = defineEmits(['update:visible', 'changed'])
 const accounts = ref([]), items = ref([]), selection = ref([]), accountId = ref(0), keyword = ref('')
 const loading = ref(false), syncing = ref(false), importing = ref(false), error = ref(''), progress = ref(''), tableRef = ref(null), syncFailed = ref(false)
 const busy = computed(() => syncing.value || importing.value)
-const filteredItems = computed(() => items.value.filter(item => `${item.title} ${item.username} ${item.chat_id}`.toLowerCase().includes(keyword.value.trim().toLowerCase())))
+const filteredItems = computed(() => searchRows(items.value, keyword.value, 'channels', row => [
+  (row.managed_accounts || []).map(member => [member.account_name, member.username, member.role]),
+  row.existing_id ? '已在我的频道' : canImport(row) ? '待选择导入' : '需重新同步',
+]))
 const readError = (err, fallback) => err?.response?.data?.detail || err?.message || fallback
 const statusLabel = status => ({ success: '已同步', error: '未确认 · 同步失败', disabled: '未确认 · 已停用', offline: '未确认 · 账号离线', stale: '未确认 · 待更新', unknown: '未同步' })[status] || '未确认'
 const canImport = row => row.managed_accounts.some(member => member.status === 'success')

@@ -72,6 +72,7 @@
           />
         </div>
 
+        <TableSearch v-model="keywords[section.key]" :label="`搜索${section.title}`" placeholder="搜索名称 / 内容 / ID / 状态" :count="rulesFor(section).length" />
         <div v-if="rulesFor(section).length" class="rule-list">
           <article v-for="rule in rulesFor(section)" :key="rule.id" class="rule-item">
             <div class="rule-head">
@@ -87,7 +88,7 @@
             </div>
           </article>
         </div>
-        <el-empty v-else :image-size="56" :description="`暂无${typeLabel(activeType(section))}配置`" />
+        <el-empty v-else :image-size="56" :description="keywords[section.key]?.trim() ? '没有匹配的配置，请调整或清空搜索。' : `暂无${typeLabel(activeType(section))}配置`" />
       </el-collapse-item>
     </el-collapse>
   </div>
@@ -98,6 +99,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
 import { computed, reactive, ref, watch } from "vue"
 import { Delete, Edit, Plus } from "@element-plus/icons-vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -127,6 +129,7 @@ const sendForm = reactive({
 const providerList = [{ key: "grok", title: "Grok（xAI）", defaultModel: "grok-4.6" }, { key: "deepseek", title: "DeepSeek", defaultModel: "deepseek-v4-flash" }]
 const aiForm = reactive({ grok_api_key: "", grok_model: "grok-4.6", deepseek_api_key: "", deepseek_model: "deepseek-v4-flash", default_rewrite_prompt: "" })
 const openSections = ref(["contact"])
+const keywords = reactive({})
 const activeTypes = reactive(Object.fromEntries(sectionRegistry.map((section) => [section.key, section.types[0]])))
 
 watch(
@@ -174,7 +177,7 @@ function activeType(section) {
 
 function rulesFor(section) {
   const type = activeType(section)
-  return props.templates.filter((rule) => rule.type === type)
+  return searchRows(props.templates.filter((rule) => rule.type === type), keywords[section.key], "templates", rule => [ruleSummary(rule)])
 }
 
 function typeLabel(type) {

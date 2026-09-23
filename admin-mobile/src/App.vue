@@ -30,7 +30,9 @@
     :nav-keys="mobileNavKeys"
     :user="currentUser"
     :refresh-disabled="!canRefreshActive"
-    :request-actions="{ 'change': changeTab, 'refresh': loadActive, 'logout': logoutCurrentUser }"
+    :detail-title="activeTab === 'channels' && selectedChannelId ? (selectedChannel?.title || selectedChannel?.username || `频道 #${selectedChannelId}`) : ''"
+    :detail-subtitle="activeTab === 'channels' && selectedChannelId ? (selectedChannel?.username || selectedChannel?.chat_id || '频道详情') : ''"
+    :request-actions="{ 'change': changeTab, 'refresh': loadActive, 'logout': logoutCurrentUser, 'back': closeChannel }"
 
 
   >
@@ -171,58 +173,37 @@
     </div>
 
     <div v-else-if="activeTab === 'channels'" class="channel-section">
-      <el-tabs v-model="channelView" stretch class="channel-view-tabs">
+      <el-tabs v-if="!selectedChannelId" v-model="channelView" stretch class="channel-view-tabs">
         <el-tab-pane label="我的频道" name="channels" />
         <el-tab-pane label="机器人收录" name="collections" />
         <el-tab-pane label="搜索机器人" name="search-bots" />
       </el-tabs>
-    <ListPage
-      v-if="channelView === 'channels'"
-      title="我的频道"
-      placeholder="搜索频道名 / username / 分组 / https://t.me/..."
-      empty-title="暂无频道"
-      :keyword="keyword.channels"
+      <MobileChannelExplorer
+      v-if="selectedChannelId || channelView === 'channels'"
+      :channels="channels"
       :items="filteredChannels"
+      :keyword="keyword.channels"
       :loading="loading.channels"
+      :selected-id="selectedChannelId"
+      :overview="channelOverview"
+      :overview-loading="channelOverviewLoading"
+      :overview-error="channelOverviewError"
       @update:keyword="keyword.channels = $event"
-    >
-      <template #actions>
-        <request-button size="small" type="primary" @click="openCreate('channel')">新增</request-button>
-        <request-button size="small" plain @click="batchCheckChannels">批量检测</request-button>
-      </template>
-      <template #default="{ item }">
-        <TaskCard
-          :title="item.title || item.username || `频道 #${item.id}`"
-          :subtitle="item.username || item.chat_id"
-          :status="item.status"
-          :meta="[
-            ['频道 ID', item.id],
-            ['分组', compactText(item.group_name)],
-            ['绑定 Bot', compactText(item.bot_name || item.bot_id)],
-            ['投放状态', compactText(item.delivery_status)],
-            ['收录状态', compactText(item.collection_status)],
-            ['chat_id', compactText(item.chat_id)],
-            ['频道类型', compactText(item.channel_type)],
-            ['成员数', compactText(item.member_count)],
-            ['创建人用户名', compactText(item.creator_username)],
-            ['创建人 ID', compactText(item.creator_user_id)],
-            ['最后检测', formatDate(item.last_checked_at || item.checked_at)],
-            ['克隆状态', compactText(item.clone_status)],
-            ['备注', compactText(item.remark)],
-          ]"
-        >
-          <request-button size="small" type="primary" :disabled="item.status === 'disabled'" @click="openChannelSubmit(item)">提交</request-button>
-          <request-button size="small" plain @click="openChannelSubmissionStatus(item)">查看</request-button>
-          <request-button size="small" type="primary" plain @click="openEdit('channel', item)">编辑</request-button>
-          <request-button size="small" plain @click="checkChannel(item)">检测</request-button>
-          <request-button size="small" type="danger" plain @click="removeItem('channel', item)">删除</request-button>
-        </TaskCard>
-      </template>
-    </ListPage>
+      @open="openChannel"
+      @retry="loadChannelOverview"
+      @create="openCreate('channel')"
+      @batch-check="batchCheckChannels"
+      @edit="openEdit('channel', $event)"
+      @check="checkChannel"
+      @submit="openChannelSubmit"
+      @submissions="openChannelSubmissionStatus"
+      @delete="removeItem('channel', $event)"
+      @open-task="openChannelTask"
+    />
       <MobileSearchBots
         ref="searchBotPanelRef"
         :page-visible="channelView === 'search-bots'"
-        :request-actions="{ 'submission-changed': loadChannels }"
+        :request-actions="{ 'submission-changed': refreshChannelData }"
       />
       <MobileSearchBotCollections v-if="channelView === 'collections'" />
     </div>
@@ -363,10 +344,11 @@
 <script setup>
 import { useRequestEmit } from '../../frontend-shared/requestActions.mjs'
 
-import { computed, defineComponent, h, onMounted, onUnmounted, reactive, ref, resolveComponent } from "vue"
+import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, resolveComponent } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { ArrowDownBold, ArrowUpBold, Loading } from "@element-plus/icons-vue"
 import MobileLayout from "./components/MobileLayout.vue"
+import MobileChannelExplorer from "./components/MobileChannelExplorer.vue"
 import StatusPill from "./components/StatusPill.vue"
 import EmptyState from "./components/EmptyState.vue"
 import MobileSearchBots from "./components/MobileSearchBots.vue"
@@ -420,6 +402,7 @@ import {
   getListenerTasks,
   getListenerSendEvents,
   getMyChannels,
+  getMyChannelOverview,
   getRuntimeDashboard,
   getAiSettings,
   getSendSettings,
@@ -455,7 +438,7 @@ import {
   formatDate,
   sourceTypeLabel,
 } from "./utils/format"
-import { matchesSearch } from "./utils/search"
+import { matchesRow, searchRows } from "./utils/search"
 import { hasAnyFeature, hasFeature, userFeatureKeys } from "./utils/access"
 
 const authenticated = ref(Boolean(getToken()))
@@ -481,8 +464,17 @@ const MORE_PAGE_FEATURES = {
   settings: ["system_settings", "ai_settings"],
   accounts: ["accounts"],
 }
-const activeTab = ref(window.localStorage.getItem("mobile_active_tab") || "home")
+const initialChannelId = Number(new URL(window.location.href).searchParams.get("channel")) || null
+const activeTab = ref(initialChannelId ? "channels" : (window.localStorage.getItem("mobile_active_tab") || "home"))
 const channelView = ref("channels")
+const selectedChannelId = ref(initialChannelId)
+const channelOverview = ref(null)
+const channelOverviewLoading = ref(false)
+const channelOverviewError = ref("")
+let channelOverviewRequest = 0
+let channelOpenedInApp = false
+let channelListScrollY = 0
+const selectedChannel = computed(() => channelOverview.value?.channel || channels.value.find(item => Number(item.id) === selectedChannelId.value))
 const listenerView = ref("tasks")
 const cloneView = ref("tasks")
 const morePage = ref("menu")
@@ -564,11 +556,11 @@ const editTitle = computed(() => {
 })
 const aiSettings = ref({ providers: {} })
 
-const filteredListeners = computed(() => filterItems(listeners.value, keyword.listeners, ["name", "source_channel", "target_channels", "status"]))
-const filteredClones = computed(() => filterItems(clones.value, keyword.clones, ["name", "source_channel", "target_channels", "status"]))
-const filteredChannels = computed(() => filterItems(channels.value, keyword.channels, ["title", "username", "group_name", "remark", "status"]))
-const filteredBots = computed(() => filterItems(bots.value, keyword.bots, ["name", "username", "remark", "last_error"]))
-const filteredSupportBots = computed(() => filterItems(supportBots.value, keyword.support, ["name", "bot_username", "support_group_chat_id", "last_error"]))
+const filteredListeners = computed(() => searchRows(listeners.value, keyword.listeners, "tasks"))
+const filteredClones = computed(() => searchRows(clones.value, keyword.clones, "tasks"))
+const filteredChannels = computed(() => searchRows(channels.value, keyword.channels, "channels"))
+const filteredBots = computed(() => searchRows(bots.value, keyword.bots, "bots"))
+const filteredSupportBots = computed(() => searchRows(supportBots.value, keyword.support, "support"))
 const templateGroups = computed(() => templates.value
   .filter((template) => !template.parent_id)
   .map((group) => ({
@@ -576,8 +568,8 @@ const templateGroups = computed(() => templates.value
     items: templates.value.filter((template) => template.parent_id === group.id),
   }))
   .sort((a, b) => (b.id || 0) - (a.id || 0)))
-const filteredTemplates = computed(() => filterItems(templateGroups.value, keyword.templates, ["name", "type", "content", "remark", "items"]))
-const filteredAccounts = computed(() => filterItems(accounts.value, keyword.accounts, ["name", "username", "phone_masked", "remark"]))
+const filteredTemplates = computed(() => searchRows(templateGroups.value, keyword.templates, "templates"))
+const filteredAccounts = computed(() => searchRows(accounts.value, keyword.accounts, "accounts"))
 const filteredLogItems = computed(() => filterLogItems(logItems.value, logKeyword.value))
 
 function pickList(data) {
@@ -587,19 +579,11 @@ function pickList(data) {
   return []
 }
 
-function filterItems(items, value, fields) {
-  const text = String(value || "").trim()
-  if (!text) return items
-  return items.filter((item) =>
-    matchesSearch(fields.map((field) => item?.[field]), text),
-  )
-}
-
 function filterLogItems(items, value) {
   const text = String(value || "").trim()
   if (!text) return items
   return (items || []).filter((item) =>
-    matchesSearch([
+    matchesRow(item, text, "events", [
       item.time,
       item.event_type,
       item.status,
@@ -617,7 +601,7 @@ function filterLogItems(items, value) {
       item.message,
       item.error,
       item.bot_name,
-    ], text),
+    ]),
   )
 }
 
@@ -670,6 +654,7 @@ function changeTab(tab) {
     ensureAccessibleRoute()
     return
   }
+  if (tab !== "channels" && selectedChannelId.value) clearChannelSelection()
   activeTab.value = tab
   if (tab === "more") morePage.value = "menu"
   window.localStorage.setItem("mobile_active_tab", tab)
@@ -683,6 +668,7 @@ function canOpenMorePage(page) {
 }
 
 function ensureAccessibleRoute() {
+  if (selectedChannelId.value && !mobileNavKeys.value.includes("channels")) clearChannelSelection()
   if (!mobileNavKeys.value.includes(activeTab.value)) {
     activeTab.value = "more"
     window.localStorage.setItem("mobile_active_tab", "more")
@@ -753,6 +739,7 @@ async function logoutCurrentUser() {
     // 本地退出不应被网络错误阻塞。
   }
   if (!isCurrentSession(generation)) return
+  if (selectedChannelId.value) clearChannelSelection()
   clearAuthorizedData()
   setToken("")
   currentUser.value = null
@@ -813,6 +800,7 @@ async function loadInitial() {
   if (failedCount) {
     ElMessage.warning(`部分数据加载失败（${failedCount} 项），请稍后刷新重试。`)
   }
+  if (selectedChannelId.value && hasFeature(currentUser.value, "channels")) await loadChannelOverview()
 }
 
 async function openTaskFromAlert({ alert, taskType }) {
@@ -849,7 +837,7 @@ async function loadActive() {
   if (activeTab.value === "home" && hasFeature(currentUser.value, "dashboard")) return loadHome()
   if (activeTab.value === "listeners" && hasFeature(currentUser.value, "listener_tasks")) return loadListeners()
   if (activeTab.value === "clones" && hasFeature(currentUser.value, "clone_tasks")) return loadClones()
-  if (activeTab.value === "channels" && hasFeature(currentUser.value, "channels")) return loadChannels()
+  if (activeTab.value === "channels" && hasFeature(currentUser.value, "channels")) return refreshChannelData()
   if (activeTab.value !== "more") return
   if (morePage.value === "access") return refreshAccessAndData()
   if (morePage.value === "bots" && hasFeature(currentUser.value, "bots")) return loadBots()
@@ -979,6 +967,7 @@ function openEdit(type, row) {
   if (type === "channel" && !editForm.username && editForm.chat_id) {
     editForm.username = String(editForm.chat_id)
   }
+  if (type === "channel") editForm.enabled = editForm.status !== "disabled"
   if (type === "template") {
     editForm.contents = (row.items || [])
       .map((item) => item.content || "")
@@ -1147,6 +1136,111 @@ function defaultForm(type) {
   return map[type] || {}
 }
 
+function channelLocation(id) {
+  const url = new URL(window.location.href)
+  if (id) url.searchParams.set("channel", String(id))
+  else url.searchParams.delete("channel")
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
+function clearChannelSelection() {
+  channelOverviewRequest += 1
+  selectedChannelId.value = null
+  channelOverview.value = null
+  channelOverviewLoading.value = false
+  channelOverviewError.value = ""
+  channelOpenedInApp = false
+  window.history.replaceState({}, "", channelLocation(null))
+}
+
+function openChannel(id) {
+  const channelId = Number(id)
+  if (!channelId || !hasFeature(currentUser.value, "channels")) return
+  channelListScrollY = window.scrollY
+  selectedChannelId.value = channelId
+  channelOverview.value = null
+  channelOverviewError.value = ""
+  activeTab.value = "channels"
+  channelView.value = "channels"
+  window.history.pushState({ channelId }, "", channelLocation(channelId))
+  channelOpenedInApp = true
+  window.scrollTo(0, 0)
+  return loadChannelOverview()
+}
+
+function closeChannel() {
+  if (channelOpenedInApp) {
+    channelOpenedInApp = false
+    window.history.back()
+    return
+  }
+  clearChannelSelection()
+  nextTick(() => window.scrollTo(0, channelListScrollY))
+}
+
+function handleChannelPopState() {
+  const id = Number(new URL(window.location.href).searchParams.get("channel")) || null
+  channelOverviewRequest += 1
+  selectedChannelId.value = id && hasFeature(currentUser.value, "channels") ? id : null
+  channelOverview.value = null
+  channelOverviewError.value = ""
+  channelOverviewLoading.value = false
+  channelOpenedInApp = false
+  if (selectedChannelId.value) {
+    activeTab.value = "channels"
+    channelView.value = "channels"
+    window.scrollTo(0, 0)
+    loadChannelOverview()
+  } else {
+    nextTick(() => window.scrollTo(0, channelListScrollY))
+  }
+}
+
+async function loadChannelOverview() {
+  const id = selectedChannelId.value
+  if (!id || !hasFeature(currentUser.value, "channels")) return false
+  const requestId = ++channelOverviewRequest
+  const generation = getSessionGeneration()
+  channelOverviewLoading.value = true
+  channelOverviewError.value = ""
+  try {
+    const response = await getMyChannelOverview(id)
+    if (requestId !== channelOverviewRequest || !isCurrentSession(generation) || selectedChannelId.value !== id) return false
+    channelOverview.value = response.data || null
+    return true
+  } catch (error) {
+    if (requestId !== channelOverviewRequest || isCanceledRequest(error) || !isCurrentSession(generation)) return false
+    channelOverviewError.value = getErrorMessage(error, "频道详情加载失败，请重试")
+    return false
+  } finally {
+    if (requestId === channelOverviewRequest && isCurrentSession(generation)) channelOverviewLoading.value = false
+  }
+}
+
+async function refreshChannelData() {
+  await loadChannels()
+  if (selectedChannelId.value) await loadChannelOverview()
+}
+
+async function openChannelTask(task) {
+  const type = task?.type
+  const required = type === "listener" ? "listener_tasks" : "clone_tasks"
+  if (!["listener", "clone"].includes(type) || !hasFeature(currentUser.value, required)) {
+    ElMessage.warning("当前账号无权查看该任务")
+    return
+  }
+  clearChannelSelection()
+  activeTab.value = type === "listener" ? "listeners" : "clones"
+  window.localStorage.setItem("mobile_active_tab", activeTab.value)
+  if (type === "listener") listenerView.value = "tasks"
+  else cloneView.value = "tasks"
+  const loaded = type === "listener" ? await loadListeners() : await loadClones()
+  if (!loaded) return
+  const item = (type === "listener" ? listeners.value : clones.value).find(row => Number(row.id) === Number(task.id))
+  if (item) openEdit(type, item)
+  else ElMessage.warning("该任务已不存在或无权查看")
+}
+
 function defaultFilterTemplateGroupId() {
   const candidates = templates.value.filter(
     (template) => template.type === "filter" && template.enabled && !template.parent_id,
@@ -1160,6 +1254,8 @@ function defaultFilterTemplateGroupId() {
 function payloadFor(type) {
   const data = { ...editForm }
   if (type === "channel") {
+    data.status = data.enabled ? "enabled" : "disabled"
+    delete data.enabled
     const identifier = String(data.username || data.chat_id || "").trim()
     if (/^-100\d+$/.test(identifier)) {
       data.username = ""
@@ -1454,7 +1550,7 @@ async function saveEdit() {
 async function reloadType(type) {
   if (type === "listener") return loadListeners()
   if (type === "clone") return loadClones()
-  if (type === "channel") return loadChannels()
+  if (type === "channel") return refreshChannelData()
   if (type === "bot") return loadBots()
   if (type === "support") return loadSupportBots()
   if (type === "template") return loadTemplates()
@@ -1543,7 +1639,7 @@ async function checkChannel(item) {
     const res = await checkMyChannel(item.id)
     detailText.value = JSON.stringify(res.data || {}, null, 2)
     detailVisible.value = true
-    await loadChannels()
+    await refreshChannelData()
   } catch (error) {
     ElMessage.error(getErrorMessage(error, "检测失败"))
   }
@@ -1677,6 +1773,7 @@ async function removeItem(type, item) {
     if (type === "template") await deleteContentTemplateRule(item.id)
     if (type === "account") await deleteAccount(item.id)
     ElMessage.success("删除成功")
+    if (type === "channel" && selectedChannelId.value === Number(item.id)) clearChannelSelection()
     await reloadType(type)
   } catch (error) {
     if (error === "cancel") return
@@ -1843,6 +1940,10 @@ function closeRestrictedOverlays() {
 
 function clearAuthorizedData() {
   closeRestrictedOverlays()
+  channelOverviewRequest += 1
+  channelOverview.value = null
+  channelOverviewLoading.value = false
+  channelOverviewError.value = ""
   loadingOwners.clear()
   status.value = {}
   dashboard.value = {}
@@ -1916,6 +2017,7 @@ async function handleAccessRestricted(event) {
 }
 
 onMounted(async () => {
+  window.addEventListener("popstate", handleChannelPopState)
   window.addEventListener("mobile-access-restricted", handleAccessRestricted)
   window.addEventListener(SESSION_STORAGE_CHANGED_EVENT, handleSessionChanged)
   window.addEventListener(SESSION_INVALIDATED_EVENT, handleSessionChanged)
@@ -1930,6 +2032,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener("popstate", handleChannelPopState)
   window.removeEventListener("mobile-access-restricted", handleAccessRestricted)
   window.removeEventListener(SESSION_STORAGE_CHANGED_EVENT, handleSessionChanged)
   window.removeEventListener(SESSION_INVALIDATED_EVENT, handleSessionChanged)
@@ -1942,11 +2045,13 @@ const HomePage = defineComponent({
     loading: Boolean,
   },
   setup(props) {
+    const waitingKeyword = ref("")
+    const recentKeyword = ref("")
     return () => {
       const stats = props.dashboard?.stats || {}
       const queue = props.dashboard?.queue || {}
-      const waiting = asArray(queue.waiting).slice(0, 10)
-      const recent = asArray(queue.recent).slice(0, 10)
+      const waiting = searchRows(asArray(queue.waiting), waitingKeyword.value, "queue")
+      const recent = searchRows(asArray(queue.recent), recentKeyword.value, "queue")
       return h("div", { class: "page" }, [
         h("section", { class: "section" }, [
           h("div", { class: "metric-grid" }, [
@@ -1956,7 +2061,7 @@ const HomePage = defineComponent({
             metric("启用监听", stats.listener_enabled_count || 0),
           ]),
         ]),
-        sectionList("排队任务", waiting, "暂无排队任务", (item) =>
+        sectionList("排队任务", waiting, waitingKeyword.value.trim() ? "没有匹配的排队任务" : "暂无排队任务", (item) =>
           h(TaskCard, {
             title: item.task_name || `任务 #${item.task_id || "-"}`,
             subtitle: `${sourceTypeLabel(item.source_type)} / ${item.reason || "等待发送"}`,
@@ -1973,8 +2078,9 @@ const HomePage = defineComponent({
               ["相册 ID", item.grouped_id || "-"],
             ],
           }),
+          h(resolve("TableSearch"), { modelValue: waitingKeyword.value, "onUpdate:modelValue": value => { waitingKeyword.value = value }, label: "搜索排队任务", placeholder: "搜索任务 / 频道 / 消息ID / 状态", count: waiting.length, total: asArray(queue.waiting).length }),
         ),
-        sectionList("最近完成", recent, "暂无最近完成记录", (item) =>
+        sectionList("最近完成", recent, recentKeyword.value.trim() ? "没有匹配的完成记录" : "暂无最近完成记录", (item) =>
           h(TaskCard, {
             title: item.task_name || `任务 #${item.task_id || "-"}`,
             subtitle: item.error || item.target_channel || "-",
@@ -1989,6 +2095,7 @@ const HomePage = defineComponent({
               ["错误", item.error || "-"],
             ],
           }),
+          h(resolve("TableSearch"), { modelValue: recentKeyword.value, "onUpdate:modelValue": value => { recentKeyword.value = value }, label: "搜索最近完成", placeholder: "搜索任务 / 频道 / 消息ID / 状态", count: recent.length, total: asArray(queue.recent).length }),
         ),
       ])
     }
@@ -2014,6 +2121,7 @@ const ListPage = defineComponent({
           modelValue: props.keyword,
           "onUpdate:modelValue": (value) => emit("update:keyword", value),
           placeholder: props.placeholder,
+          "aria-label": `搜索${props.title}`,
           clearable: true,
         }),
       ]),
@@ -2029,7 +2137,7 @@ const ListPage = defineComponent({
           ? h(resolve("el-skeleton"), { rows: 6, animated: true })
           : props.items?.length
             ? h("div", { class: "card-list" }, props.items.flatMap((item) => slots.default({ item })))
-            : h(EmptyState, { title: props.emptyTitle }),
+            : h(EmptyState, { title: props.keyword?.trim() ? "没有匹配记录，请调整搜索内容" : props.emptyTitle }),
       ]),
     ])
   },
@@ -2099,6 +2207,7 @@ const LogDrawer = defineComponent({
           modelValue: props.keyword,
           "onUpdate:modelValue": (value) => emit("update:keyword", value),
           placeholder: props.type === "clone" ? "搜索任务 / 目标 / 消息 / 错误" : "搜索任务 / 频道 / 消息 / 错误",
+          "aria-label": props.type === "clone" ? "搜索克隆日志" : "搜索监听日志",
           clearable: true,
         }),
         h(resolve("request-button"), {
@@ -2119,7 +2228,7 @@ const LogDrawer = defineComponent({
           ? h("div", { class: "card-list log-list" }, props.items.map((item, index) =>
             h(LogCard, { key: `${item.id || item.time || index}-${index}`, item, type: props.type }),
           ))
-          : h(EmptyState, { title: props.type === "clone" ? "暂无克隆日志" : "暂无监听日志" }),
+          : h(EmptyState, { title: props.keyword?.trim() ? "没有匹配日志，请调整搜索内容" : props.type === "clone" ? "暂无克隆日志" : "暂无监听日志" }),
     ])
   },
 })
@@ -2297,6 +2406,7 @@ const MorePage = defineComponent({
             modelValue: props.keyword[config[2]],
             "onUpdate:modelValue": (value) => emit("update-keyword", config[2], value),
             placeholder: config[1],
+            "aria-label": `搜索${config[0]}`,
             clearable: true,
           }),
         ]),
@@ -2318,7 +2428,7 @@ const MorePage = defineComponent({
                 emit,
                 props.defaultAccountSettingId,
               )))
-              : h(EmptyState, { title: "暂无" + config[0] }),
+              : h(EmptyState, { title: props.keyword[config[2]]?.trim() ? "没有匹配记录，请调整搜索内容" : "暂无" + config[0] }),
         ]),
       ])
     }
@@ -3442,6 +3552,28 @@ function fieldRender(props, emit, field) {
       }),
     ])
   }
+  if (field.input === "ai-failure") {
+    return h(resolve("el-select"), {
+      modelValue: form[field.key] || "fallback",
+      "onUpdate:modelValue": (value) => { form[field.key] = value },
+      placeholder,
+      style: "width: 100%",
+    }, () => [
+      h(resolve("el-option"), { value: "fallback", label: "发送清洗后的原文" }),
+      h(resolve("el-option"), { value: "skip", label: "跳过本条内容" }),
+    ])
+  }
+  if (field.input === "ai-provider") {
+    return h(resolve("el-select"), {
+      modelValue: form[field.key] || "grok",
+      "onUpdate:modelValue": (value) => { form[field.key] = value },
+      placeholder,
+      style: "width: 100%",
+    }, () => [
+      h(resolve("el-option"), { value: "grok", label: "Grok（xAI）" }),
+      h(resolve("el-option"), { value: "deepseek", label: "DeepSeek" }),
+    ])
+  }
   return h(resolve("el-input"), {
     modelValue: displayEditValue(form[field.key], field.input),
     type: field.input === "textarea" ? "textarea" : field.input === "password" ? "password" : "text",
@@ -3491,26 +3623,6 @@ function fieldPlaceholder(field) {
     bot_id: "选择用于发送内容的 Bot",
     session_path: "填写 session 文件路径，例如 data/sessions/account_1",
     proxy: "可留空，例如 socks5://127.0.0.1:7890",
-  }
-  if (field.input === "ai-failure") {
-    return h(resolve("el-select"), {
-      modelValue: form[field.key] || "fallback",
-      "onUpdate:modelValue": (value) => { form[field.key] = value },
-      style: "width: 100%",
-    }, () => [
-      h(resolve("el-option"), { value: "fallback", label: "发送清洗后的原文" }),
-      h(resolve("el-option"), { value: "skip", label: "跳过本条内容" }),
-    ])
-  }
-  if (field.input === "ai-provider") {
-    return h(resolve("el-select"), {
-      modelValue: form[field.key] || "grok",
-      "onUpdate:modelValue": (value) => { form[field.key] = value },
-      style: "width: 100%",
-    }, () => [
-      h(resolve("el-option"), { value: "grok", label: "Grok（xAI）" }),
-      h(resolve("el-option"), { value: "deepseek", label: "DeepSeek" }),
-    ])
   }
   if (map[field.key]) return map[field.key]
   if (field.input === "channels") return "一行一个频道，支持 @username、链接或 chat_id"
@@ -3755,9 +3867,10 @@ function displayEditValue(value, input) {
   return value ?? ""
 }
 
-function sectionList(title, items, emptyTitle, render) {
+function sectionList(title, items, emptyTitle, render, search = null) {
   return h("section", { class: "section" }, [
     h("div", { class: "section-head" }, [h("div", { class: "section-title" }, title)]),
+    search,
     items.length
       ? h("div", { class: "card-list" }, items.map((item) => render(item)))
       : h(EmptyState, { title: emptyTitle }),

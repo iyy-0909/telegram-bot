@@ -11,7 +11,7 @@
       <el-tab-pane label="机器人管理" name="bots">
         <div class="toolbar">
           <div class="filters">
-            <el-input v-model="botFilters.keyword" clearable placeholder="搜索机器人名称 / @username / https://t.me/..." @keyup.enter="loadBots">
+            <el-input v-model="botFilters.keyword" clearable placeholder="搜索名称 / 用户名或链接 / ID / 备注" aria-label="搜索搜索机器人">
               <template #prefix><el-icon><Search /></el-icon></template>
             </el-input>
             <el-select v-model="botFilters.status" clearable placeholder="机器人状态" @change="loadBots">
@@ -34,7 +34,7 @@
           style="width: 100%"
         >
           <template #empty>
-            <el-empty :image-size="72" description="暂无搜索机器人">
+            <el-empty :image-size="72" :description="botFilters.keyword.trim() || botFilters.status ? '当前筛选条件下没有机器人。' : '暂无搜索机器人'">
               <request-button type="primary" @click="openBotCreate"><el-icon><Plus /></el-icon>新增机器人</request-button>
             </el-empty>
           </template>
@@ -87,7 +87,7 @@
       <el-tab-pane label="频道提交记录" name="submissions">
         <div class="toolbar">
           <div class="filters">
-            <el-input v-model="submissionFilters.keyword" clearable placeholder="搜索频道 / 机器人 / @username / https://t.me/..." @keyup.enter="loadSubmissions">
+            <el-input v-model="submissionFilters.keyword" clearable placeholder="搜索频道 / 机器人 / 提交账号 / 状态" aria-label="搜索频道提交记录">
               <template #prefix><el-icon><Search /></el-icon></template>
             </el-input>
             <el-select v-model="submissionFilters.group_name" clearable filterable placeholder="分组" @change="loadSubmissions">
@@ -103,7 +103,7 @@
         </div>
 
         <el-table
-          :data="submissions"
+          :data="visibleSubmissions"
           v-loading="submissionLoading"
           row-key="id"
           border
@@ -112,7 +112,7 @@
           style="width: 100%"
         >
           <template #empty>
-            <el-empty :image-size="72" description="暂无频道提交记录" />
+            <el-empty :image-size="72" :description="submissionFilters.keyword.trim() || submissionFilters.group_name || submissionFilters.block_status ? '当前筛选条件下没有提交记录。' : '暂无频道提交记录'" />
           </template>
           <el-table-column prop="group_name" label="分组" min-width="100" show-overflow-tooltip />
           <el-table-column prop="channel_title" label="频道" min-width="155" show-overflow-tooltip />
@@ -375,6 +375,7 @@
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
 import { computed, onMounted, reactive, ref } from "vue"
+import { searchRows } from "../utils/search"
 import { ElMessage, ElMessageBox } from "element-plus"
 import { Plus, Refresh, Search } from "@element-plus/icons-vue"
 import {
@@ -499,7 +500,8 @@ const submitRules = {
 const enabledAccounts = computed(() => props.accounts.filter((item) => item.enabled !== false))
 const enabledChannels = computed(() => channels.value.filter((item) => item.status !== "disabled" && item.group_name))
 const groupOptions = computed(() => Array.from(new Set(channels.value.map((item) => item.group_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-Hans-CN")))
-const visibleBots = computed(() => bots.value)
+const visibleBots = computed(() => searchRows(bots.value, botFilters.keyword, "searchBots"))
+const visibleSubmissions = computed(() => searchRows(submissions.value, submissionFilters.keyword, "submissions"))
 const selectedChannel = computed(() => channels.value.find((item) => Number(item.id) === Number(submitForm.my_channel_id)))
 const selectedSubmitBot = computed(() => bots.value.find((item) => Number(item.id) === Number(submitForm.search_bot_id)))
 const availableSubmitBots = computed(() => bots.value.filter((item) => item.status === "enabled"))
@@ -563,7 +565,7 @@ function adminRightLabels(rights) {
 async function refreshAll() {
   await Promise.all([loadBots(), loadChannels(), loadSubmissions()])
 }
-async function loadBots() { botLoading.value = true; try { bots.value = (await getSearchBots(botFilters)).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载搜索机器人失败")) } finally { botLoading.value = false } }
+async function loadBots() { botLoading.value = true; try { bots.value = (await getSearchBots({ status: botFilters.status })).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载搜索机器人失败")) } finally { botLoading.value = false } }
 async function loadChannels() {
   try {
     channels.value = (await getMyChannels()).data.items || []
@@ -571,7 +573,7 @@ async function loadChannels() {
     ElMessage.error(readError(error, "加载频道失败"))
   }
 }
-async function loadSubmissions() { submissionLoading.value = true; try { submissions.value = (await getSearchBotSubmissions(submissionFilters)).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载提交记录失败")) } finally { submissionLoading.value = false } }
+async function loadSubmissions() { submissionLoading.value = true; try { submissions.value = (await getSearchBotSubmissions({ ...submissionFilters, keyword: "" })).data.items || [] } catch (error) { ElMessage.error(readError(error, "加载提交记录失败")) } finally { submissionLoading.value = false } }
 function openBotCreate() { editingBot.value = null; Object.assign(botForm, emptyBotForm()); botDialogVisible.value = true }
 function openBotEdit(row) { editingBot.value = row; Object.assign(botForm, { ...emptyBotForm(), ...row }); botDialogVisible.value = true }
 async function saveBot() { if (!(await botFormRef.value?.validate().catch(() => false))) return; savingBot.value = true; try { if (editingBot.value?.id) await updateSearchBot(editingBot.value.id, botForm); else await createSearchBot(botForm); ElMessage.success(editingBot.value?.id ? "搜索机器人已保存" : "搜索机器人已添加"); botDialogVisible.value = false; await loadBots() } catch (error) { ElMessage.error(readError(error, "保存搜索机器人失败")) } finally { savingBot.value = false } }

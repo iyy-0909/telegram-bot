@@ -50,7 +50,7 @@
         stripe
         height="492"
         class="listener-table"
-        empty-text="暂无监听任务，请点击“新增任务”创建实时监听任务。"
+        :empty-text="keyword.trim() ? '没有匹配的任务，请调整或清空搜索。' : '暂无监听任务，请点击“新增任务”创建实时监听任务。'"
       >
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="name" label="任务名" min-width="150" show-overflow-tooltip />
@@ -197,7 +197,7 @@
         stripe
         height="492"
         class="listener-log-table"
-        empty-text="暂无监听执行记录，监听收到消息后会在这里显示处理过程。"
+        :empty-text="eventKeyword.trim() || eventFilter ? '当前筛选条件下没有执行记录。' : '暂无监听执行记录，监听收到消息后会在这里显示处理过程。'"
       >
         <el-table-column prop="time" label="时间" width="160" />
         <el-table-column label="事件" width="100" align="center">
@@ -255,7 +255,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 import { computed, ref } from "vue"
 import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
-import { matchesSearch } from "../utils/search"
+import { matchesRow } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -304,7 +304,7 @@ const filteredTasks = computed(() => {
       latest?.error,
     ]
 
-    return matchesSearch(values, keyword.value)
+    return matchesRow(task, keyword.value, "tasks", values)
   })
 })
 
@@ -337,7 +337,7 @@ const runtimeEvents = computed(() => {
       event.bot_name,
     ]
 
-    return matchesSearch(values, eventKeyword.value)
+    return matchesRow(event, eventKeyword.value, "events", values)
   })
 })
 

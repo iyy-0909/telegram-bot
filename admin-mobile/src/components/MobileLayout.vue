@@ -1,9 +1,13 @@
 <template>
-  <div class="mobile-shell">
+  <div class="mobile-shell" :class="{ 'mobile-shell--detail': detailTitle }">
     <header class="top-bar">
+      <request-button v-if="detailTitle" circle plain aria-label="返回频道列表" title="返回频道列表" @click="emit('back')">
+        <el-icon><ArrowLeft /></el-icon>
+      </request-button>
       <div class="top-title">
-        <strong>{{ currentTitle }}</strong>
-        <span>{{ currentSubtitle }}<template v-if="user?.username"> · {{ user.username }}</template></span>
+        <strong>{{ detailTitle || currentTitle }}</strong>
+        <span v-if="detailTitle">{{ detailSubtitle || '频道详情' }}</span>
+        <span v-else>{{ currentSubtitle }}<template v-if="user?.username"> · {{ user.username }}</template></span>
       </div>
       <div class="top-actions">
         <request-button
@@ -27,6 +31,7 @@
     </main>
 
     <nav
+      v-if="!detailTitle"
       class="bottom-nav"
       aria-label="主要导航"
       :style="{ gridTemplateColumns: `repeat(${Math.max(navItems.length, 1)}, minmax(0, 1fr))` }"
@@ -52,6 +57,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 
 import { computed } from "vue"
 import {
+  ArrowLeft,
   Collection,
   Grid,
   House,
@@ -79,9 +85,11 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  detailTitle: { type: String, default: "" },
+  detailSubtitle: { type: String, default: "" },
 })
 
-const rawEmit = defineEmits(["change", "refresh", "logout"])
+const rawEmit = defineEmits(["change", "refresh", "logout", "back"])
 const emit = useRequestEmit(rawEmit, props)
 
 const allNavItems = [
@@ -107,6 +115,13 @@ const currentSubtitle = computed(() => activeItem.value.subtitle)
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+}
+
+.top-bar > :deep(.el-button) {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  margin-left: 0;
 }
 
 .top-actions :deep(.el-button) {

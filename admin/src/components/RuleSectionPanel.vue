@@ -11,7 +11,8 @@
             v-model="keyword"
             clearable
             :prefix-icon="Search"
-            placeholder="搜索配置名称或内容"
+            placeholder="搜索名称 / 内容 / ID / 状态"
+            :aria-label="`搜索${title}`"
           />
           <request-button type="primary" :icon="Plus" @click="emit('add', activeType)">
             新增
@@ -63,7 +64,7 @@
           </div>
         </article>
       </div>
-      <el-empty v-else :image-size="58" :description="`暂无${typeMeta(activeType).label}配置，请点击新增创建。`" />
+      <el-empty v-else :image-size="58" :description="keyword.trim() ? '没有匹配的配置，请调整或清空搜索。' : `暂无${typeMeta(activeType).label}配置，请点击新增创建。`" />
     </div>
 
     <el-table
@@ -75,7 +76,7 @@
       row-key="id"
       max-height="492"
       class="desktop-rule-table"
-      :empty-text="`暂无${typeMeta(activeType).label}配置，请点击新增创建。`"
+      :empty-text="keyword.trim() ? '没有匹配的配置，请调整或清空搜索。' : `暂无${typeMeta(activeType).label}配置，请点击新增创建。`"
     >
       <el-table-column prop="name" label="配置名称" min-width="220" show-overflow-tooltip />
       <el-table-column v-if="types.length > 1" label="类型" width="82" align="center">
@@ -123,6 +124,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 import { computed, ref, watch } from "vue"
 import { Delete, EditPen, Plus, Search } from "@element-plus/icons-vue"
 import { CONTENT_RULE_TYPE_META } from "../config/contentRuleSections"
+import { matchesRow } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -149,13 +151,9 @@ watch(
 )
 
 const visibleRules = computed(() => {
-  const normalizedKeyword = keyword.value.trim().toLowerCase()
   return props.rules.filter((rule) => {
     if (rule.type !== activeType.value) return false
-    if (!normalizedKeyword) return true
-    return `${rule.name || ""} ${ruleSummary(rule)}`
-      .toLowerCase()
-      .includes(normalizedKeyword)
+    return matchesRow(rule, keyword.value, "templates", [ruleSummary(rule)])
   })
 })
 

@@ -18,7 +18,7 @@
 
     <div class="table-panel">
       <div class="filters">
-        <el-input v-model="filters.keyword" :prefix-icon="Search" clearable placeholder="搜索用户名" aria-label="搜索用户名" />
+        <el-input v-model="filters.keyword" :prefix-icon="Search" clearable placeholder="搜索用户名 / ID / 版本 / 状态" aria-label="搜索后台用户" />
         <el-select v-model="filters.plan" aria-label="版本筛选">
           <el-option label="全部版本" value="all" />
           <el-option label="免费版" value="free" />
@@ -140,6 +140,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue"
+import { matchesRow } from "../utils/search"
 import { Refresh, Search } from "@element-plus/icons-vue"
 import { ElMessage } from "element-plus"
 import { getAdminUsers, getFeatureCatalog, updateAdminUserAccess } from "../api/userAccess"
@@ -170,7 +171,7 @@ const selectedPlan = computed(() => plans.value.find((item) => item.key === form
 const filteredUsers = computed(() => {
   const keyword = filters.keyword.trim().toLowerCase()
   return users.value.filter((user) => {
-    if (keyword && !String(user.username || "").toLowerCase().includes(keyword)) return false
+    if (!matchesRow(user, keyword, ['id', 'username'], [planLabel(user), stateLabel(user)])) return false
     if (filters.plan !== "all" && normalizedPlan(user) !== filters.plan) return false
     return filters.state === "all" || normalizedState(user) === filters.state
   })

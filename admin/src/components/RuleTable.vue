@@ -7,7 +7,8 @@
       </div>
     </template>
 
-    <el-table :data="rules" border height="492" style="width: 100%">
+    <TableSearch v-model="keyword" label="搜索监听规则" placeholder="搜索 ID / 源频道 / 目标频道 / 状态" :count="filteredRules.length" :total="rules.length" />
+    <el-table :data="filteredRules" border height="492" style="width: 100%" :empty-text="keyword.trim() ? '没有匹配的规则，请调整或清空搜索。' : '暂无监听规则'">
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="source" label="源频道" />
       <el-table-column prop="target" label="目标频道" />
@@ -37,6 +38,8 @@
 
 <script setup>
 import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
+import { computed, ref } from "vue"
+import { searchRows } from "../utils/search"
 
 const requestProps = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -48,6 +51,8 @@ const requestProps = defineProps({
 
 const rawEmit = defineEmits(["add", "edit", "delete", "toggle","clone"])
 const emit = useRequestEmit(rawEmit, requestProps)
+const keyword = ref("")
+const filteredRules = computed(() => searchRows(requestProps.rules, keyword.value, "rules"))
 </script>
 
 <style scoped>

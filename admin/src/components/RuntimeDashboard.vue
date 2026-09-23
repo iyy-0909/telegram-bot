@@ -110,13 +110,15 @@
         <div class="section-title">排队任务列表</div>
       </template>
 
+      <TableSearch v-model="waitingKeyword" label="搜索排队任务" placeholder="搜索任务 / 频道 / 消息ID / 状态 / 等待原因" :count="filteredWaiting.length" :total="waiting.length" />
+
       <el-table
         class="queue-table"
-        :data="waiting"
+        :data="filteredWaiting"
         v-loading="loading"
         border
         height="492"
-        empty-text="暂无排队任务。"
+        :empty-text="waitingKeyword.trim() ? '没有匹配的排队任务，请调整或清空搜索。' : '暂无排队任务。'"
       >
         <el-table-column prop="queued_at" label="排队时间" min-width="150" show-overflow-tooltip />
         <el-table-column label="预计发送时间" min-width="150" show-overflow-tooltip>
@@ -167,12 +169,14 @@
         <div class="section-title">最近完成</div>
       </template>
 
+      <TableSearch v-model="recentKeyword" label="搜索最近完成" placeholder="搜索任务 / 频道 / 消息ID / 状态 / 错误" :count="filteredRecent.length" :total="recent.length" />
+
       <el-table
-        :data="recent"
+        :data="filteredRecent"
         v-loading="loading"
         border
         height="360"
-        empty-text="暂无最近发送记录。"
+        :empty-text="recentKeyword.trim() ? '没有匹配的完成记录，请调整或清空搜索。' : '暂无最近发送记录。'"
       >
         <el-table-column prop="finished_at" label="完成时间" min-width="150" show-overflow-tooltip />
         <el-table-column label="来源" width="90">
@@ -206,6 +210,7 @@ import { useRequestEmit } from '../../../frontend-shared/requestActions.mjs'
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { ElMessage } from "element-plus"
 import StatusTag from "./StatusTag.vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -227,6 +232,10 @@ const stats = computed(() => props.dashboard.stats || {})
 const current = computed(() => queue.value.current || null)
 const waiting = computed(() => queue.value.waiting || [])
 const recent = computed(() => queue.value.recent || [])
+const waitingKeyword = ref("")
+const recentKeyword = ref("")
+const filteredWaiting = computed(() => searchRows(waiting.value, waitingKeyword.value, "queue"))
+const filteredRecent = computed(() => searchRows(recent.value, recentKeyword.value, "queue"))
 const nowTick = ref(Date.now())
 let tickTimer = null
 let currentPollingTimer = null

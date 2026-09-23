@@ -452,6 +452,27 @@ class MyChannel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class TaskChannelLink(Base):
+    """Stable link between a task and one of its source or target channels."""
+
+    __tablename__ = "task_channel_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "task_type", "task_id", "my_channel_id", "role",
+            name="uq_task_channel_link",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, nullable=False, index=True)
+    task_type = Column(String, nullable=False, index=True)
+    task_id = Column(Integer, nullable=False, index=True)
+    my_channel_id = Column(Integer, nullable=False, index=True)
+    role = Column(String, nullable=False)
+    channel_value = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class AccountChannelSync(Base):
     """Last complete managed-channel scan for an owner's Telegram account."""
     __tablename__ = "account_channel_syncs"

@@ -7,9 +7,9 @@
           <div class="actions">
             <el-input
               v-model="filters.keyword"
-              placeholder="搜索名称 / username / chat_id / https://t.me/..."
+              placeholder="搜索名称 / 用户名或链接 / ID / 备注"
+              aria-label="搜索我的频道"
               clearable
-              @keyup.enter="load"
             >
               <template #prefix>
                 <el-icon><Search /></el-icon>
@@ -74,12 +74,12 @@
           <el-alert v-if="loadError" :title="loadError" type="error" show-icon :closable="false" class="channel-feedback" />
           <p class="activity-help">更新状态按频道最后发布新内容的时间判断，超过 5 天未更新显示异常；未知时可点击“检测”。</p>
           <el-table
-            :data="channels"
+            :data="filteredChannels"
             v-loading="loading"
             border
             stripe
             height="492"
-            empty-text="暂无频道，请点击“新增频道”添加你的目标频道。"
+            :empty-text="filters.keyword.trim() ? '没有匹配的频道，请调整或清空搜索。' : '暂无频道，请点击“新增频道”添加你的目标频道。'"
           >
             <el-table-column prop="title" label="频道名称" min-width="160" show-overflow-tooltip />
             <el-table-column label="管理账号 / 身份" min-width="220">
@@ -164,9 +164,9 @@
           <div class="actions">
             <el-input
               v-model="cloneFilters.keyword"
-              placeholder="搜索频道名 / 链接 / 分组 / https://t.me/..."
+              placeholder="搜索频道名 / 链接 / 分组 / ID / 备注"
+              aria-label="搜索克隆频道"
               clearable
-              @keyup.enter="loadCloneChannels"
             >
               <template #prefix>
                 <el-icon><Search /></el-icon>
@@ -200,12 +200,12 @@
 
         <el-card class="table-card">
           <el-table
-            :data="cloneChannels"
+            :data="filteredCloneChannels"
             v-loading="cloneLoading"
             border
             stripe
             height="492"
-            empty-text="暂无克隆频道，请点击“新增克隆频道”添加源频道。"
+            :empty-text="cloneFilters.keyword.trim() ? '没有匹配的频道，请调整或清空搜索。' : '暂无克隆频道，请点击“新增克隆频道”添加源频道。'"
           >
             <el-table-column prop="title" label="频道名" min-width="170" show-overflow-tooltip />
             <el-table-column label="频道链接" min-width="220" show-overflow-tooltip>
@@ -269,13 +269,14 @@
         </el-tag>
       </div>
 
+      <TableSearch v-model="submissionKeyword" label="搜索频道提交状态" placeholder="搜索机器人 / 提交账号 / 审核或收录状态" :count="filteredChannelSubmissions.length" :total="channelSubmissionRows.length" />
       <el-table
         v-loading="submissionStatusLoading"
-        :data="channelSubmissionRows"
+        :data="filteredChannelSubmissions"
         border
         stripe
         max-height="420"
-        empty-text="该频道暂无搜索机器人提交记录"
+        :empty-text="submissionKeyword.trim() ? '没有匹配的提交记录，请调整或清空搜索。' : '该频道暂无搜索机器人提交记录'"
       >
         <el-table-column label="搜索机器人" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
@@ -322,7 +323,7 @@
         </el-table-column>
         <template #empty>
           <el-empty
-            :description="submissionStatusChannel?.group_name
+            :description="submissionKeyword.trim() ? '没有匹配的提交记录，请调整或清空搜索。' : submissionStatusChannel?.group_name
               ? '该频道还没有搜索机器人提交记录'
               : '该频道未设置分组，完善分组后才能提交到搜索机器人'"
           >
@@ -541,6 +542,7 @@ import CopyText from "./CopyText.vue"
 import StatusTag from "./StatusTag.vue"
 import SearchBotPanel from "./SearchBotPanel.vue"
 import SearchBotCollectionTable from "./SearchBotCollectionTable.vue"
+import { searchRows } from "../utils/search"
 
 const props = defineProps({
   requestActions: { type: Object, default: () => ({}) },
@@ -601,6 +603,10 @@ const submissionStatusDialogVisible = ref(false)
 const submissionStatusLoading = ref(false)
 const submissionStatusChannel = ref(null)
 const channelSubmissionRows = ref([])
+const filteredChannels = computed(() => searchRows(channels.value, filters.keyword, "channels", row => [botUsername(row)]))
+const filteredCloneChannels = computed(() => searchRows(cloneChannels.value, cloneFilters.keyword, ['id', 'title', 'username', 'channel_link', 'group_name', 'channel_type', 'remark']))
+const submissionKeyword = ref("")
+const filteredChannelSubmissions = computed(() => searchRows(channelSubmissionRows.value, submissionKeyword.value, "submissions"))
 const filters = reactive({
   managed_account_id: null,
   managed_role: "",
@@ -676,7 +682,7 @@ async function load() {
   loading.value = true
   loadError.value = ""
   try {
-    const res = await getMyChannels({ ...filters, managed_account_id: filters.managed_account_id || undefined, managed_role: filters.managed_role || "" })
+    const res = await getMyChannels({ ...filters, keyword: "", managed_account_id: filters.managed_account_id || undefined, managed_role: filters.managed_role || "" })
     channels.value = res.data.items || []
   } catch (error) {
     loadError.value = readError(error, "加载频道失败，请点击刷新重试")
@@ -688,7 +694,7 @@ async function load() {
 async function loadCloneChannels() {
   cloneLoading.value = true
   try {
-    const res = await getCloneChannels(cloneFilters)
+    const res = await getCloneChannels({ ...cloneFilters, keyword: "" })
     cloneChannels.value = res.data.items || []
   } finally {
     cloneLoading.value = false
@@ -705,6 +711,7 @@ function openChannelSubmit(row) {
 }
 
 async function openChannelSubmissionStatus(row) {
+  submissionKeyword.value = ""
   submissionStatusChannel.value = row
   channelSubmissionRows.value = []
   submissionStatusDialogVisible.value = true
